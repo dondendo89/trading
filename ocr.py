@@ -1,0 +1,188 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import requests
+import time
+import matplotlib.pyplot as plt
+import mplfinance as mpf
+import os
+from datetime import datetime
+from dotenv import load_dotenv
+
+# --- CONFIGURAZIONE ---
+load_dotenv()
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+ASSETS_CONFIG = {
+    "GC=F": {"name": "XAUUSD", "tv": "OANDA:XAUUSD", "inv": True},
+    "GBPUSD=X": {"name": "GBPUSD", "tv": "FX:GBPUSD", "inv": False},
+    "EURUSD=X": {"name": "EURUSD", "tv": "FX:EURUSD", "inv": False},
+    "USDJPY=X": {"name": "USDJPY", "tv": "FX:USDJPY", "inv": True},
+    "BTC-USD": {"name": "BTCUSD", "tv": "BINANCE:BTCUSDT", "inv": True}
+}
+
+DXY_SYMBOL = "DX-Y.NYB"
+TIMEFRAME = "5m"
+tracker = {asset: 0 for asset in ASSETS_CONFIG}
+
+def get_v_levels(df):
+    try:
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        prices = df['Close'].values
+        volumes = df['Volume'].values if 'Volume' in df.columns else np.ones(len(prices))
+        bins = np.linspace(np.min(prices), np.max(prices), 40)
+        v_profile, _ = np.histogram(prices, bins=bins, weights=volumes)
+        poc = bins[np.argmax(v_profile)]
+        vah, val = np.percentile(prices, 85), np.percentile(prices, 15)
+        return vah, val, poc
+    except: return 0,0,0
+
+# --- LOGICA INTEGRATA: ANTICIPATA + MANIPULATION + SMT (VERSIONE TLAB) ---
+def detect_va_reversal_early(df, df_dxy, vah, val, poc):
+    if len(df) < 15 or vah == 0: return None
+    h, l, c = df['High'].values, df['Low'].values, df['Close'].values
+    curr = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    # 1. LOGICA ANTICIPATA VELOCE
+    seg1_h, seg2_h = h[-10:-2], h[-2:]
+    seg1_l, seg2_l = l[-10:-2], l[-2:]
+    m1, m2 = np.max(seg1_h), np.max(seg2_h)
+    l1, l2 = np.min(seg1_l), np.min(seg2_l)
+
+    if m2 > m1 and m2 > vah and (l[-1] <= vah or c[-1] < vah):
+        return "⚠️ EARLY SELL: HH + VAH TOUCH"
+    if l2 < l1 and l2 < val and (h[-1] >= val or c[-1] > val):
+        return "⚠️ EARLY BUY: LL + VAL TOUCH"
+
+    # 2. MANIPULATION CANDLE
+    is_bull_manip = curr['Low'] < prev['Low'] and curr['Close'] > prev['High']
+    is_bear_manip = curr['High'] > prev['High'] and curr['Close'] < prev['Low']
+    is_near_level = any(abs(curr['Close'] - lv) / lv <= 0.0006 for lv in [vah, val, poc])
+
+    if is_bull_manip and is_near_level:
+        return "🔥 MANIPULATION BULLISH (Near VA)"
+    if is_bear_manip and is_near_level:
+        return "🔥 MANIPULATION BEARISH (Near VA)"
+
+    # 3. SMT DIVERGENCE (LOGICA TLAB: INVERT DXY + SLOPE)
+    if df_dxy is not None and len(df_dxy) >= 15:
+        # Finestra di lookback per i picchi (coerente con n=14 su TradingView)
+        n = 14
+        
+        # Prezzi Asset
+        asset_h2, asset_h1 = df['High'].iloc[-n:].max(), df['High'].iloc[-1]
+        asset_l2, asset_l1 = df['Low'].iloc[-n:].min(), df['Low'].iloc[-1]
+        
+        # Dati DXY Invertiti (come richiesto: InvertSymbol = True)
+        # SMT Bullish guarda Lows, SMT Bearish guarda Highs
+        # Invertiamo DXY: High_DXY = 1/Low_Raw, Low_DXY = 1/High_Raw
+        dxy_h_raw = df_dxy['High'].iloc[-n:]
+        dxy_l_raw = df_dxy['Low'].iloc[-n:]
+        
+        d_high_series = 1 / dxy_l_raw
+        d_low_series = 1 / dxy_h_raw
+        
+        dxy_h2, dxy_h1 = d_high_series.iloc[:-1].max(), d_high_series.iloc[-1]
+        dxy_l2, dxy_l1 = d_low_series.iloc[:-1].min(), d_low_series.iloc[-1]
+
+        # Calcolo Pendenze (Slope)
+        slope_h_asset = asset_h1 - asset_h2
+        slope_h_dxy   = dxy_h1 - dxy_h2
+        
+        slope_l_asset = asset_l1 - asset_l2
+        slope_l_dxy   = dxy_l1 - dxy_l2
+
+        # SMT Bearish (Massimi discordanti)
+        if (slope_h_asset > 0 and slope_h_dxy < 0) or (slope_h_asset < 0 and slope_h_dxy > 0):
+            if curr['High'] >= asset_h2: # Solo se siamo su un picco attuale
+                return "⚠️ SMT DIVERGENCE BEARISH (DXY)"
+        
+        # SMT Bullish (Minimi discordanti)
+        if (slope_l_asset < 0 and slope_l_dxy > 0) or (slope_l_asset > 0 and slope_l_dxy < 0):
+            if curr['Low'] <= asset_l2: # Solo se siamo su un minimo attuale
+                return "⚠️ SMT DIVERGENCE BULLISH (DXY)"
+            
+    return None
+
+def generate_pro_chart(df, symbol, vah, val, poc, label_info=None):
+    try:
+        plot_df = df.tail(60).copy()
+        prices_f = df['Close'].values
+        bins = np.linspace(np.min(prices_f), np.max(prices_f), 40)
+        v_hist, _ = np.histogram(prices_f, bins=bins, weights=df['Volume'].values if 'Volume' in df.columns else None)
+        v_hist_norm = v_hist / (np.max(v_hist) if np.max(v_hist)>0 else 1) * 15 
+
+        mc = mpf.make_marketcolors(up='#26a69a', down='#ef5350', wick='inherit', edge='inherit')
+        s = mpf.make_mpf_style(base_mpl_style='dark_background', marketcolors=mc, facecolor='#101010')
+
+        fig = mpf.figure(style=s, figsize=(12, 7), facecolor='#101010')
+        ax = fig.add_subplot(1, 1, 1)
+        ax.set_facecolor('#101010')
+
+        if vah > 0:
+            ax.fill_between(range(len(plot_df)), val, vah, color='#9370db', alpha=0.1, zorder=0)
+            ax.axhline(vah, color='#9370db', ls='--', lw=1)
+            ax.axhline(val, color='#ff9800', ls='--', lw=1)
+            ax.axhline(poc, color='#2196f3', ls='-', lw=1.5)
+
+        mpf.plot(plot_df, type='candle', ax=ax, style=s, datetime_format='%H:%M')
+
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        for i in range(len(v_hist)):
+            v_color = '#26a69a' if i % 2 == 0 else '#ef5350'
+            ax.barh(bin_centers[i], v_hist_norm[i], height=(bins[1]-bins[0])*0.8, 
+                    left=len(plot_df) - v_hist_norm[i], color=v_color, alpha=0.3)
+
+        if label_info:
+            text, direction = label_info
+            color = '#00ff44' if direction == "Long" else '#ff4444'
+            ax.text(len(plot_df)//2, plot_df['High'].max() * 1.001, f" {text} ", color='white', 
+                    fontweight='bold', fontsize=10, ha='center', bbox=dict(facecolor=color, alpha=0.8))
+
+        path = f"chart_{symbol}.png"
+        fig.savefig(path, facecolor='#101010', bbox_inches='tight')
+        plt.close(fig)
+        return path
+    except: return None
+
+# --- LOOP PRINCIPALE ---
+print("🚀 BOT ICT AVVIATO - LOGICA SMT ALLINEATA A TRADINGVIEW")
+
+while True:
+    try:
+        df_dxy = yf.download(DXY_SYMBOL, period="2d", interval=TIMEFRAME, progress=False, timeout=10)
+        if not df_dxy.empty and isinstance(df_dxy.columns, pd.MultiIndex): 
+            df_dxy.columns = df_dxy.columns.get_level_values(0)
+
+        for sym, cfg in ASSETS_CONFIG.items():
+            print(f"🔍 {cfg['name']}...", end=" ", flush=True)
+            df = yf.download(sym, period="2d", interval=TIMEFRAME, progress=False, timeout=10)
+            if df.empty: continue
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+
+            vah, val, poc = get_v_levels(df)
+            signal = detect_va_reversal_early(df, df_dxy, vah, val, poc)
+            
+            if signal and (time.time() - tracker[sym] > 60):
+                direction = "Short" if "SELL" in signal or "BEARISH" in signal else "Long"
+                chart = generate_pro_chart(df, cfg['name'], vah, val, poc, (signal, direction))
+                
+                msg = (f"🚨 *{signal}*\n\n💎 Asset: *{cfg['name']}*\n🔥 Segnale: *{'📈 BUY' if direction=='Long' else '📉 SELL'}*\n"
+                       f"💰 Prezzo: *{df['Close'].iloc[-1]:.4f}*\n\n🔗 [TradingView](https://it.tradingview.com/chart/?symbol={cfg['tv']})")
+                
+                if chart and os.path.exists(chart):
+                    with open(chart, 'rb') as f:
+                        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto", 
+                                     data={'chat_id': CHAT_ID, 'caption': msg, 'parse_mode': 'Markdown'}, 
+                                     files={'photo': f})
+                tracker[sym] = time.time()
+                print(f"🎯 {signal} SENT!")
+            else:
+                print("ok")
+            time.sleep(1)
+            
+    except Exception as e:
+        print(f"Errore: {e}")
+    time.sleep(30)

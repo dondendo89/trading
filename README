@@ -1,0 +1,53 @@
+ICT Manipulation & SMT Telegram Bot
+Questo bot monitora in tempo reale diversi asset finanziari utilizzando la logica ICT (Inner Circle Trader). Identifica divergenze SMT con il DXY, candele di Manipolazione vicino ai livelli di volume e invia istantaneamente grafici tecnici su Telegram.
+
+🚀 Funzionalità Principali
+SMT Divergence: Rileva divergenze tra l'asset e il DXY (invertito) basandosi sulla pendenza (slope) dei massimi e minimi, perfettamente allineato alla logica TLAB.
+
+Manipulation Candle: Identifica i "finti movimenti" (Power of 3) dove il prezzo rompe il massimo/minimo precedente e inverte con forza.
+
+Volume Profile Integration: I segnali vengono filtrati per importanza se avvengono vicino ai livelli VAH (Value Area High), VAL (Value Area Low) o POC.
+
+Professional Charts: Generazione automatica di grafici con candele giapponesi, livelli di volume e indicatori visivi del segnale.
+
+🛠️ Installazione
+Clona o scarica questa cartella sul tuo computer.
+
+Installa le dipendenze necessarie tramite il terminale:
+
+Bash
+pip install -r requirements.txt
+Configura le variabili d'ambiente:
+Crea un file chiamato .env nella cartella principale e inserisci i tuoi dati:
+
+Snippet di codice
+TELEGRAM_TOKEN=tuo_token_bot_qui
+CHAT_ID=tuo_id_chat_qui
+📁 Struttura dei File
+bot.py: Il cuore del programma (logica SMT e invio segnali).
+
+requirements.txt: Elenco delle librerie Python da installare.
+
+.env: File per proteggere i tuoi codici segreti di Telegram.
+
+README.md: Guida all'uso (questo file).
+
+📈 Asset Monitorati
+Il bot è attualmente configurato per i seguenti strumenti (modificabili nel codice):
+
+XAUUSD (Oro)
+
+EURUSD
+
+GBPUSD
+
+USDJPY
+
+BTCUSD (Bitcoin)
+
+⚠️ Note Tecniche
+Timeframe: Il bot lavora di default a 5 minuti, ideale per lo scalping ICT.
+
+DXY Correlation: Per asset come Oro e EURUSD, il DXY viene invertito (1/Price) per mostrare la correlazione istituzionale corretta.
+
+Avviso Font: Se vedi un errore riguardante l'emoji della fiamma (Glyph 128293), è un limite dei font del tuo sistema. Il bot continuerà a funzionare correttamente.

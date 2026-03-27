@@ -24,7 +24,8 @@ ASSETS_CONFIG = {
 
 DXY_SYMBOL = "DX-Y.NYB"
 TIMEFRAME = "5m"
-tracker = {} # Tracker universale per cooldown segnali
+WBR_THRESHOLD = 0.3  # Rapporto minimo Ombra/Corpo per il Liquidity Grab
+tracker = {} 
 
 # Memoria Pivot Globale
 structure_mem = {sym: {"pPrice": [], "sPrice": []} for sym in ASSETS_CONFIG}
@@ -41,12 +42,12 @@ def get_v_levels(df):
         return vah, val, poc
     except: return 0,0,0
 
-# --- LOGICA INTEGRATA ---
+# --- LOGICA INTEGRATA CON LIQUIDITY GRAB ---
 def detect_va_reversal_early(df, df_dxy, vah, val, poc, symbol_key):
     global structure_mem
     if len(df) < 20 or vah == 0: return None
     
-    h, l, c = df['High'].values, df['Low'].values, df['Close'].values
+    h, l, c, o = df['High'].values, df['Low'].values, df['Close'].values, df['Open'].values
     curr = df.iloc[-1]
     prev = df.iloc[-2]
     
@@ -61,13 +62,14 @@ def detect_va_reversal_early(df, df_dxy, vah, val, poc, symbol_key):
     elif l[idx] == min(l[idx-d : idx+lb+1]):
         detected_val, p_type = l[idx], "L"
         
+    mem = structure_mem[symbol_key]
     if detected_val:
-        mem = structure_mem[symbol_key]
         label = ""
         if p_type == "H":
-            label = ("HH" if detected_val > mem["pPrice"][0] else "LH") if mem["pPrice"] else "H"
+            label = ("HH" if mem["pPrice"] and detected_val > mem["pPrice"][0] else "LH") if mem["pPrice"] else "H"
         else:
-            label = ("LL" if detected_val < mem["pPrice"][0] else "HL") if mem["pPrice"] else "L"
+            label = ("LL" if mem["pPrice"] and detected_val < mem["pPrice"][0] else "HL") if mem["pPrice"] else "L"
+        
         mem["pPrice"].insert(0, detected_val)
         
         if df_dxy is not None and len(df_dxy) >= len(df):
@@ -81,15 +83,34 @@ def detect_va_reversal_early(df, df_dxy, vah, val, poc, symbol_key):
                 if p_type == "L" and currP < prevP and currS > prevS:
                     return f"⚠️ SMT BULLISH ({label})"
 
-    # 2. MANIPULATION (Con soglia di tolleranza)
+    # 2. LOGICA LIQUIDITY GRAB (NEW)
+    if len(mem["pPrice"]) > 1:
+        last_high = max(mem["pPrice"][:5]) if any(p > vah for p in mem["pPrice"][:5]) else max(mem["pPrice"][:5])
+        last_low = min(mem["pPrice"][:5])
+        
+        body = abs(curr['Close'] - curr['Open'])
+        body = body if body > 0 else 0.00001
+        
+        # Grab Bearish (sopra i massimi)
+        if curr['High'] > last_high and curr['Close'] < last_high:
+            wick_top = curr['High'] - max(curr['Close'], curr['Open'])
+            if (wick_top / body) > WBR_THRESHOLD:
+                return "🔥 LIQUIDITY GRAB BEARISH"
+
+        # Grab Bullish (sotto i minimi)
+        if curr['Low'] < last_low and curr['Close'] > last_low:
+            wick_bot = min(curr['Close'], curr['Open']) - curr['Low']
+            if (wick_bot / body) > WBR_THRESHOLD:
+                return "🔥 LIQUIDITY GRAB BULLISH"
+
+    # 3. MANIPULATION (Classic)
     tolerance = prev['High'] * 0.0001 
     if curr['Low'] < (prev['Low'] - tolerance) and curr['Close'] > prev['Low']: 
         return "🔥 MANIPULATION BULLISH"
     if curr['High'] > (prev['High'] + tolerance) and curr['Close'] < prev['High']: 
         return "🔥 MANIPULATION BEARISH"
 
-    # 3. NOTIFICA TOUCH VAH/VAL
-    mem = structure_mem[symbol_key]
+    # 4. NOTIFICA TOUCH VAH/VAL
     if mem["pPrice"]:
         last_p = mem["pPrice"][0]
         if last_p > vah and curr['Low'] <= vah and curr['Close'] >= (vah * 0.999):
@@ -134,7 +155,7 @@ def generate_pro_chart(df, symbol, vah, val, poc, label_info=None):
     except: return None
 
 # --- LOOP PRINCIPALE ---
-print("🚀 BOT ICT AVVIATO - 24/7 - MESSAGGI ORIGINALI")
+print("🚀 BOT ICT AVVIATO - LOGICA LIQUIDITY GRAB ATTIVA")
 
 while True:
     try:
@@ -153,8 +174,8 @@ while True:
             vah, val, poc = get_v_levels(df)
             signal = detect_va_reversal_early(df, df_dxy, vah, val, poc, sym)
             
-            if signal and (time.time() - tracker.get(sym+signal, 0) > 900): # 15 min cooldown
-                direction = "Short" if "SELL" in signal or "BEARISH" in signal or "VAH" in signal else "Long"
+            if signal and (time.time() - tracker.get(sym+signal, 0) > 900):
+                direction = "Short" if any(x in signal for x in ["SELL", "BEARISH", "VAH"]) else "Long"
                 chart = generate_pro_chart(df, cfg['name'], vah, val, poc, (signal, direction))
                 msg = (f"🚨 *{signal}*\n\n💎 Asset: *{cfg['name']}*\n🔥 Segnale: *{'📈 BUY' if direction=='Long' else '📉 SELL'}*\n"
                        f"💰 Prezzo: *{df['Close'].iloc[-1]:.4f}*\n\n🔗 [TradingView](https://it.tradingview.com/chart/?symbol={cfg['tv']})")

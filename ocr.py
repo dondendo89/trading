@@ -14,6 +14,9 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# --- NUOVO INPUT: Imposta False per non ricevere messaggi MANIPULATION su Telegram ---
+show_manip_msg = False  
+
 ASSETS_CONFIG = {
     "GC=F": {"name": "XAUUSD", "tv": "OANDA:XAUUSD", "inv": True},
     "GBPUSD=X": {"name": "GBPUSD", "tv": "FX:GBPUSD", "inv": False},
@@ -24,11 +27,16 @@ ASSETS_CONFIG = {
 
 DXY_SYMBOL = "DX-Y.NYB"
 TIMEFRAME = "5m"
-WBR_THRESHOLD = 0.3  # Rapporto minimo Ombra/Corpo per il Liquidity Grab
+WBR_THRESHOLD = 0.3 
 tracker = {} 
 
-# Memoria Pivot Globale
-structure_mem = {sym: {"pPrice": [], "sPrice": []} for sym in ASSETS_CONFIG}
+# Memoria Pivot con Dual Depth e stati Pending
+structure_mem = {sym: {
+    "pPrice": [], "sPrice": [], 
+    "lastHiGrab": None, "lastLoGrab": None,
+    "pendHi": False, "pendHiBars": 0,
+    "pendLo": False, "pendLoBars": 0
+} for sym in ASSETS_CONFIG}
 
 def get_v_levels(df):
     try:
@@ -42,27 +50,26 @@ def get_v_levels(df):
         return vah, val, poc
     except: return 0,0,0
 
-# --- LOGICA INTEGRATA CON LIQUIDITY GRAB ---
 def detect_va_reversal_early(df, df_dxy, vah, val, poc, symbol_key):
     global structure_mem
-    if len(df) < 20 or vah == 0: return None
+    if len(df) < 30 or vah == 0: return None
     
+    mem = structure_mem[symbol_key]
     h, l, c, o = df['High'].values, df['Low'].values, df['Close'].values, df['Open'].values
     curr = df.iloc[-1]
     prev = df.iloc[-2]
     
-    d, lb = 10, 2
-    idx = len(df) - 1 - lb
-    
-    # 1. RILEVAZIONE PIVOT (STRUTTURA)
+    # --- 1. RILEVAZIONE PIVOT STRUTTURA (DEPTH 5) ---
+    d_s, lb_s = 5, 2
+    idx_s = len(df) - 1 - lb_s
     detected_val = None
     p_type = None
-    if h[idx] == max(h[idx-d : idx+lb+1]):
-        detected_val, p_type = h[idx], "H"
-    elif l[idx] == min(l[idx-d : idx+lb+1]):
-        detected_val, p_type = l[idx], "L"
+    
+    if h[idx_s] == max(h[idx_s-d_s : idx_s+lb_s+1]):
+        detected_val, p_type = h[idx_s], "H"
+    elif l[idx_s] == min(l[idx_s-d_s : idx_s+lb_s+1]):
+        detected_val, p_type = l[idx_s], "L"
         
-    mem = structure_mem[symbol_key]
     if detected_val:
         label = ""
         if p_type == "H":
@@ -71,52 +78,73 @@ def detect_va_reversal_early(df, df_dxy, vah, val, poc, symbol_key):
             label = ("LL" if mem["pPrice"] and detected_val < mem["pPrice"][0] else "HL") if mem["pPrice"] else "L"
         
         mem["pPrice"].insert(0, detected_val)
-        
         if df_dxy is not None and len(df_dxy) >= len(df):
-            dxy_val = df_dxy['High'].values[idx] if p_type == "H" else df_dxy['Low'].values[idx]
+            dxy_val = df_dxy['High'].values[idx_s] if p_type == "H" else df_dxy['Low'].values[idx_s]
             mem["sPrice"].insert(0, dxy_val)
-            if len(mem["pPrice"]) >= 3 and len(mem["sPrice"]) >= 2:
+            if len(mem["pPrice"]) >= 2 and len(mem["sPrice"]) >= 2:
                 currP, prevP = mem["pPrice"][0], mem["pPrice"][1]
                 currS, prevS = mem["sPrice"][0], mem["sPrice"][1]
-                if p_type == "H" and currP > prevP and currS < prevS:
-                    return f"⚠️ SMT BEARISH ({label})"
-                if p_type == "L" and currP < prevP and currS > prevS:
-                    return f"⚠️ SMT BULLISH ({label})"
+                if p_type == "H" and currP > prevP and currS < prevS: return f"⚠️ SMT BEARISH ({label})"
+                if p_type == "L" and currP < prevP and currS > prevS: return f"⚠️ SMT BULLISH ({label})"
 
-    # 2. LOGICA LIQUIDITY GRAB (NEW)
-    if len(mem["pPrice"]) > 1:
-        last_high = max(mem["pPrice"][:5]) if any(p > vah for p in mem["pPrice"][:5]) else max(mem["pPrice"][:5])
-        last_low = min(mem["pPrice"][:5])
-        
-        body = abs(curr['Close'] - curr['Open'])
-        body = body if body > 0 else 0.00001
-        
-        # Grab Bearish (sopra i massimi)
-        if curr['High'] > last_high and curr['Close'] < last_high:
-            wick_top = curr['High'] - max(curr['Close'], curr['Open'])
-            if (wick_top / body) > WBR_THRESHOLD:
+    # --- 2. PIVOT GRAB (DEPTH 14) ---
+    d_g, lb_g = 14, 2
+    idx_g = len(df) - 1 - lb_g
+    if h[idx_g] == max(h[idx_g-d_g : idx_g+lb_g+1]): mem["lastHiGrab"] = h[idx_g]
+    if l[idx_g] == min(l[idx_g-d_g : idx_g+lb_g+1]): mem["lastLoGrab"] = l[idx_g]
+
+    # --- 3. LOGICA LIQUIDITY GRAB (PENDING/RECLAIM) ---
+    atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
+    buf = atr * 0.5
+
+    # Logica BEARISH
+    if mem["lastHiGrab"]:
+        takeAbove = curr['High'] > (mem["lastHiGrab"] + buf)
+        firstBreach = takeAbove and (prev['High'] <= mem["lastHiGrab"] + buf)
+        if firstBreach:
+            if curr['Close'] < mem["lastHiGrab"]:
+                mem["lastHiGrab"] = None
                 return "🔥 LIQUIDITY GRAB BEARISH"
+            else:
+                mem["pendHi"], mem["pendHiBars"] = True, 0
+    
+    if mem["pendHi"]:
+        if curr['Close'] < mem["lastHiGrab"]:
+            mem["pendHi"], mem["lastHiGrab"] = False, None
+            return "🔥 LIQUIDITY GRAB BEARISH"
+        else:
+            mem["pendHiBars"] += 1
+            if mem["pendHiBars"] > 3: mem["pendHi"] = False
 
-        # Grab Bullish (sotto i minimi)
-        if curr['Low'] < last_low and curr['Close'] > last_low:
-            wick_bot = min(curr['Close'], curr['Open']) - curr['Low']
-            if (wick_bot / body) > WBR_THRESHOLD:
+    # Logica BULLISH
+    if mem["lastLoGrab"]:
+        takeBelow = curr['Low'] < (mem["lastLoGrab"] - buf)
+        firstBreachLo = takeBelow and (prev['Low'] >= mem["lastLoGrab"] - buf)
+        if firstBreachLo:
+            if curr['Close'] > mem["lastLoGrab"]:
+                mem["lastLoGrab"] = None
                 return "🔥 LIQUIDITY GRAB BULLISH"
+            else:
+                mem["pendLo"], mem["pendLoBars"] = True, 0
 
-    # 3. MANIPULATION (Classic)
+    if mem["pendLo"]:
+        if curr['Close'] > mem["lastLoGrab"]:
+            mem["pendLo"], mem["lastLoGrab"] = False, None
+            return "🔥 LIQUIDITY GRAB BULLISH"
+        else:
+            mem["pendLoBars"] += 1
+            if mem["pendLoBars"] > 3: mem["pendLo"] = False
+
+    # --- 4. MANIPULATION (Classic) ---
     tolerance = prev['High'] * 0.0001 
-    if curr['Low'] < (prev['Low'] - tolerance) and curr['Close'] > prev['Low']: 
-        return "🔥 MANIPULATION BULLISH"
-    if curr['High'] > (prev['High'] + tolerance) and curr['Close'] < prev['High']: 
-        return "🔥 MANIPULATION BEARISH"
+    if curr['Low'] < (prev['Low'] - tolerance) and curr['Close'] > prev['Low']: return "🔥 MANIPULATION BULLISH"
+    if curr['High'] > (prev['High'] + tolerance) and curr['Close'] < prev['High']: return "🔥 MANIPULATION BEARISH"
 
-    # 4. NOTIFICA TOUCH VAH/VAL
+    # --- 5. NOTIFICA TOUCH VAH/VAL ---
     if mem["pPrice"]:
         last_p = mem["pPrice"][0]
-        if last_p > vah and curr['Low'] <= vah and curr['Close'] >= (vah * 0.999):
-            return "🎯 VAH TOUCH (Entry Zone)"
-        if last_p < val and curr['High'] >= val and curr['Close'] <= (val * 1.001):
-            return "🎯 VAL TOUCH (Entry Zone)"
+        if last_p > vah and curr['Low'] <= vah and curr['Close'] >= (vah * 0.999): return "🎯 VAH TOUCH (Entry Zone)"
+        if last_p < val and curr['High'] >= val and curr['Close'] <= (val * 1.001): return "🎯 VAL TOUCH (Entry Zone)"
             
     return None
 
@@ -155,7 +183,7 @@ def generate_pro_chart(df, symbol, vah, val, poc, label_info=None):
     except: return None
 
 # --- LOOP PRINCIPALE ---
-print("🚀 BOT ICT AVVIATO - LOGICA LIQUIDITY GRAB ATTIVA")
+print("🚀 BOT ICT AVVIATO - DUAL PIVOT & GRAB ATTIVO")
 
 while True:
     try:
@@ -174,7 +202,13 @@ while True:
             vah, val, poc = get_v_levels(df)
             signal = detect_va_reversal_early(df, df_dxy, vah, val, poc, sym)
             
+            # Controllo invio segnale
             if signal and (time.time() - tracker.get(sym+signal, 0) > 900):
+                # BLOCCO DISATTIVAZIONE MANIPOLAZIONE
+                if "MANIPULATION" in signal and not show_manip_msg:
+                    print(f"ok (Signal {signal} Silenced)")
+                    continue
+
                 direction = "Short" if any(x in signal for x in ["SELL", "BEARISH", "VAH"]) else "Long"
                 chart = generate_pro_chart(df, cfg['name'], vah, val, poc, (signal, direction))
                 msg = (f"🚨 *{signal}*\n\n💎 Asset: *{cfg['name']}*\n🔥 Segnale: *{'📈 BUY' if direction=='Long' else '📉 SELL'}*\n"
@@ -189,6 +223,6 @@ while True:
                 print(f"🎯 {signal} SENT!")
             else:
                 print("ok")
-    except Exception as e:
+    except Exception as e: 
         print(f"\nErrore: {e}")
     time.sleep(30)

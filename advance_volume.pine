@@ -1,0 +1,582 @@
+//@version=6
+indicator('Advanced Volume Profile Pro  Delta + POC + VAH/VAL', overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+//=============================================================================
+// USER INPUTS
+//=============================================================================
+
+// Profile Settings
+profileGroup = 'Volume Profile Settings'
+profileType = input.string('N Bars Back', 'Profile Type', options = ['N Bars Back', 'Days Back', 'Session'], group = profileGroup)
+numRows = input.int(30, 'Number of Rows', minval = 10, maxval = 50, group = profileGroup)
+profileWidth = input.int(20, 'Profile Width (%)', minval = 10, maxval = 50, group = profileGroup)
+valueAreaPercent = input.int(70, 'Value Area %', minval = 50, maxval = 90, group = profileGroup)
+showPOC = input.bool(true, 'Show Point of Control (POC)', group = profileGroup)
+showVA = input.bool(true, 'Show Value Area (VAH/VAL)', group = profileGroup)
+showProfile = input.bool(true, 'Show Volume Profile', group = profileGroup)
+autoAdjust = input.bool(true, 'Auto-Adjust for Timeframe', tooltip = 'Automatically adjusts lookback for lower timeframes', group = profileGroup)
+
+// Delta Volume Settings
+deltaGroup = 'Delta Volume Settings'
+showDelta = input.bool(true, 'Show Delta Volume', group = deltaGroup)
+deltaMethod = input.string('Price Action', 'Delta Calculation', options = ['Price Action', 'Bid/Ask Estimate', 'Cumulative'], group = deltaGroup)
+showImbalance = input.bool(true, 'Highlight Imbalances', group = deltaGroup)
+imbalanceThreshold = input.float(60, 'Imbalance Threshold %', minval = 50, maxval = 90, group = deltaGroup)
+
+// Session Settings (for Session profile type)
+sessionGroup = 'Session Settings'
+sessionType = input.string('Daily', 'Session Type', options = ['Daily', 'Weekly', 'Monthly', 'Custom'], group = sessionGroup)
+customSession = input.session('0930-1600', 'Custom Session Time', group = sessionGroup)
+showPrevSessions = input.int(3, 'Previous Sessions to Show', minval = 1, maxval = 10, group = sessionGroup)
+
+// Days Back Settings
+daysGroup = 'Days Back Settings'
+lookbackDays = input.int(30, 'Lookback Days', minval = 1, maxval = 365, group = daysGroup)
+
+// N Bars Settings
+barsGroup = 'N Bars Back Settings'
+lookbackBars = input.int(100, 'Lookback Bars', minval = 20, maxval = 500, group = barsGroup)
+
+// Visual Settings
+visualGroup = 'Visual Settings'
+bullishColor = input.color(color.new(#26a69a, 60), 'Bullish Volume Color', group = visualGroup)
+bearishColor = input.color(color.new(#ef5350, 60), 'Bearish Volume Color', group = visualGroup)
+pocColor = input.color(#2196f3, 'POC Color', group = visualGroup)
+vahColor = input.color(#9c27b0, 'VAH Color', group = visualGroup)
+valColor = input.color(#ff9800, 'VAL Color', group = visualGroup)
+vaFillColor = input.color(color.new(#9c27b0, 90), 'Value Area Fill', group = visualGroup)
+profilePosition = input.string('Right', 'Profile Position', options = ['Left', 'Right'], group = visualGroup)
+profileOffsetBars = input.int(10, 'Profile Offset (Bars)', minval = 5, maxval = 50, tooltip = 'Distance from current bar in number of bars', group = visualGroup)
+showLabels = input.bool(true, 'Show Labels', group = visualGroup)
+showDevelopingPOC = input.bool(true, 'Show Developing POC', group = visualGroup)
+smoothBars = input.bool(true, 'Smooth Profile Bars', group = visualGroup)
+showVAFill = input.bool(true, 'Fill Value Area', group = visualGroup)
+
+// Table Settings
+tableGroup = 'Table Settings'
+showInfoTable = input.bool(true, 'Show Info Table', group = tableGroup)
+tablePosition = input.string('Bottom Right', 'Table Position', options = ['Top Right', 'Top Left', 'Bottom Right', 'Bottom Left', 'Middle Right', 'Middle Left'], group = tableGroup)
+tableSize = input.string('Small', 'Table Text Size', options = ['Tiny', 'Small', 'Normal'], group = tableGroup)
+
+// Alert Settings
+alertGroup = 'Alert Settings'
+enableAlerts = input.bool(true, 'Enable Alerts', group = alertGroup)
+alertPOCTouch = input.bool(true, 'Alert on POC Touch', group = alertGroup)
+alertVAEntry = input.bool(true, 'Alert on VA Entry/Exit', group = alertGroup)
+alertImbalance = input.bool(true, 'Alert on Major Imbalance', group = alertGroup)
+
+//=============================================================================
+// TYPES AND VARIABLES
+//=============================================================================
+
+// Type for storing volume at price levels
+type VolumeLevel
+	float price
+	float totalVolume
+	float buyVolume
+	float sellVolume
+	float delta
+	int barIndex
+
+// Arrays to store volume data
+var array<VolumeLevel> volumeLevels = array.new<VolumeLevel>()
+var array<box> profileBoxes = array.new<box>()
+var array<line> profileLines = array.new<line>()
+var array<label> profileLabels = array.new<label>()
+
+// Variables for POC and Value Area
+var float currentPOC = na
+var float currentVAH = na
+var float currentVAL = na
+var line pocLine = na
+var line vahLine = na
+var line valLine = na
+var label pocLabel = na
+var label vahLabel = na
+var label valLabel = na
+var float rowHeight = na
+
+//=============================================================================
+// HELPER FUNCTIONS
+//=============================================================================
+
+// Clear all drawings
+clearDrawings() =>
+    for box in profileBoxes
+        box.delete(box)
+    array.clear(profileBoxes)
+
+    for line in profileLines
+        line.delete(line)
+    array.clear(profileLines)
+
+    for lbl in profileLabels
+        label.delete(lbl)
+    array.clear(profileLabels)
+
+    if not na(pocLine)
+        line.delete(pocLine)
+    if not na(vahLine)
+        line.delete(vahLine)
+    if not na(valLine)
+        line.delete(valLine)
+    if not na(pocLabel)
+        label.delete(pocLabel)
+    if not na(vahLabel)
+        label.delete(vahLabel)
+    if not na(valLabel)
+        label.delete(valLabel)
+
+// Get range based on profile type
+getRangeIndexes() =>
+    startIdx = 0
+    endIdx = bar_index
+
+    // Auto-adjust for timeframe
+    maxBarsBack = 500
+    if autoAdjust
+        if timeframe.isintraday
+            if timeframe.multiplier <= 5
+                maxBarsBack := 200 // 5min and below
+            else if timeframe.multiplier <= 15
+                maxBarsBack := 300 // 15min
+            else if timeframe.multiplier <= 60
+                maxBarsBack := 400 // 1hour
+            else
+                maxBarsBack := 500
+        else if timeframe.isdaily
+            maxBarsBack := 200
+        else if timeframe.isweekly
+            maxBarsBack := 100
+        else
+            maxBarsBack := 50
+
+    if profileType == 'N Bars Back'
+        // Default option - works perfectly
+        barsToUse = math.min(lookbackBars, maxBarsBack)
+        startIdx := math.max(0, bar_index - barsToUse)
+        endIdx := bar_index
+        
+    else if profileType == 'Days Back'
+        // RELIABLE: Calculate bars based on days back
+        // Estimate bars per day based on timeframe
+        float barsPerDay = timeframe.isintraday ? (24 * 60 / timeframe.multiplier) : 1.0
+        
+        // For intraday, account for trading hours (approximately 6.5 hours)
+        if timeframe.isintraday
+            barsPerDay := 6.5 * 60 / timeframe.multiplier
+        else if timeframe.isdaily
+            barsPerDay := 1.0
+        else if timeframe.isweekly
+            barsPerDay := 1.0 / 7.0
+        else if timeframe.ismonthly
+            barsPerDay := 1.0 / 30.0
+        else
+            barsPerDay := 1.0
+            
+        // Calculate total bars needed
+        totalBars = int(lookbackDays * barsPerDay)
+        totalBars := math.min(totalBars, maxBarsBack)
+        
+        startIdx := math.max(0, bar_index - totalBars)
+        endIdx := bar_index
+            
+    else if profileType == 'Session'
+        // FIXED: Proper session boundary detection with correct boolean conditions
+        if sessionType == 'Daily'
+            // Daily session - from start of current day
+            dayStart = ta.barssince(ta.change(time('D')) != 0)
+            startIdx := math.max(0, bar_index - (na(dayStart) ? 100 : dayStart))
+            endIdx := bar_index
+            
+        else if sessionType == 'Weekly'
+            // Weekly session - from start of current week
+            weekStart = ta.barssince(ta.change(time('W')) != 0)
+            startIdx := math.max(0, bar_index - (na(weekStart) ? 200 : weekStart))
+            endIdx := bar_index
+            
+        else if sessionType == 'Monthly'
+            // Monthly session - from start of current month
+            monthStart = ta.barssince(ta.change(time('M')) != 0)
+            startIdx := math.max(0, bar_index - (na(monthStart) ? 500 : monthStart))
+            endIdx := bar_index
+            
+        else if sessionType == 'Custom'
+            // Custom session - simplified to daily for now
+            dayStart = ta.barssince(ta.change(time('D')) != 0)
+            startIdx := math.max(0, bar_index - (na(dayStart) ? 100 : dayStart))
+            endIdx := bar_index
+        
+        // Apply session limits for performance
+        if endIdx - startIdx > maxBarsBack
+            startIdx := endIdx - maxBarsBack
+
+    // Final safety checks
+    if startIdx < 0
+        startIdx := 0
+    if endIdx > bar_index
+        endIdx := bar_index
+    if endIdx - startIdx > maxBarsBack
+        startIdx := endIdx - maxBarsBack
+    if startIdx >= endIdx
+        startIdx := math.max(0, endIdx - 50) // Minimum 50 bars
+
+    [startIdx, endIdx]
+
+// Calculate delta volume based on price action
+calculateDelta(close, open, high, low, volume) =>
+    delta = 0.0
+    buyVol = 0.0
+    sellVol = 0.0
+
+    if deltaMethod == 'Price Action'
+        // Simple price action based estimation
+        priceRange = high - low
+        if priceRange > 0
+            buyPressure = (close - low) / priceRange
+            sellPressure = (high - close) / priceRange
+            buyVol := volume * buyPressure
+            sellVol := volume * sellPressure
+        else
+            buyVol := close > open ? volume : 0
+            sellVol := close <= open ? volume : 0
+    else if deltaMethod == 'Bid/Ask Estimate'
+        // Estimate based on intrabar price action
+        avgPrice = (high + low + close) / 3
+        buyVol := close > avgPrice ? volume * 0.6 : volume * 0.4
+        sellVol := volume - buyVol
+    else // Cumulative
+        buyVol := close > open ? volume : volume * 0.3
+        sellVol := close <= open ? volume : volume * 0.3
+
+    delta := buyVol - sellVol
+    [buyVol, sellVol, delta]
+
+// Find price level index
+findPriceLevel(price, levels) =>
+    idx = -1
+    for i = 0 to array.size(levels) - 1 by 1
+        level = array.get(levels, i)
+        if math.abs(level.price - price) < syminfo.mintick
+            idx := i
+            break
+    idx
+
+//=============================================================================
+// MAIN CALCULATION
+//=============================================================================
+
+// Calculate profile on each bar
+if (barstate.isconfirmed or barstate.islast) and bar_index > 50 // Need minimum bars
+    // Get range for calculation
+    [startIdx, endIdx] = getRangeIndexes()
+
+    // Initialize variables
+    highestPrice = 0.0
+    lowestPrice = 999999999.0
+
+    // Skip if range is too small or invalid
+    if endIdx - startIdx < 10 or startIdx < 0 or endIdx > bar_index
+        // Not enough data or invalid range
+        currentPOC := na
+        currentVAH := na
+        currentVAL := na
+    else
+        // Clear previous data
+        array.clear(volumeLevels)
+        clearDrawings()
+
+        // Sample bars for better performance on lower timeframes
+        step = 1
+        if autoAdjust and endIdx - startIdx > 300
+            step := math.max(1, int((endIdx - startIdx) / 300))
+
+        for i = startIdx to endIdx by step
+            if i <= bar_index
+                highestPrice := math.max(highestPrice, high[bar_index - i])
+                lowestPrice := math.min(lowestPrice, low[bar_index - i])
+
+        // Calculate row height
+        priceRange = highestPrice - lowestPrice
+        rowHeight := priceRange / numRows
+
+        // Initialize volume levels
+        for i = 0 to numRows - 1 by 1
+            levelPrice = lowestPrice + (i + 0.5) * rowHeight
+            level = VolumeLevel.new()
+            level.price := levelPrice
+            level.totalVolume := 0
+            level.buyVolume := 0
+            level.sellVolume := 0
+            level.delta := 0
+            level.barIndex := bar_index
+            array.push(volumeLevels, level)
+
+        // Accumulate volume for each bar in range
+        for i = startIdx to endIdx by step
+            if i <= bar_index
+                barHigh = high[bar_index - i]
+                barLow = low[bar_index - i]
+                barClose = close[bar_index - i]
+                barOpen = open[bar_index - i]
+                barVolume = volume[bar_index - i] * step // Adjust volume for sampling
+
+                // Calculate delta for this bar
+                [buyVol, sellVol, delta] = calculateDelta(barClose, barOpen, barHigh, barLow, barVolume)
+
+                // Distribute volume across price levels touched by this bar
+                startLevel = math.floor((barLow - lowestPrice) / rowHeight)
+                endLevel = math.floor((barHigh - lowestPrice) / rowHeight)
+
+                startLevel := math.max(0, startLevel)
+                endLevel := math.min(numRows - 1, endLevel)
+
+                levelsInBar = endLevel - startLevel + 1
+                volPerLevel = barVolume / levelsInBar
+                buyPerLevel = buyVol / levelsInBar
+                sellPerLevel = sellVol / levelsInBar
+
+                for j = startLevel to endLevel by 1
+                    if j >= 0 and j < array.size(volumeLevels)
+                        level = array.get(volumeLevels, j)
+                        level.totalVolume := level.totalVolume + volPerLevel
+                        level.buyVolume := level.buyVolume + buyPerLevel
+                        level.sellVolume := level.sellVolume + sellPerLevel
+                        level.delta := level.delta + buyPerLevel - sellPerLevel
+
+        // Find POC (Point of Control)
+        maxVolume = 0.0
+        pocIndex = 0
+        totalVolume = 0.0
+
+        for i = 0 to array.size(volumeLevels) - 1 by 1
+            level = array.get(volumeLevels, i)
+            totalVolume := totalVolume + level.totalVolume
+            if level.totalVolume > maxVolume
+                maxVolume := level.totalVolume
+                pocIndex := i
+
+        if pocIndex < array.size(volumeLevels)
+            pocLevel = array.get(volumeLevels, pocIndex)
+            currentPOC := pocLevel.price
+
+        // Calculate Value Area
+        valueAreaVolume = totalVolume * valueAreaPercent / 100
+        accumulatedVolume = pocIndex < array.size(volumeLevels) ? array.get(volumeLevels, pocIndex).totalVolume : 0.0
+        vahIndex = pocIndex
+        valIndex = pocIndex
+
+        // Expand from POC until we reach value area volume
+        while accumulatedVolume < valueAreaVolume
+            expandUp = true
+            expandDown = true
+            upVolume = 0.0
+            downVolume = 0.0
+
+            // Check if we can expand up
+            if vahIndex < array.size(volumeLevels) - 1
+                upLevel = array.get(volumeLevels, vahIndex + 1)
+                upVolume := upLevel.totalVolume
+            else
+                expandUp := false
+                upVolume := 0
+
+            // Check if we can expand down
+            if valIndex > 0
+                downLevel = array.get(volumeLevels, valIndex - 1)
+                downVolume := downLevel.totalVolume
+            else
+                expandDown := false
+                downVolume := 0
+
+            // Expand in direction of more volume
+            if expandUp and (not expandDown or upVolume >= downVolume)
+                accumulatedVolume := accumulatedVolume + upVolume
+                vahIndex := vahIndex + 1
+            else if expandDown
+                accumulatedVolume := accumulatedVolume + downVolume
+                valIndex := valIndex - 1
+            else
+                break
+
+        // Set VAH and VAL
+        if vahIndex < array.size(volumeLevels)
+            vahLevel = array.get(volumeLevels, vahIndex)
+            currentVAH := vahLevel.price + rowHeight / 2
+
+        if valIndex >= 0
+            valLevel = array.get(volumeLevels, valIndex)
+            currentVAL := valLevel.price - rowHeight / 2
+
+//=============================================================================
+// DRAWING
+//=============================================================================
+
+        // Calculate chart width
+        chartWidth = endIdx - startIdx
+
+        // Determine drawing position with safety checks
+        profileWidthBars = math.min(20, int(chartWidth * profileWidth / 200))
+
+        // Declare profileStartX and profileEndX BEFORE using them
+        profileStartX = 0
+        profileEndX = 0
+
+        // Ensure we don't draw too far in the future
+        if profilePosition == 'Right'
+            profileStartX := int(bar_index + profileOffsetBars)
+            profileEndX := int(profileStartX + profileWidthBars)
+        else
+            profileEndX := int(math.max(startIdx, bar_index - 100))
+            profileStartX := int(profileEndX - profileWidthBars)
+
+        // Draw volume profile
+        if showProfile and maxVolume > 0 // Added check for maxVolume
+            for i = 0 to array.size(volumeLevels) - 1 by 1
+                level = array.get(volumeLevels, i)
+                if level.totalVolume > 0
+                    // Calculate bar width based on volume
+                    barWidth = int(level.totalVolume / maxVolume * math.abs(profileEndX - profileStartX))
+
+                    // Determine color based on delta
+                    barColor = level.delta > 0 ? bullishColor : bearishColor
+
+                    if showDelta and showImbalance
+                        buyPercent = level.buyVolume / level.totalVolume * 100
+                        if buyPercent > imbalanceThreshold
+                            barColor := color.new(bullishColor, 40)
+                        else if buyPercent < 100 - imbalanceThreshold
+                            barColor := color.new(bearishColor, 40)
+
+                    // Create box for this price level
+                    leftX = profilePosition == 'Right' ? profileStartX : profileEndX - barWidth
+                    rightX = profilePosition == 'Right' ? profileStartX + barWidth : profileEndX
+
+                    // Add subtle border for better definition
+                    borderColor = smoothBars ? color.new(barColor, 30) : color.new(barColor, 50)
+                    borderWidth = smoothBars ? 1 : 0
+
+                    levelBox = box.new(left = leftX, top = level.price + rowHeight / 2, right = rightX, bottom = level.price - rowHeight / 2, bgcolor = barColor, border_color = borderColor, border_width = borderWidth)
+                    array.push(profileBoxes, levelBox)
+
+        // Draw POC line
+        if showPOC and not na(currentPOC)
+            lineEndX = profilePosition == 'Right' ? profileStartX - 5 : profileEndX + 5
+            pocLine := line.new(x1 = int(startIdx), y1 = currentPOC, x2 = lineEndX, y2 = currentPOC, color = pocColor, width = 3, style = line.style_solid)
+
+            if showLabels
+                labelX = profilePosition == 'Right' ? profileEndX + 5 : profileStartX - 5
+                pocLabel := label.new(x = labelX, y = currentPOC, text = 'POC: ' + str.tostring(currentPOC, format.mintick), color = pocColor, textcolor = color.white, style = profilePosition == 'Right' ? label.style_label_left : label.style_label_right, size = size.small)
+
+        // Draw Value Area
+        if showVA
+            // Draw Value Area Fill first (behind lines)
+            if showVAFill and not na(currentVAH) and not na(currentVAL)
+                vaFillBox = box.new(left = int(startIdx), top = currentVAH, right = bar_index, bottom = currentVAL, bgcolor = vaFillColor, border_width = 0)
+                array.push(profileBoxes, vaFillBox)
+
+            if not na(currentVAH)
+                lineEndX = profilePosition == 'Right' ? profileStartX - 5 : profileEndX + 5
+                vahLine := line.new(x1 = int(startIdx), y1 = currentVAH, x2 = lineEndX, y2 = currentVAH, color = vahColor, width = 2, style = line.style_dashed)
+
+                if showLabels
+                    labelX = profilePosition == 'Right' ? profileEndX + 5 : profileStartX - 5
+                    vahLabel := label.new(x = labelX, y = currentVAH, text = 'VAH: ' + str.tostring(currentVAH, format.mintick), color = vahColor, textcolor = color.white, style = profilePosition == 'Right' ? label.style_label_left : label.style_label_right, size = size.small)
+
+            if not na(currentVAL)
+                lineEndX = profilePosition == 'Right' ? profileStartX - 5 : profileEndX + 5
+                valLine := line.new(x1 = int(startIdx), y1 = currentVAL, x2 = lineEndX, y2 = currentVAL, color = valColor, width = 2, style = line.style_dashed)
+
+                if showLabels
+                    labelX = profilePosition == 'Right' ? profileEndX + 5 : profileStartX - 5
+                    valLabel := label.new(x = labelX, y = currentVAL, text = 'VAL: ' + str.tostring(currentVAL, format.mintick), color = valColor, textcolor = color.white, style = profilePosition == 'Right' ? label.style_label_left : label.style_label_right, size = size.small)
+
+//=============================================================================
+// DEVELOPING POC
+//=============================================================================
+
+// Plot developing POC as dots
+plot(showDevelopingPOC ? currentPOC : na, 'Developing POC', color = pocColor, style = plot.style_circles, linewidth = 2)
+
+//=============================================================================
+// ALERTS
+//=============================================================================
+
+// Check for POC touch
+pocTouched = not na(currentPOC) and (high >= currentPOC and low <= currentPOC or high[1] >= currentPOC and low[1] <= currentPOC)
+
+// Check for Value Area entry/exit
+inValueArea = not na(currentVAH) and not na(currentVAL) and close <= currentVAH and close >= currentVAL
+wasInValueArea = not na(currentVAH) and not na(currentVAL) and close[1] <= currentVAH and close[1] >= currentVAL
+vaEntry = not wasInValueArea and inValueArea
+vaExit = wasInValueArea and not inValueArea
+
+// Check for major imbalances
+majorBuyImbalance = false
+majorSellImbalance = false
+if array.size(volumeLevels) > 0
+    for i = 0 to array.size(volumeLevels) - 1 by 1
+        level = array.get(volumeLevels, i)
+        if level.totalVolume > 0
+            buyPercent = level.buyVolume / level.totalVolume * 100
+            if buyPercent > imbalanceThreshold and math.abs(level.price - close) < rowHeight
+                majorBuyImbalance := true
+            else if buyPercent < 100 - imbalanceThreshold and math.abs(level.price - close) < rowHeight
+                majorSellImbalance := true
+
+// Fire alerts
+if enableAlerts
+    if alertPOCTouch and pocTouched
+        alert('Price touched Point of Control at ' + str.tostring(currentPOC, format.mintick), alert.freq_once_per_bar)
+
+    if alertVAEntry and vaEntry
+        alert('Price entered Value Area', alert.freq_once_per_bar)
+
+    if alertVAEntry and vaExit
+        alert('Price exited Value Area', alert.freq_once_per_bar)
+
+    if alertImbalance and majorBuyImbalance
+        alert('Major buying imbalance detected', alert.freq_once_per_bar)
+
+    if alertImbalance and majorSellImbalance
+        alert('Major selling imbalance detected', alert.freq_once_per_bar)
+
+//=============================================================================
+// INFO TABLE
+//=============================================================================
+
+// Function to get table position
+getTablePosition(pos) =>
+    switch pos
+        'Top Right' => position.top_right
+        'Top Left' => position.top_left
+        'Bottom Right' => position.bottom_right
+        'Bottom Left' => position.bottom_left
+        'Middle Right' => position.middle_right
+        'Middle Left' => position.middle_left
+        => position.bottom_right
+
+// Function to get text size
+getTableTextSize(s) =>
+    switch s
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        => size.small
+
+var table infoTable = table.new(getTablePosition(tablePosition), 2, 4, bgcolor = color.new(color.black, 80), border_color = color.gray, border_width = 1)
+
+if barstate.islast and showLabels and showInfoTable
+    table.clear(infoTable, 0, 0, 1, 3)
+
+    table.cell(infoTable, 0, 0, 'POC', text_color = color.white, text_size = getTableTextSize(tableSize))
+    table.cell(infoTable, 1, 0, str.tostring(currentPOC, format.mintick), text_color = pocColor, text_size = getTableTextSize(tableSize))
+
+    table.cell(infoTable, 0, 1, 'VAH', text_color = color.white, text_size = getTableTextSize(tableSize))
+    table.cell(infoTable, 1, 1, str.tostring(currentVAH, format.mintick), text_color = vahColor, text_size = getTableTextSize(tableSize))
+
+    table.cell(infoTable, 0, 2, 'VAL', text_color = color.white, text_size = getTableTextSize(tableSize))
+    table.cell(infoTable, 1, 2, str.tostring(currentVAL, format.mintick), text_color = valColor, text_size = getTableTextSize(tableSize))
+
+    table.cell(infoTable, 0, 3, 'VA Range', text_color = color.white, text_size = getTableTextSize(tableSize))
+    table.cell(infoTable, 1, 3, str.tostring(currentVAH - currentVAL, format.mintick), text_color = color.white, text_size = getTableTextSize(tableSize))

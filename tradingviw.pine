@@ -1,0 +1,85 @@
+//@version=5
+indicator("ICT Python-to-TV Sync (Single Array)", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// --- INPUT ---
+depth      = input.int(10, "ZigZag Depth (DEPTH)")
+lb         = 2 // Lookback di conferma fisso come in Python
+smtSym     = input.symbol("CAPITALCOM:DXY", "SMT Symbol (DXY)")
+colBull    = input.color(color.lime, "Colore Bullish")
+colBear    = input.color(color.red, "Colore Bearish")
+
+// --- DATI SMT (Sincronizzati) ---
+sH = request.security(smtSym, timeframe.period, high)
+sL = request.security(smtSym, timeframe.period, low)
+
+// --- MEMORIA PIVOT (Array Unico come structure_mem in Python) ---
+var float[] pPrice = array.new_float(0)
+var float[] sPrice = array.new_float(0)
+var int[]   pTime  = array.new_int(0)
+
+// --- LOGICA PIVOT (get_pivot in Python) ---
+ph = ta.pivothigh(high, depth, lb)
+pl = ta.pivotlow(low, depth, lb)
+
+// Funzione per gestire l'aggiornamento della struttura
+update_structure(val, isHigh) =>
+    string labelTxt = ""
+    if array.size(pPrice) == 0
+        labelTxt := isHigh ? "H" : "L"
+    else
+        float lastP = array.get(pPrice, 0)
+        if isHigh
+            labelTxt := val > lastP ? "HH" : "LH"
+        else
+            labelTxt := val < lastP ? "LL" : "HL"
+    
+    // Inserimento (come mem["pPrice"].insert(0, val))
+    array.insert(pPrice, 0, val)
+    array.insert(pTime, 0, time[lb])
+    
+    // Valore SMT alla candela del pivot
+    float currentSmt = isHigh ? sH[lb] : sL[lb]
+    array.insert(sPrice, 0, currentSmt)
+    
+    // Disegno Label
+    label.new(time[lb], val, labelTxt, xloc.bar_time, 
+         color=isHigh ? color.new(colBear, 20) : color.new(colBull, 20), 
+         style=isHigh ? label.style_label_down : label.style_label_up, 
+         textcolor=color.white, size=size.small)
+
+    // Controllo SMT (Richiede 3 pivot asset e 2 SMT come logica Python/TV precedente)
+    if array.size(pPrice) >= 3 and array.size(sPrice) >= 2
+        float currP = array.get(pPrice, 0)
+        float prevP = array.get(pPrice, 1)
+        float currS = array.get(sPrice, 0)
+        float prevS = array.get(sPrice, 1)
+        int   currT = array.get(pTime, 0)
+        int   prevT = array.get(pTime, 1)
+
+        // SMT BEARISH
+        if isHigh and currP > prevP and currS < prevS
+            line.new(prevT, prevP, currT, currP, xloc.bar_time, color=colBear, width=2, style=line.style_dashed)
+            label.new(currT, currP, "SMT BEARISH", xloc.bar_time, textcolor=colBear, style=label.style_none, yloc=yloc.abovebar)
+        
+        // SMT BULLISH
+        if not isHigh and currP < prevP and currS > prevS
+            line.new(prevT, prevP, currT, currP, xloc.bar_time, color=colBull, width=2, style=line.style_dashed)
+            label.new(currT, currP, "SMT BULLISH", xloc.bar_time, textcolor=colBull, style=label.style_none, yloc=yloc.belowbar)
+
+// Esecuzione rilevamento
+if not na(ph)
+    update_structure(ph, true)
+if not na(pl)
+    update_structure(pl, false)
+
+// --- MANIPULATION (08:00 - 17:00 come Python) ---
+inSession = not na(time(timeframe.period, "0800-1700"))
+isBullManip = inSession and low < low[1] and close > low[1]
+isBearManip = inSession and high > high[1] and close < high[1]
+
+barcolor(isBullManip ? colBull : isBearManip ? colBear : na)
+
+if isBullManip
+    label.new(bar_index, low, "MANIP", style=label.style_none, textcolor=colBull, yloc=yloc.belowbar, size=size.small)
+if isBearManip
+    label.new(bar_index, high, "MANIP", style=label.style_none, textcolor=colBear, yloc=yloc.abovebar, size=size.small)

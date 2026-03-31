@@ -22,6 +22,8 @@ class SymbolState:
     pending_cross_type: Optional[str] = None
     pending_cross_level: Optional[float] = None
     pending_cross_created_at: Optional[pd.Timestamp] = None
+    last_touch_vah_bar_time: Optional[pd.Timestamp] = None
+    last_touch_val_bar_time: Optional[pd.Timestamp] = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -280,6 +282,19 @@ def build_cross_message(symbol_name: str, kind: str, level: float, last_close: f
         ]
     )
 
+def build_touch_message(symbol_name: str, side: str, level_name: str, level: float, last_close: float, tv_symbol: str) -> str:
+    title = f"🟦 [YF] {side} - Touch {level_name}"
+    direction = "alto→basso" if level_name == "VAH" else "basso→alto"
+    return "\n".join(
+        [
+            f"{title} ({direction})",
+            f"💎 Asset: {symbol_name}",
+            f"📍 {level_name}: {format_price(symbol_name, level)}",
+            f"📈 Close: {format_price(symbol_name, last_close)}",
+            f"🔗 TradingView: {tv_link(tv_symbol)}",
+        ]
+    )
+
 
 def process_symbol(
     token: str,
@@ -302,7 +317,20 @@ def process_symbol(
         return
     last_close = float(df["Close"].iloc[-1])
     prev_close = float(df["Close"].iloc[-2])
+    last_bar_time = df.index[-1]
+    last_high = float(df["High"].iloc[-1])
+    last_low = float(df["Low"].iloc[-1])
     poc, vah, val = volume_profile_levels(df, lookback_bars, num_rows, value_area_percent)
+    if vah is not None and np.isfinite(vah):
+        if state.last_touch_vah_bar_time != last_bar_time and np.isfinite(prev_close) and np.isfinite(last_low):
+            if prev_close > vah and last_low <= vah:
+                send_telegram(token, chat_id, build_touch_message(symbol_name, "SELL", "VAH", float(vah), last_close, tv_symbol), dry_run)
+                state.last_touch_vah_bar_time = last_bar_time
+    if val is not None and np.isfinite(val):
+        if state.last_touch_val_bar_time != last_bar_time and np.isfinite(prev_close) and np.isfinite(last_high):
+            if prev_close < val and last_high >= val:
+                send_telegram(token, chat_id, build_touch_message(symbol_name, "BUY", "VAL", float(val), last_close, tv_symbol), dry_run)
+                state.last_touch_val_bar_time = last_bar_time
     if state.pending_cross_type and state.pending_cross_level is not None:
         if state.pending_cross_type == "HH":
             if np.isfinite(prev_close) and np.isfinite(last_close) and prev_close > state.pending_cross_level and last_close <= state.pending_cross_level:

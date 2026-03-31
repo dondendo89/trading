@@ -1,18 +1,32 @@
 import argparse
 import os
 import time
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import requests
-import yfinance as yf
 from dotenv import load_dotenv
+from tradingview_ta import TA_Handler, Interval
+
+
+@dataclass
+class Candle:
+    t: pd.Timestamp
+    o: float
+    h: float
+    l: float
+    c: float
+    v: float
 
 
 @dataclass
 class SymbolState:
+    candles: List[Candle] = field(default_factory=list)
+    current_candle_start: Optional[pd.Timestamp] = None
+    current_candle: Optional[Candle] = None
     last_pivot_time: Optional[pd.Timestamp] = None
     last_pivot_price: Optional[float] = None
     prev_hh_price: Optional[float] = None
@@ -21,15 +35,17 @@ class SymbolState:
     prev_ll_time: Optional[pd.Timestamp] = None
     pending_cross_type: Optional[str] = None
     pending_cross_level: Optional[float] = None
-    pending_cross_created_at: Optional[pd.Timestamp] = None
+    last_seen_close: Optional[float] = None
+    next_fetch_at: float = 0.0
+    backoff_seconds: int = 0
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--env-path", default="/Users/dev1/Desktop/dev/dev/trading/.env")
-    p.add_argument("--interval-seconds", type=int, default=30)
-    p.add_argument("--yf-interval", default="5m")
-    p.add_argument("--yf-period", default="5d")
+    p.add_argument("--interval-seconds", type=int, default=60)
+    p.add_argument("--tv-interval", default="5m", choices=["1m", "5m", "15m", "1h", "4h", "1d"])
+    p.add_argument("--per-asset-delay-seconds", type=int, default=8)
     p.add_argument("--depth", type=int, default=10)
     p.add_argument("--lb", type=int, default=2)
     p.add_argument("--lookback-bars", type=int, default=100)
@@ -57,11 +73,7 @@ def send_telegram(token: str, chat_id: str, text: str, dry_run: bool) -> None:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     resp = requests.post(
         url,
-        data={
-            "chat_id": chat_id,
-            "text": text,
-            "disable_web_page_preview": True,
-        },
+        data={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
         timeout=20,
     )
     if resp.status_code >= 400:
@@ -80,46 +92,99 @@ def format_price(symbol_name: str, price: float) -> str:
     return f"{price:.5f}"
 
 
-def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    if isinstance(df.columns, pd.MultiIndex):
-        df = df.copy()
-        df.columns = [c[0] for c in df.columns]
-    needed = ["Open", "High", "Low", "Close", "Volume"]
-    for c in needed:
-        if c not in df.columns:
-            df[c] = np.nan
-    df = df[needed].copy()
-    df = df.dropna(subset=["High", "Low", "Close"])
-    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
-    if float(df["Volume"].sum()) <= 0.0:
-        df["Volume"] = 1.0
-    return df
+def to_interval_enum(tv_interval: str) -> Interval:
+    return {
+        "1m": Interval.INTERVAL_1_MINUTE,
+        "5m": Interval.INTERVAL_5_MINUTES,
+        "15m": Interval.INTERVAL_15_MINUTES,
+        "1h": Interval.INTERVAL_1_HOUR,
+        "4h": Interval.INTERVAL_4_HOURS,
+        "1d": Interval.INTERVAL_1_DAY,
+    }[tv_interval]
 
 
-def get_yf_ohlcv(yf_ticker: str, period: str, interval: str) -> pd.DataFrame:
-    df = yf.download(
-        yf_ticker,
-        period=period,
+def interval_minutes(tv_interval: str) -> int:
+    return {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}[tv_interval]
+
+
+def floor_to_interval(ts: datetime, minutes: int) -> pd.Timestamp:
+    ts = ts.replace(second=0, microsecond=0)
+    if minutes >= 1440:
+        floored = ts.replace(hour=0, minute=0)
+    else:
+        m = (ts.minute // minutes) * minutes
+        floored = ts.replace(minute=m)
+    return pd.Timestamp(floored.replace(tzinfo=None))
+
+
+def fetch_tv_snapshot(symbol: str, exchange: str, screener: str, interval: Interval) -> Dict[str, float]:
+    handler = TA_Handler(
+        symbol=symbol,
+        exchange=exchange,
+        screener=screener,
         interval=interval,
-        auto_adjust=False,
-        progress=False,
-        threads=False,
+        timeout=15,
     )
-    df = _ensure_ohlcv(df)
-    if not df.empty and df.index.tz is not None:
-        df.index = df.index.tz_convert(None)
-    return df
+    analysis = handler.get_analysis()
+    ind = analysis.indicators
+    return {
+        "open": float(ind["open"]),
+        "high": float(ind["high"]),
+        "low": float(ind["low"]),
+        "close": float(ind["close"]),
+        "volume": float(ind.get("volume", 0.0)),
+    }
 
 
-def get_yf_ohlcv_with_fallback(yf_tickers: Union[str, List[str]], period: str, interval: str) -> pd.DataFrame:
-    tickers = [yf_tickers] if isinstance(yf_tickers, str) else list(yf_tickers)
-    for t in tickers:
-        df = get_yf_ohlcv(t, period=period, interval=interval)
-        if not df.empty:
-            return df
-    return pd.DataFrame()
+def update_candle_state(state: SymbolState, candle_start: pd.Timestamp, snap: Dict[str, float]) -> bool:
+    if state.current_candle_start is None or state.current_candle is None:
+        state.current_candle_start = candle_start
+        state.current_candle = Candle(
+            t=candle_start,
+            o=snap["open"],
+            h=snap["high"],
+            l=snap["low"],
+            c=snap["close"],
+            v=snap["volume"],
+        )
+        return False
+    if candle_start == state.current_candle_start:
+        c = state.current_candle
+        c.h = max(c.h, snap["high"])
+        c.l = min(c.l, snap["low"])
+        c.c = snap["close"]
+        c.v = snap["volume"]
+        return False
+    if candle_start > state.current_candle_start:
+        state.candles.append(state.current_candle)
+        if len(state.candles) > 600:
+            state.candles = state.candles[-600:]
+        state.current_candle_start = candle_start
+        state.current_candle = Candle(
+            t=candle_start,
+            o=snap["open"],
+            h=snap["high"],
+            l=snap["low"],
+            c=snap["close"],
+            v=snap["volume"],
+        )
+        return True
+    return False
+
+
+def candles_to_df(candles: List[Candle]) -> pd.DataFrame:
+    if not candles:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        {
+            "Open": [c.o for c in candles],
+            "High": [c.h for c in candles],
+            "Low": [c.l for c in candles],
+            "Close": [c.c for c in candles],
+            "Volume": [c.v for c in candles],
+        },
+        index=pd.DatetimeIndex([c.t for c in candles]),
+    )
 
 
 def pivot_at(df: pd.DataFrame, depth: int, lb: int) -> Tuple[Optional[Tuple[pd.Timestamp, float]], Optional[Tuple[pd.Timestamp, float]]]:
@@ -210,30 +275,6 @@ def volume_profile_levels(
     return poc_price, vah, val
 
 
-def build_structure_message(
-    symbol_name: str,
-    structure: str,
-    pivot_price: float,
-    pivot_time: pd.Timestamp,
-    last_close: float,
-    poc: Optional[float],
-    vah: Optional[float],
-    val: Optional[float],
-    tv_symbol: str,
-) -> str:
-    parts = [
-        f"📌 Struttura: {structure}",
-        f"💎 Asset: {symbol_name}",
-        f"🕒 Pivot: {pivot_time.isoformat(sep=' ', timespec='minutes')}",
-        f"💰 Prezzo pivot: {format_price(symbol_name, pivot_price)}",
-        f"📈 Close attuale: {format_price(symbol_name, last_close)}",
-    ]
-    if poc is not None and vah is not None and val is not None:
-        parts.append(f"📊 POC: {format_price(symbol_name, poc)} | VAH: {format_price(symbol_name, vah)} | VAL: {format_price(symbol_name, val)}")
-    parts.append(f"🔗 TradingView: {tv_link(tv_symbol)}")
-    return "\n".join(parts)
-
-
 def build_double_message(
     symbol_name: str,
     kind: str,
@@ -246,7 +287,7 @@ def build_double_message(
     val: Optional[float],
     tv_symbol: str,
 ) -> str:
-    title = "🟦 [YF] DOPPIO MASSIMO (HH)" if kind == "HH" else "🟦 [YF] DOPPIO MINIMO (LL)"
+    title = "🟪 [TV] DOPPIO MASSIMO (HH)" if kind == "HH" else "🟪 [TV] DOPPIO MINIMO (LL)"
     parts = [
         title,
         f"💎 Asset: {symbol_name}",
@@ -263,7 +304,7 @@ def build_cross_message(symbol_name: str, kind: str, level: float, last_close: f
     if kind == "HH":
         return "\n".join(
             [
-                "🟦 [YF] Cross VAH dall'alto verso il basso dopo Doppio Massimo (HH)",
+                "🟪 [TV] Cross VAH dall'alto verso il basso dopo Doppio Massimo (HH)",
                 f"💎 Asset: {symbol_name}",
                 f"📍 VAH: {format_price(symbol_name, level)}",
                 f"📈 Close: {format_price(symbol_name, last_close)}",
@@ -272,7 +313,7 @@ def build_cross_message(symbol_name: str, kind: str, level: float, last_close: f
         )
     return "\n".join(
         [
-            "🟦 [YF] Cross VAL dal basso verso l'alto dopo Doppio Minimo (LL)",
+            "🟪 [TV] Cross VAL dal basso verso l'alto dopo Doppio Minimo (LL)",
             f"💎 Asset: {symbol_name}",
             f"📍 VAL: {format_price(symbol_name, level)}",
             f"📈 Close: {format_price(symbol_name, last_close)}",
@@ -281,41 +322,48 @@ def build_cross_message(symbol_name: str, kind: str, level: float, last_close: f
     )
 
 
-def process_symbol(
+def maybe_fire_cross(
     token: str,
     chat_id: str,
     symbol_name: str,
-    yf_ticker: Union[str, List[str]],
     tv_symbol: str,
     state: SymbolState,
+    last_close: float,
     dry_run: bool,
+) -> None:
+    if state.pending_cross_type is None or state.pending_cross_level is None:
+        state.last_seen_close = last_close
+        return
+    prev = state.last_seen_close
+    state.last_seen_close = last_close
+    if prev is None:
+        return
+    if state.pending_cross_type == "HH":
+        if prev > state.pending_cross_level and last_close <= state.pending_cross_level:
+            send_telegram(token, chat_id, build_cross_message(symbol_name, "HH", state.pending_cross_level, last_close, tv_symbol), dry_run)
+            state.pending_cross_type = None
+            state.pending_cross_level = None
+    elif state.pending_cross_type == "LL":
+        if prev < state.pending_cross_level and last_close >= state.pending_cross_level:
+            send_telegram(token, chat_id, build_cross_message(symbol_name, "LL", state.pending_cross_level, last_close, tv_symbol), dry_run)
+            state.pending_cross_type = None
+            state.pending_cross_level = None
+
+
+def process_new_closed_candle(
+    token: str,
+    chat_id: str,
+    symbol_name: str,
+    tv_symbol: str,
+    state: SymbolState,
+    df: pd.DataFrame,
     depth: int,
     lb: int,
     lookback_bars: int,
     num_rows: int,
     value_area_percent: int,
-    period: str,
-    interval: str,
+    dry_run: bool,
 ) -> None:
-    df = get_yf_ohlcv_with_fallback(yf_ticker, period=period, interval=interval)
-    if df.empty or len(df) < (depth + lb + 5):
-        return
-    last_close = float(df["Close"].iloc[-1])
-    prev_close = float(df["Close"].iloc[-2])
-    poc, vah, val = volume_profile_levels(df, lookback_bars, num_rows, value_area_percent)
-    if state.pending_cross_type and state.pending_cross_level is not None:
-        if state.pending_cross_type == "HH":
-            if np.isfinite(prev_close) and np.isfinite(last_close) and prev_close > state.pending_cross_level and last_close <= state.pending_cross_level:
-                send_telegram(token, chat_id, build_cross_message(symbol_name, "HH", state.pending_cross_level, last_close, tv_symbol), dry_run)
-                state.pending_cross_type = None
-                state.pending_cross_level = None
-                state.pending_cross_created_at = None
-        elif state.pending_cross_type == "LL":
-            if np.isfinite(prev_close) and np.isfinite(last_close) and prev_close < state.pending_cross_level and last_close >= state.pending_cross_level:
-                send_telegram(token, chat_id, build_cross_message(symbol_name, "LL", state.pending_cross_level, last_close, tv_symbol), dry_run)
-                state.pending_cross_type = None
-                state.pending_cross_level = None
-                state.pending_cross_created_at = None
     ph, pl = pivot_at(df, depth=depth, lb=lb)
     for pivot, is_high in [(ph, True), (pl, False)]:
         if pivot is None:
@@ -324,7 +372,7 @@ def process_symbol(
         if state.last_pivot_time is not None and pivot_time <= state.last_pivot_time:
             continue
         label = structure_label(pivot_price, is_high, state.last_pivot_price)
-        # Invio SOLO quando si formano 2 HH (doppio massimo) o 2 LL (doppio minimo)
+        poc, vah, val = volume_profile_levels(df, lookback_bars, num_rows, value_area_percent)
         if is_high and label == "HH":
             if state.prev_hh_price is not None and state.prev_hh_time is not None and pivot_price > state.prev_hh_price:
                 send_telegram(
@@ -347,7 +395,6 @@ def process_symbol(
                 if vah is not None and np.isfinite(vah):
                     state.pending_cross_type = "HH"
                     state.pending_cross_level = float(vah)
-                    state.pending_cross_created_at = pivot_time
             state.prev_hh_price = pivot_price
             state.prev_hh_time = pivot_time
         if (not is_high) and label == "LL":
@@ -372,7 +419,6 @@ def process_symbol(
                 if val is not None and np.isfinite(val):
                     state.pending_cross_type = "LL"
                     state.pending_cross_level = float(val)
-                    state.pending_cross_created_at = pivot_time
             state.prev_ll_price = pivot_price
             state.prev_ll_time = pivot_time
         state.last_pivot_price = pivot_price
@@ -382,38 +428,84 @@ def process_symbol(
 def main() -> None:
     args = parse_args()
     token, chat_id = load_telegram_config(args.env_path)
-    print("✅ yfinance_structure_bot AVVIATO")
-    assets: Dict[str, Dict[str, Union[str, List[str]]]] = {
-        "XAUUSD": {"yf": ["GC=F", "XAUUSD=X"], "tv": "OANDA:XAUUSD"},
-        "EURUSD": {"yf": "EURUSD=X", "tv": "OANDA:EURUSD"},
-        "GBPUSD": {"yf": "GBPUSD=X", "tv": "OANDA:GBPUSD"},
-        "USDJPY": {"yf": "JPY=X", "tv": "OANDA:USDJPY"},
+    print("✅ tradingview_structure_bot AVVIATO")
+    cfgs = {
+        "XAUUSD": {"symbol": "XAUUSD", "exchange": "OANDA", "screener": "cfd", "tv": "OANDA:XAUUSD"},
+        "EURUSD": {"symbol": "EURUSD", "exchange": "FX_IDC", "screener": "forex", "tv": "FX_IDC:EURUSD"},
+        "GBPUSD": {"symbol": "GBPUSD", "exchange": "FX_IDC", "screener": "forex", "tv": "FX_IDC:GBPUSD"},
+        "USDJPY": {"symbol": "USDJPY", "exchange": "FX_IDC", "screener": "forex", "tv": "FX_IDC:USDJPY"},
     }
-    states: Dict[str, SymbolState] = {k: SymbolState() for k in assets}
+    states: Dict[str, SymbolState] = {k: SymbolState() for k in cfgs}
+    tv_int = to_interval_enum(args.tv_interval)
+    mins = interval_minutes(args.tv_interval)
+    global_next_fetch_at = 0.0
+    global_backoff_seconds = 0
     while True:
-        for symbol_name, cfg in assets.items():
+        now_s = time.time()
+        if global_next_fetch_at > now_s:
+            wait_s = int(global_next_fetch_at - now_s)
+            print(f"rate_limited_global_wait:{wait_s}s", flush=True)
+            time.sleep(max(1, min(wait_s, int(args.interval_seconds))))
+            continue
+        now = datetime.now(timezone.utc)
+        candle_start = floor_to_interval(now, mins)
+        for name, cfg in cfgs.items():
+            st = states[name]
             try:
-                print(f"🔍 {symbol_name}...", end=" ", flush=True)
-                process_symbol(
+                print(f"🔍 {name}...", end=" ", flush=True)
+                now_s = time.time()
+                if global_next_fetch_at > now_s:
+                    print("rate_limited_global")
+                    time.sleep(max(1, int(args.per_asset_delay_seconds)))
+                    continue
+                if st.next_fetch_at > now_s:
+                    print("rate_limited")
+                    time.sleep(max(1, int(args.per_asset_delay_seconds)))
+                    continue
+                snap = fetch_tv_snapshot(cfg["symbol"], cfg["exchange"], cfg["screener"], tv_int)
+                st.backoff_seconds = 0
+                st.next_fetch_at = 0.0
+                global_backoff_seconds = 0
+                global_next_fetch_at = 0.0
+                maybe_fire_cross(
                     token=token,
                     chat_id=chat_id,
-                    symbol_name=symbol_name,
-                    yf_ticker=cfg["yf"],
+                    symbol_name=name,
                     tv_symbol=cfg["tv"],
-                    state=states[symbol_name],
+                    state=st,
+                    last_close=snap["close"],
                     dry_run=args.dry_run,
-                    depth=args.depth,
-                    lb=args.lb,
-                    lookback_bars=args.lookback_bars,
-                    num_rows=args.num_rows,
-                    value_area_percent=args.value_area_percent,
-                    period=args.yf_period,
-                    interval=args.yf_interval,
                 )
+                closed = update_candle_state(st, candle_start, snap)
+                if closed:
+                    df = candles_to_df(st.candles)
+                    if len(df) >= (args.depth + args.lb + 5):
+                        process_new_closed_candle(
+                            token=token,
+                            chat_id=chat_id,
+                            symbol_name=name,
+                            tv_symbol=cfg["tv"],
+                            state=st,
+                            df=df,
+                            depth=args.depth,
+                            lb=args.lb,
+                            lookback_bars=args.lookback_bars,
+                            num_rows=args.num_rows,
+                            value_area_percent=args.value_area_percent,
+                            dry_run=args.dry_run,
+                        )
                 print("ok")
-            except Exception:
-                print("error")
-            time.sleep(2)
+            except Exception as e:
+                msg = str(e)
+                if "429" in msg:
+                    st.backoff_seconds = 30 if st.backoff_seconds <= 0 else min(600, st.backoff_seconds * 2)
+                    st.next_fetch_at = time.time() + float(st.backoff_seconds)
+                    global_backoff_seconds = 60 if global_backoff_seconds <= 0 else min(900, global_backoff_seconds * 2)
+                    global_next_fetch_at = time.time() + float(global_backoff_seconds)
+                    print(f"rate_limited:{st.backoff_seconds}s")
+                else:
+                    print(f"error: {msg[:120]}")
+            time.sleep(max(1, int(args.per_asset_delay_seconds)))
         if args.once:
             print("⏹️ STOP (once)")
             break

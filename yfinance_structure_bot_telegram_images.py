@@ -30,6 +30,22 @@ class SymbolState:
     last_high_pivot_price: Optional[float] = None
     last_low_pivot_price: Optional[float] = None
     seen_pivot_keys: List[Tuple[pd.Timestamp, str]] = None
+    cisd_top_price: Optional[float] = None
+    cisd_bottom_price: Optional[float] = None
+    cisd_is_bullish: bool = False
+    cisd_is_bullish_pullback: bool = False
+    cisd_is_bearish_pullback: bool = False
+    cisd_potential_top_price: Optional[float] = None
+    cisd_potential_bottom_price: Optional[float] = None
+    cisd_bullish_break_pos: Optional[int] = None
+    cisd_bearish_break_pos: Optional[int] = None
+    cisd_level_bu_price: Optional[float] = None
+    cisd_level_bu_pos: Optional[int] = None
+    cisd_level_bu_completed: bool = False
+    cisd_level_be_price: Optional[float] = None
+    cisd_level_be_pos: Optional[int] = None
+    cisd_level_be_completed: bool = False
+    cisd_last_processed_time: Optional[pd.Timestamp] = None
     prev_hh_price: Optional[float] = None
     prev_hh_time: Optional[pd.Timestamp] = None
     prev_ll_price: Optional[float] = None
@@ -67,6 +83,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-notify-cross", dest="notify_cross", action="store_false")
     p.add_argument("--notify-qm", action="store_true", default=True)
     p.add_argument("--no-notify-qm", dest="notify_qm", action="store_false")
+    p.add_argument("--notify-cisd", action="store_true", default=True)
+    p.add_argument("--no-notify-cisd", dest="notify_cisd", action="store_false")
+    p.add_argument("--respect-market-hours", action="store_true", default=True)
+    p.add_argument("--no-respect-market-hours", dest="respect_market_hours", action="store_false")
 
     p.add_argument("--send-images", action="store_true", default=True)
     p.add_argument("--no-send-images", dest="send_images", action="store_false")
@@ -169,6 +189,32 @@ def get_yf_ohlcv_with_fallback(yf_tickers: Union[str, List[str]], period: str, i
         if not df.empty:
             return df
     return pd.DataFrame()
+
+def _is_crypto(symbol_name: str) -> bool:
+    return symbol_name.upper() in {"BTCUSD", "ETHUSD"}
+
+
+def _is_fx_or_metal(symbol_name: str) -> bool:
+    return symbol_name.upper() in {"EURUSD", "GBPUSD", "USDJPY", "XAUUSD"}
+
+
+def is_market_open(symbol_name: str, bar_time: pd.Timestamp) -> bool:
+    if _is_crypto(symbol_name):
+        return True
+    if not _is_fx_or_metal(symbol_name):
+        return True
+    if bar_time is None:
+        return True
+    ts = pd.Timestamp(bar_time)
+    wd = int(ts.weekday())
+    hour = int(ts.hour)
+    if wd == 5:
+        return False
+    if wd == 6:
+        return hour >= 21
+    if wd == 4:
+        return hour < 21
+    return True
 
 
 def pivot_at(df: pd.DataFrame, depth: int, lb: int) -> Tuple[Optional[Tuple[pd.Timestamp, float]], Optional[Tuple[pd.Timestamp, float]]]:
@@ -351,6 +397,19 @@ def build_qm_message(symbol_name: str, kind: str, last_close: float, tv_symbol: 
         ]
     )
 
+def build_cisd_message(symbol_name: str, kind: str, level: float, last_close: float, tv_symbol: str) -> str:
+    title = "🟧 [YF] Bullish CISD Formed" if kind == "BULL" else "🟧 [YF] Bearish CISD Formed"
+    level_name = "+CISD" if kind == "BULL" else "-CISD"
+    return "\n".join(
+        [
+            title,
+            f"💎 Asset: {symbol_name}",
+            f"📍 {level_name}: {format_price(symbol_name, level)}",
+            f"📈 Close: {format_price(symbol_name, last_close)}",
+            f"🔗 TradingView: {tv_link(tv_symbol)}",
+        ]
+    )
+
 
 def build_cross_message(symbol_name: str, kind: str, level: float, last_close: float, tv_symbol: str) -> str:
     if kind == "HH":
@@ -397,6 +456,7 @@ def render_signal_chart_png(
     poc: Optional[float] = None,
     vah: Optional[float] = None,
     val: Optional[float] = None,
+    levels: Optional[List[Tuple[str, float, str]]] = None,
 ) -> Optional[bytes]:
     if df is None or df.empty:
         return None
@@ -447,6 +507,12 @@ def render_signal_chart_png(
         ax.axhline(float(vah), color="#9c27b0", linewidth=1, alpha=0.6)
     if val is not None and np.isfinite(val):
         ax.axhline(float(val), color="#ff9800", linewidth=1, alpha=0.6)
+    if levels:
+        for name, level, col in levels:
+            if level is None or not np.isfinite(level):
+                continue
+            ax.axhline(float(level), color=col, linewidth=1.2, alpha=0.85)
+            ax.text(tail.index[-1].to_pydatetime(), float(level), f" {name}", fontsize=8, va="center", ha="left")
 
     if filt_polyline is not None:
         pts2, col = filt_polyline
@@ -479,6 +545,163 @@ def render_qm_chart_png(symbol_name: str, df: pd.DataFrame, kind: str, points: L
         vah=vah,
         val=val,
     )
+
+def _cisd_pos_from_time(df: pd.DataFrame, t: pd.Timestamp) -> Optional[int]:
+    if df is None or df.empty or t is None:
+        return None
+    idx = df.index
+    try:
+        loc = idx.get_loc(t)
+        if isinstance(loc, slice):
+            return int(loc.start)
+        if isinstance(loc, (np.ndarray, list)):
+            return int(loc[0]) if len(loc) else None
+        return int(loc)
+    except Exception:
+        return None
+
+
+def process_cisd(
+    state: SymbolState,
+    df: pd.DataFrame,
+) -> List[Tuple[str, pd.Timestamp, float, float]]:
+    if df is None or df.empty or len(df) < 10:
+        return []
+
+    emit_events = state.cisd_last_processed_time is not None
+    if state.cisd_last_processed_time is not None:
+        start_pos = _cisd_pos_from_time(df, state.cisd_last_processed_time)
+        if start_pos is None:
+            start_pos = max(0, len(df) - 400)
+        else:
+            start_pos = max(0, start_pos - 2)
+    else:
+        start_pos = max(0, len(df) - 400)
+
+    events: List[Tuple[str, pd.Timestamp, float, float]] = []
+    for i in range(start_pos, len(df)):
+        event_fired = False
+        t = df.index[i]
+        o = float(df["Open"].iloc[i])
+        h = float(df["High"].iloc[i])
+        l = float(df["Low"].iloc[i])
+        c = float(df["Close"].iloc[i])
+
+        if state.cisd_top_price is None or state.cisd_bottom_price is None:
+            state.cisd_top_price = float(h)
+            state.cisd_bottom_price = float(l)
+            state.cisd_last_processed_time = t
+            continue
+
+        if i >= 1:
+            prev_o = float(df["Open"].iloc[i - 1])
+            prev_c = float(df["Close"].iloc[i - 1])
+            bearish_pullback_detected = prev_c > prev_o
+            bullish_pullback_detected = prev_c < prev_o
+
+            if bearish_pullback_detected and not state.cisd_is_bearish_pullback:
+                state.cisd_is_bearish_pullback = True
+                state.cisd_potential_top_price = float(prev_o)
+                state.cisd_bullish_break_pos = i - 1
+
+            if bullish_pullback_detected and not state.cisd_is_bullish_pullback:
+                state.cisd_is_bullish_pullback = True
+                state.cisd_potential_bottom_price = float(prev_o)
+                state.cisd_bearish_break_pos = i - 1
+
+        if state.cisd_is_bullish_pullback and np.isfinite(o):
+            if state.cisd_potential_bottom_price is None or o < state.cisd_potential_bottom_price:
+                state.cisd_potential_bottom_price = float(o)
+                state.cisd_bearish_break_pos = i
+            if np.isfinite(c) and c < o and (state.cisd_potential_bottom_price is not None and o > state.cisd_potential_bottom_price):
+                state.cisd_potential_bottom_price = float(o)
+                state.cisd_bearish_break_pos = i
+
+        if state.cisd_is_bearish_pullback and np.isfinite(o):
+            if state.cisd_potential_top_price is None or o > state.cisd_potential_top_price:
+                state.cisd_potential_top_price = float(o)
+                state.cisd_bullish_break_pos = i
+            if np.isfinite(c) and c > o and (state.cisd_potential_top_price is not None and o < state.cisd_potential_top_price):
+                state.cisd_potential_top_price = float(o)
+                state.cisd_bullish_break_pos = i
+
+        if np.isfinite(l) and state.cisd_bottom_price is not None and l < state.cisd_bottom_price:
+            state.cisd_bottom_price = float(l)
+            state.cisd_is_bullish = False
+
+            created = False
+            if state.cisd_is_bearish_pullback and state.cisd_bullish_break_pos is not None and (i - state.cisd_bullish_break_pos) != 0:
+                bp = state.cisd_bullish_break_pos
+                if bp + 1 < len(df):
+                    state.cisd_top_price = float(max(df["High"].iloc[bp], df["High"].iloc[bp + 1]))
+                state.cisd_is_bearish_pullback = False
+                if state.cisd_potential_top_price is not None and np.isfinite(state.cisd_potential_top_price):
+                    state.cisd_level_be_price = float(state.cisd_potential_top_price)
+                    state.cisd_level_be_pos = i
+                    state.cisd_level_be_completed = False
+                    created = True
+            elif i >= 1 and float(df["Close"].iloc[i - 1]) > float(df["Open"].iloc[i - 1]) and c < o:
+                state.cisd_top_price = float(df["High"].iloc[i - 1])
+                state.cisd_is_bearish_pullback = False
+                if state.cisd_potential_top_price is not None and np.isfinite(state.cisd_potential_top_price):
+                    state.cisd_level_be_price = float(state.cisd_potential_top_price)
+                    state.cisd_level_be_pos = i
+                    state.cisd_level_be_completed = False
+                    created = True
+            if created:
+                pass
+
+        if np.isfinite(h) and state.cisd_top_price is not None and h > state.cisd_top_price:
+            state.cisd_is_bullish = True
+            state.cisd_top_price = float(h)
+
+            created = False
+            if state.cisd_is_bullish_pullback and state.cisd_bearish_break_pos is not None and (i - state.cisd_bearish_break_pos) != 0:
+                bp = state.cisd_bearish_break_pos
+                if bp + 1 < len(df):
+                    state.cisd_bottom_price = float(min(df["Low"].iloc[bp], df["Low"].iloc[bp + 1]))
+                state.cisd_is_bullish_pullback = False
+                if state.cisd_potential_bottom_price is not None and np.isfinite(state.cisd_potential_bottom_price):
+                    state.cisd_level_bu_price = float(state.cisd_potential_bottom_price)
+                    state.cisd_level_bu_pos = i
+                    state.cisd_level_bu_completed = False
+                    created = True
+            elif i >= 1 and float(df["Close"].iloc[i - 1]) < float(df["Open"].iloc[i - 1]) and c > o:
+                state.cisd_bottom_price = float(df["Low"].iloc[i - 1])
+                state.cisd_is_bullish_pullback = False
+                if state.cisd_potential_bottom_price is not None and np.isfinite(state.cisd_potential_bottom_price):
+                    state.cisd_level_bu_price = float(state.cisd_potential_bottom_price)
+                    state.cisd_level_bu_pos = i
+                    state.cisd_level_bu_completed = False
+                    created = True
+            if created:
+                pass
+
+        if state.cisd_level_bu_price is not None and not state.cisd_level_bu_completed and np.isfinite(c) and c < state.cisd_level_bu_price:
+            state.cisd_level_bu_completed = True
+            if emit_events:
+                events.append(("BEAR", t, float(state.cisd_level_bu_price), float(c)))
+            if state.cisd_potential_top_price is not None and np.isfinite(state.cisd_potential_top_price):
+                state.cisd_level_be_price = float(state.cisd_potential_top_price)
+                state.cisd_level_be_pos = i
+                state.cisd_level_be_completed = False
+            state.cisd_is_bullish = False
+            event_fired = True
+
+        if (not event_fired) and state.cisd_level_be_price is not None and not state.cisd_level_be_completed and np.isfinite(c) and c > state.cisd_level_be_price:
+            state.cisd_level_be_completed = True
+            if emit_events:
+                events.append(("BULL", t, float(state.cisd_level_be_price), float(c)))
+            if state.cisd_potential_bottom_price is not None and np.isfinite(state.cisd_potential_bottom_price):
+                state.cisd_level_bu_price = float(state.cisd_potential_bottom_price)
+                state.cisd_level_bu_pos = i
+                state.cisd_level_bu_completed = False
+            state.cisd_is_bullish = True
+            event_fired = True
+
+        state.cisd_last_processed_time = t
+
+    return events
 
 
 def render_chart_png(
@@ -568,6 +791,8 @@ def process_symbol(
     notify_touch: bool,
     notify_cross: bool,
     notify_qm: bool,
+    notify_cisd: bool,
+    respect_market_hours: bool,
     depth: int,
     lb: int,
     lookback_bars: int,
@@ -586,6 +811,30 @@ def process_symbol(
     last_high = float(df["High"].iloc[-1])
     last_low = float(df["Low"].iloc[-1])
     poc, vah, val = volume_profile_levels(df, lookback_bars, num_rows, value_area_percent)
+
+    if respect_market_hours and not is_market_open(symbol_name, last_bar_time):
+        return
+
+    if notify_cisd:
+        cisd_events = process_cisd(state, df)
+        for kind, event_time, level, _ in cisd_events:
+            caption = build_cisd_message(symbol_name, kind, float(level), last_close, tv_symbol)
+            if send_images:
+                label = "+CISD" if kind == "BULL" else "-CISD"
+                color = "#388e3c" if kind == "BULL" else "#d32f2f"
+                png = render_signal_chart_png(
+                    symbol_name=symbol_name,
+                    df=df,
+                    title=f"{symbol_name} CISD",
+                    markers=[(event_time, float(level), label, color)],
+                    poc=poc,
+                    vah=vah,
+                    val=val,
+                    levels=[(label, float(level), color)],
+                )
+            else:
+                png = None
+            maybe_send(token, chat_id, caption, png, dry_run)
 
     if notify_touch and vah is not None and np.isfinite(vah):
         if state.last_touch_vah_bar_time != last_bar_time and np.isfinite(prev_close) and np.isfinite(last_low):
@@ -698,6 +947,7 @@ def main() -> None:
         "EURUSD": {"yf": "EURUSD=X", "tv": "OANDA:EURUSD"},
         "GBPUSD": {"yf": "GBPUSD=X", "tv": "OANDA:GBPUSD"},
         "USDJPY": {"yf": "JPY=X", "tv": "OANDA:USDJPY"},
+        "BTCUSD": {"yf": "BTC-USD", "tv": "COINBASE:BTCUSD"},
     }
     states: Dict[str, SymbolState] = {k: SymbolState() for k in assets}
 
@@ -718,6 +968,8 @@ def main() -> None:
                     notify_touch=args.notify_touch,
                     notify_cross=args.notify_cross,
                     notify_qm=args.notify_qm,
+                    notify_cisd=args.notify_cisd,
+                    respect_market_hours=args.respect_market_hours,
                     depth=args.depth,
                     lb=args.lb,
                     lookback_bars=args.lookback_bars,

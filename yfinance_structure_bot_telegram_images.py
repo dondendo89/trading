@@ -60,6 +60,12 @@ class SymbolState:
     piv_labels: List[str] = None
     last_qm_m_time: Optional[pd.Timestamp] = None
     last_qm_w_time: Optional[pd.Timestamp] = None
+    session_last_processed_time: Optional[pd.Timestamp] = None
+    asia_session_day: Optional[pd.Timestamp] = None
+    asia_high: Optional[float] = None
+    asia_low: Optional[float] = None
+    london_break_high_sent: bool = False
+    london_break_low_sent: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +93,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-notify-cisd", dest="notify_cisd", action="store_false")
     p.add_argument("--respect-market-hours", action="store_true", default=True)
     p.add_argument("--no-respect-market-hours", dest="respect_market_hours", action="store_false")
+    p.add_argument("--notify-london-break", action="store_true", default=True)
+    p.add_argument("--no-notify-london-break", dest="notify_london_break", action="store_false")
+    p.add_argument("--session-tz-offset-hours", type=int, default=0)
+    p.add_argument("--asia-start-hour", type=int, default=0)
+    p.add_argument("--asia-end-hour", type=int, default=7)
+    p.add_argument("--london-start-hour", type=int, default=7)
+    p.add_argument("--london-end-hour", type=int, default=12)
 
     p.add_argument("--send-images", action="store_true", default=True)
     p.add_argument("--no-send-images", dest="send_images", action="store_false")
@@ -215,6 +228,104 @@ def is_market_open(symbol_name: str, bar_time: pd.Timestamp) -> bool:
     if wd == 4:
         return hour < 21
     return True
+
+
+def _in_hour_range(ts: pd.Timestamp, start_hour: int, end_hour: int) -> bool:
+    h = int(ts.hour)
+    if start_hour == end_hour:
+        return True
+    if start_hour < end_hour:
+        return start_hour <= h < end_hour
+    return h >= start_hour or h < end_hour
+
+
+def _session_local_time(ts: pd.Timestamp, offset_hours: int) -> pd.Timestamp:
+    if offset_hours == 0:
+        return ts
+    return ts + pd.Timedelta(hours=int(offset_hours))
+
+
+def build_london_break_message(
+    symbol_name: str,
+    side: str,
+    asia_high: float,
+    asia_low: float,
+    break_time: pd.Timestamp,
+    last_close: float,
+    tv_symbol: str,
+) -> str:
+    title = "🟩 [YF] London rompe Asia High" if side == "HIGH" else "🟥 [YF] London rompe Asia Low"
+    return "\n".join(
+        [
+            title,
+            f"💎 Asset: {symbol_name}",
+            f"🕒 Break: {break_time.isoformat(sep=' ', timespec='minutes')}",
+            f"📍 Asia High: {format_price(symbol_name, asia_high)}",
+            f"📍 Asia Low: {format_price(symbol_name, asia_low)}",
+            f"📈 Close: {format_price(symbol_name, last_close)}",
+            f"🔗 TradingView: {tv_link(tv_symbol)}",
+        ]
+    )
+
+
+def process_asia_london_break(
+    state: SymbolState,
+    df: pd.DataFrame,
+    session_tz_offset_hours: int,
+    asia_start_hour: int,
+    asia_end_hour: int,
+    london_start_hour: int,
+    london_end_hour: int,
+) -> List[Tuple[str, pd.Timestamp, float, float]]:
+    if df is None or df.empty or len(df) < 10:
+        return []
+
+    emit_events = state.session_last_processed_time is not None
+    if state.session_last_processed_time is not None:
+        try:
+            start_pos = int(df.index.get_loc(state.session_last_processed_time))
+        except Exception:
+            start_pos = max(0, len(df) - 400)
+        start_pos = max(0, start_pos - 2)
+    else:
+        start_pos = max(0, len(df) - 400)
+
+    events: List[Tuple[str, pd.Timestamp, float, float]] = []
+    for i in range(start_pos, len(df)):
+        t = pd.Timestamp(df.index[i])
+        local_t = _session_local_time(t, session_tz_offset_hours)
+        day = pd.Timestamp(local_t).normalize()
+
+        if state.asia_session_day is None or day != state.asia_session_day:
+            state.asia_session_day = day
+            state.asia_high = None
+            state.asia_low = None
+            state.london_break_high_sent = False
+            state.london_break_low_sent = False
+
+        high = float(df["High"].iloc[i])
+        low = float(df["Low"].iloc[i])
+
+        if _in_hour_range(local_t, asia_start_hour, asia_end_hour):
+            if np.isfinite(high):
+                state.asia_high = high if state.asia_high is None else max(float(state.asia_high), high)
+            if np.isfinite(low):
+                state.asia_low = low if state.asia_low is None else min(float(state.asia_low), low)
+
+        if _in_hour_range(local_t, london_start_hour, london_end_hour):
+            if state.asia_high is not None and state.asia_low is not None:
+                if (not state.london_break_high_sent) and np.isfinite(high) and high > float(state.asia_high):
+                    state.london_break_high_sent = True
+                    if emit_events:
+                        events.append(("HIGH", t, float(state.asia_high), float(state.asia_low)))
+                if (not state.london_break_low_sent) and np.isfinite(low) and low < float(state.asia_low):
+                    state.london_break_low_sent = True
+                    if emit_events:
+                        events.append(("LOW", t, float(state.asia_high), float(state.asia_low)))
+
+        state.session_last_processed_time = t
+
+    return events
 
 
 def pivot_at(df: pd.DataFrame, depth: int, lb: int) -> Tuple[Optional[Tuple[pd.Timestamp, float]], Optional[Tuple[pd.Timestamp, float]]]:
@@ -792,7 +903,13 @@ def process_symbol(
     notify_cross: bool,
     notify_qm: bool,
     notify_cisd: bool,
+    notify_london_break: bool,
     respect_market_hours: bool,
+    session_tz_offset_hours: int,
+    asia_start_hour: int,
+    asia_end_hour: int,
+    london_start_hour: int,
+    london_end_hour: int,
     depth: int,
     lb: int,
     lookback_bars: int,
@@ -814,6 +931,44 @@ def process_symbol(
 
     if respect_market_hours and not is_market_open(symbol_name, last_bar_time):
         return
+
+    if notify_london_break and _is_fx_or_metal(symbol_name):
+        breaks = process_asia_london_break(
+            state=state,
+            df=df,
+            session_tz_offset_hours=session_tz_offset_hours,
+            asia_start_hour=asia_start_hour,
+            asia_end_hour=asia_end_hour,
+            london_start_hour=london_start_hour,
+            london_end_hour=london_end_hour,
+        )
+        for side, break_time, asia_high, asia_low in breaks:
+            caption = build_london_break_message(
+                symbol_name=symbol_name,
+                side=side,
+                asia_high=float(asia_high),
+                asia_low=float(asia_low),
+                break_time=break_time,
+                last_close=last_close,
+                tv_symbol=tv_symbol,
+            )
+            if send_images:
+                label = "London→AsiaH" if side == "HIGH" else "London→AsiaL"
+                marker_price = float(asia_high) if side == "HIGH" else float(asia_low)
+                color = "#388e3c" if side == "HIGH" else "#d32f2f"
+                png = render_signal_chart_png(
+                    symbol_name=symbol_name,
+                    df=df,
+                    title=f"{symbol_name} London/Asia Break",
+                    markers=[(break_time, marker_price, label, color)],
+                    poc=poc,
+                    vah=vah,
+                    val=val,
+                    levels=[("Asia High", float(asia_high), "#d32f2f"), ("Asia Low", float(asia_low), "#388e3c")],
+                )
+            else:
+                png = None
+            maybe_send(token, chat_id, caption, png, dry_run)
 
     if notify_cisd:
         cisd_events = process_cisd(state, df)
@@ -969,7 +1124,13 @@ def main() -> None:
                     notify_cross=args.notify_cross,
                     notify_qm=args.notify_qm,
                     notify_cisd=args.notify_cisd,
+                    notify_london_break=args.notify_london_break,
                     respect_market_hours=args.respect_market_hours,
+                    session_tz_offset_hours=args.session_tz_offset_hours,
+                    asia_start_hour=args.asia_start_hour,
+                    asia_end_hour=args.asia_end_hour,
+                    london_start_hour=args.london_start_hour,
+                    london_end_hour=args.london_end_hour,
                     depth=args.depth,
                     lb=args.lb,
                     lookback_bars=args.lookback_bars,

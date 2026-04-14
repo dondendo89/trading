@@ -17,6 +17,17 @@ input bool InpSendAlert = true;
 input bool InpSendPush = false;
 input bool InpNotifyHistorical = false;
 
+input group "Hammer / Shooting"
+input bool InpEnableHs = true;
+input double InpFibLevel = 0.382;
+input bool InpConfirmByNextCandle = false;
+input bool InpConfirmWithDxy = true;
+input string InpDxySymbol = "DXY.cash";
+input color InpHammerColor = clrLimeGreen;
+input color InpShootingColor = clrRed;
+input int InpHammerArrowCode = 233;
+input int InpShootingArrowCode = 234;
+
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
 bool g_is_bullish = false;
@@ -44,6 +55,9 @@ datetime g_last_alert_time_plus = 0;
 datetime g_last_alert_time_minus = 0;
 
 string g_prefix = "CISD_";
+
+datetime g_last_hammer_alert_time = 0;
+datetime g_last_shooting_alert_time = 0;
 
 void DeleteObjectSafe(const string name)
 {
@@ -115,8 +129,140 @@ void NotifyCisd(const string kind, datetime t, double levelPrice)
    if(InpSendPush) SendNotification(msg);
 }
 
+bool IsHammerCandle(const int i, const double &open[], const double &high[], const double &low[], const double &close[])
+{
+   double candleSize = MathAbs(high[i] - low[i]);
+   if(candleSize <= 0.0) return false;
+   double bodyMin = MathMin(open[i], close[i]);
+   return (high[i] - InpFibLevel * candleSize) < bodyMin;
+}
+
+bool IsShootingCandle(const int i, const double &open[], const double &high[], const double &low[], const double &close[])
+{
+   double candleSize = MathAbs(high[i] - low[i]);
+   if(candleSize <= 0.0) return false;
+   double bodyMax = MathMax(open[i], close[i]);
+   return (low[i] + InpFibLevel * candleSize) > bodyMax;
+}
+
+bool GetDxyDirection(datetime t, bool &isBullish, bool &isBearish)
+{
+   isBullish = false;
+   isBearish = false;
+   if(!InpConfirmWithDxy) return false;
+   if(InpDxySymbol == "") return false;
+   int shift = iBarShift(InpDxySymbol, _Period, t, true);
+   if(shift < 0) return false;
+   double o[1], c[1];
+   if(CopyOpen(InpDxySymbol, _Period, shift, 1, o) <= 0) return false;
+   if(CopyClose(InpDxySymbol, _Period, shift, 1, c) <= 0) return false;
+   if(c[0] > o[0]) isBullish = true;
+   if(c[0] < o[0]) isBearish = true;
+   return true;
+}
+
+string ToUpper(const string src)
+{
+   string s = src;
+   StringToUpper(s);
+   return s;
+}
+
+bool IsXauSymbol()
+{
+   string s = ToUpper(_Symbol);
+   return (StringFind(s, "XAU") >= 0);
+}
+
+void CreateHsSignal(const string kind, datetime t, double price, color clr, int arrowCode, bool confirmed)
+{
+   string base = g_prefix + kind + "_" + IntegerToString((long)t);
+   string arrowName = base + "_A";
+   string textName = base + "_T";
+   if(ObjectFind(0, arrowName) >= 0 || ObjectFind(0, textName) >= 0) return;
+
+   if(ObjectCreate(0, arrowName, OBJ_ARROW, 0, t, price))
+   {
+      ObjectSetInteger(0, arrowName, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, arrowName, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, arrowName, OBJPROP_ARROWCODE, arrowCode);
+      ObjectSetInteger(0, arrowName, OBJPROP_SELECTABLE, false);
+   }
+
+   string label = kind;
+   if(confirmed) label = label + " confermato";
+   if(ObjectCreate(0, textName, OBJ_TEXT, 0, t, price))
+   {
+      ObjectSetString(0, textName, OBJPROP_TEXT, label);
+      ObjectSetInteger(0, textName, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, textName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, textName, OBJPROP_SELECTABLE, false);
+   }
+
+   if(InpSendAlert || InpSendPush)
+   {
+      if(!InpNotifyHistorical)
+      {
+         if(t != iTime(_Symbol, _Period, 1)) return;
+      }
+      string msg = kind + (confirmed ? " confermato" : "") + " on " + _Symbol + " TF=" + EnumToString(_Period) + " Price=" + DoubleToString(price, _Digits);
+      if(InpSendAlert) Alert(msg);
+      if(InpSendPush) SendNotification(msg);
+   }
+}
+
+void ProcessHammerShooting(const int i, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[])
+{
+   if(!InpEnableHs) return;
+   if(i + 1 >= ArraySize(time)) return;
+
+   bool isGreen = (close[i] > open[i]);
+   bool isRed = (close[i] < open[i]);
+
+   int sigIndex = i;
+   bool hammer = false;
+   bool shoot = false;
+
+   if(!InpConfirmByNextCandle)
+   {
+      hammer = IsHammerCandle(sigIndex, open, high, low, close);
+      shoot = IsShootingCandle(sigIndex, open, high, low, close);
+   }
+   else
+   {
+      sigIndex = i + 1;
+      hammer = IsHammerCandle(sigIndex, open, high, low, close) && isGreen;
+      shoot = IsShootingCandle(sigIndex, open, high, low, close) && isRed;
+   }
+
+   if(!hammer && !shoot) return;
+
+   bool dxyBull = false;
+   bool dxyBear = false;
+   bool haveDxy = false;
+   if(InpConfirmWithDxy && IsXauSymbol())
+      haveDxy = GetDxyDirection(time[sigIndex], dxyBull, dxyBear);
+
+   if(hammer)
+   {
+      bool confirmed = (haveDxy && dxyBear);
+      CreateHsSignal("Hammer", time[sigIndex], low[sigIndex], InpHammerColor, InpHammerArrowCode, confirmed);
+      g_last_hammer_alert_time = time[sigIndex];
+   }
+
+   if(shoot)
+   {
+      bool confirmed = (haveDxy && dxyBull);
+      CreateHsSignal("Shooting", time[sigIndex], high[sigIndex], InpShootingColor, InpShootingArrowCode, confirmed);
+      g_last_shooting_alert_time = time[sigIndex];
+   }
+}
+
 void ProcessBar(const int i, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[])
 {
+   ProcessHammerShooting(i, time, open, high, low, close);
+
    bool bearish_pullback_detected = (close[i+1] > open[i+1]);
    bool bullish_pullback_detected = (close[i+1] < open[i+1]);
 
@@ -289,6 +435,8 @@ void ProcessBar(const int i, const datetime &time[], const double &open[], const
 
 int OnInit()
 {
+   if(InpConfirmWithDxy && InpDxySymbol != "")
+      SymbolSelect(InpDxySymbol, true);
    return(INIT_SUCCEEDED);
 }
 

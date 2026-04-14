@@ -1,0 +1,80 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Kaspricci
+
+//@version=5
+indicator("Hammer & Shooting Star [C] - Kaspricci", shorttitle = "Hammer & Shooting Star [C]", overlay = true)
+
+FIB_LEVEL   = input.float(
+                     defval  = 0.382,
+                     title   = "Fibonacci Level",
+                     options = [0.236, 0.382, 0.5])
+
+confirm     = input.bool(
+                     defval  = false,
+                     title   = "Confirm by next candle",
+                     tooltip = "A green candle confirms a hammer and a red candle confirms a shooting star")
+
+showLabels  = input.bool(
+                     defval  = true,
+                     title   = "Show labels on chart")
+
+isGreen     = open < close
+isRed       = open > close
+
+candleSize  = math.abs(high - low)
+
+// hammer candle = the whole body of the candle is within 38.2% of the upper part of the candle  
+isHammer    = high - FIB_LEVEL * candleSize < math.min(open, close)
+
+// shooting star candle = the whole body of the candle is within 38.2% of the lower part of the candle  
+isShoot     = low  + FIB_LEVEL * candleSize > math.max(open, close)
+
+isConfirmedHammer   = confirm ? isHammer[1] and isGreen : isHammer
+isConfirmedShoot    = confirm ? isShoot[1]  and isRed   : isShoot
+
+plotshape(
+     series = isConfirmedHammer ? low  : na, 
+     title = "Hammer Candle",
+     text = "Hammer",
+     style = shape.arrowup,
+     location = location.belowbar,
+     color = color.green,
+     textcolor = color.green,
+     offset = confirm ? -1 : 0,
+     display = showLabels ? display.pane : display.none)
+
+plotshape(
+     series= isConfirmedShoot  ? high : na,
+     title = "Shooting Star Candle",
+     text = "Shooting",
+     style = shape.arrowdown, 
+     location = location.abovebar,
+     color = color.red,
+     textcolor = color.red,
+     offset = confirm ? -1 : 0,
+     display = showLabels ? display.pane : display.none)
+
+// ----------------------------------------------------------------------------------------------------------------------
+// handle entry & exit signals
+
+longEntry   = isConfirmedHammer
+shortEntry  = isConfirmedShoot
+
+// support alerts for entry $ exit signals
+alertcondition(
+     condition = longEntry,
+     title = "Hammer Candle Alert",
+     message = "Hammer candle occured for {{ticker\}} at {{close}}")
+
+alertcondition(
+     condition = shortEntry,
+     title = "Shooting Start Alert",
+     message = "Shooting Start candle occured for {{ticker}} at {{close}}")
+
+// connector to backtester strategy
+connector   = 0
+
+connector   := longEntry  ?  2 : 0
+connector   := shortEntry ? -2 : connector
+
+plot(connector, title = "Connector", display = display.status_line, color = color.gray)

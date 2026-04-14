@@ -16,7 +16,7 @@ input double InpFibLevel = 0.382;
 input bool InpConfirmByNextCandle = false;
 input bool InpConfirmWithDxy = true;
 input string InpDxySymbol = "DXY.cash";
-input bool InpRequireConfirmation = false; // Se true, apre trade SOLO se c'è conferma DXY (se applicabile)
+input bool InpRequireConfirmation = false;
 
 input group "Session Filter"
 input bool InpOnlyLondonNy = true;
@@ -26,8 +26,16 @@ input int InpLondonEndHour = 12;
 input int InpNewYorkStartHour = 12;
 input int InpNewYorkEndHour = 17;
 
+input group "Partial Close"
+input bool InpPartialCloseEnabled = false;
+input double InpPartialClosePercent = 50.0;
+input int InpPartialCloseTriggerPoints = 200;
+input bool InpPartialMoveSlToBreakeven = false;
+
 CTrade trade;
 datetime last_bar_time = 0;
+ulong last_partial_ticket = 0;
+bool partial_done = false;
 
 bool HasOpenPositionForThisEA()
 {
@@ -40,6 +48,22 @@ bool HasOpenPositionForThisEA()
       if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
       return true;
    }
+   return false;
+}
+
+bool SelectPositionForThisEA(ulong &ticket)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong t = PositionGetTicket(i);
+      if(t == 0) continue;
+      if(!PositionSelectByTicket(t)) continue;
+      if((string)PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      ticket = t;
+      return true;
+   }
+   ticket = 0;
    return false;
 }
 
@@ -65,6 +89,77 @@ bool IsLondonNySession(datetime serverTime)
    if(InHourRange(h, InpLondonStartHour, InpLondonEndHour)) return true;
    if(InHourRange(h, InpNewYorkStartHour, InpNewYorkEndHour)) return true;
    return false;
+}
+
+double NormalizeVolume(double vol)
+{
+   double minVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double stepVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(stepVol <= 0.0) stepVol = minVol;
+   if(vol < minVol) return 0.0;
+   double steps = MathFloor(vol / stepVol);
+   double out = steps * stepVol;
+   if(out < minVol) return 0.0;
+   return out;
+}
+
+void ManagePartialClose()
+{
+   if(!InpPartialCloseEnabled) return;
+
+   ulong ticket = 0;
+   if(!SelectPositionForThisEA(ticket))
+   {
+      last_partial_ticket = 0;
+      partial_done = false;
+      return;
+   }
+
+   if(ticket != last_partial_ticket)
+   {
+      last_partial_ticket = ticket;
+      partial_done = false;
+   }
+   if(partial_done) return;
+
+   double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(point <= 0.0) return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double movePoints = 0.0;
+   if(type == POSITION_TYPE_BUY)
+      movePoints = (bid - openPrice) / point;
+   else if(type == POSITION_TYPE_SELL)
+      movePoints = (openPrice - ask) / point;
+   else
+      return;
+
+   if(movePoints < (double)InpPartialCloseTriggerPoints) return;
+
+   double closeVolRaw = volume * (InpPartialClosePercent / 100.0);
+   double closeVol = NormalizeVolume(closeVolRaw);
+   if(closeVol <= 0.0) return;
+
+   double minVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if((volume - closeVol) < minVol)
+   {
+      closeVol = NormalizeVolume(volume - minVol);
+      if(closeVol <= 0.0) return;
+   }
+
+   if(trade.PositionClosePartial(_Symbol, closeVol))
+   {
+      partial_done = true;
+      if(InpPartialMoveSlToBreakeven)
+      {
+         double tp = PositionGetDouble(POSITION_TP);
+         trade.PositionModify(_Symbol, openPrice, tp);
+      }
+   }
 }
 
 string ToUpper(const string src)
@@ -131,14 +226,12 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
+   ManagePartialClose();
+
+   if(HasOpenPositionForThisEA()) return;
+
    datetime current_time = iTime(_Symbol, _Period, 0);
    if(current_time == last_bar_time) return; // Lavora solo su candela chiusa
-
-   if(HasOpenPositionForThisEA())
-   {
-      last_bar_time = current_time;
-      return;
-   }
    
    if(InpOnlyLondonNy && !IsLondonNySession(TimeTradeServer()))
    {

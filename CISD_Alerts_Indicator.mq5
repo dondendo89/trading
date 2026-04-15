@@ -27,6 +27,11 @@ input color InpHammerColor = clrLimeGreen;
 input color InpShootingColor = clrRed;
 input int InpHammerArrowCode = 233;
 input int InpShootingArrowCode = 234;
+input bool InpHsEntryOnBreakout = false;
+input int InpHsBreakoutBufferPoints = 0;
+input bool InpHsAlertOnBreakout = true;
+input bool InpHsShowBreakoutLine = true;
+input color InpHsBreakoutLineColor = clrDodgerBlue;
 
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
@@ -58,6 +63,18 @@ string g_prefix = "CISD_";
 
 datetime g_last_hammer_alert_time = 0;
 datetime g_last_shooting_alert_time = 0;
+bool g_hs_pending_long = false;
+bool g_hs_pending_short = false;
+double g_hs_pending_long_level = 0.0;
+double g_hs_pending_short_level = 0.0;
+datetime g_hs_pending_long_time = 0;
+datetime g_hs_pending_short_time = 0;
+bool g_hs_breakout_long_fired = false;
+bool g_hs_breakout_short_fired = false;
+string g_hs_breakout_long_line = "";
+string g_hs_breakout_long_text = "";
+string g_hs_breakout_short_line = "";
+string g_hs_breakout_short_text = "";
 
 void DeleteObjectSafe(const string name)
 {
@@ -70,6 +87,47 @@ datetime ExtendTime(datetime t, int bars)
    long sec = PeriodSeconds(_Period);
    if(sec <= 0) sec = 60;
    return (datetime)(t + (long)bars * sec);
+}
+
+void CreateBreakoutLevel(const string side, datetime t1, datetime t2, double price, bool confirmed, string &outLine, string &outLbl)
+{
+   if(!InpHsShowBreakoutLine) return;
+   string lineName = g_prefix + "HSB_" + side + "_L_" + IntegerToString((long)t1);
+   string lblName = g_prefix + "HSB_" + side + "_T_" + IntegerToString((long)t1);
+
+   DeleteObjectSafe(outLine);
+   DeleteObjectSafe(outLbl);
+
+   if(ObjectCreate(0, lineName, OBJ_TREND, 0, t1, price, t2, price))
+   {
+      ObjectSetInteger(0, lineName, OBJPROP_COLOR, InpHsBreakoutLineColor);
+      ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_DASH);
+      ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, false);
+   }
+
+   string txt = (side == "LONG") ? "BUY break" : "SELL break";
+   if(confirmed) txt = txt + " confermato";
+   if(ObjectCreate(0, lblName, OBJ_TEXT, 0, t2, price))
+   {
+      ObjectSetString(0, lblName, OBJPROP_TEXT, txt);
+      ObjectSetInteger(0, lblName, OBJPROP_COLOR, InpHsBreakoutLineColor);
+      ObjectSetInteger(0, lblName, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, lblName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, lblName, OBJPROP_SELECTABLE, false);
+   }
+
+   outLine = lineName;
+   outLbl = lblName;
+}
+
+void UpdateBreakoutLevel(const string lineName, const string lblName, datetime t2, double price)
+{
+   if(lineName != "" && ObjectFind(0, lineName) >= 0)
+      ObjectMove(0, lineName, 1, t2, price);
+   if(lblName != "" && ObjectFind(0, lblName) >= 0)
+      ObjectMove(0, lblName, 0, t2, price);
 }
 
 void CreateLevel(const string side, datetime t1, datetime t2, double price, color clr, const string text, string &outLine, string &outLbl)
@@ -248,6 +306,20 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    {
       bool confirmed = (haveDxy && dxyBear);
       CreateHsSignal("Hammer", time[sigIndex], low[sigIndex], InpHammerColor, InpHammerArrowCode, confirmed);
+      if(InpHsEntryOnBreakout)
+      {
+         g_hs_pending_long = true;
+         g_hs_pending_short = false;
+         g_hs_pending_long_level = high[sigIndex];
+         g_hs_pending_long_time = time[sigIndex];
+         g_hs_breakout_long_fired = false;
+         datetime t2 = ExtendTime(time[i], InpExtendBars);
+         CreateBreakoutLevel("LONG", time[sigIndex], t2, g_hs_pending_long_level, confirmed, g_hs_breakout_long_line, g_hs_breakout_long_text);
+         DeleteObjectSafe(g_hs_breakout_short_line);
+         DeleteObjectSafe(g_hs_breakout_short_text);
+         g_hs_breakout_short_line = "";
+         g_hs_breakout_short_text = "";
+      }
       g_last_hammer_alert_time = time[sigIndex];
    }
 
@@ -255,6 +327,20 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    {
       bool confirmed = (haveDxy && dxyBull);
       CreateHsSignal("Shooting", time[sigIndex], high[sigIndex], InpShootingColor, InpShootingArrowCode, confirmed);
+      if(InpHsEntryOnBreakout)
+      {
+         g_hs_pending_short = true;
+         g_hs_pending_long = false;
+         g_hs_pending_short_level = low[sigIndex];
+         g_hs_pending_short_time = time[sigIndex];
+         g_hs_breakout_short_fired = false;
+         datetime t2 = ExtendTime(time[i], InpExtendBars);
+         CreateBreakoutLevel("SHORT", time[sigIndex], t2, g_hs_pending_short_level, confirmed, g_hs_breakout_short_line, g_hs_breakout_short_text);
+         DeleteObjectSafe(g_hs_breakout_long_line);
+         DeleteObjectSafe(g_hs_breakout_long_text);
+         g_hs_breakout_long_line = "";
+         g_hs_breakout_long_text = "";
+      }
       g_last_shooting_alert_time = time[sigIndex];
    }
 }
@@ -479,6 +565,14 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
       g_minus_lbl = "";
       g_last_alert_time_plus = 0;
       g_last_alert_time_minus = 0;
+      g_hs_pending_long = false;
+      g_hs_pending_short = false;
+      g_hs_breakout_long_fired = false;
+      g_hs_breakout_short_fired = false;
+      g_hs_breakout_long_line = "";
+      g_hs_breakout_long_text = "";
+      g_hs_breakout_short_line = "";
+      g_hs_breakout_short_text = "";
    }
 
    int limit = (prev_calculated == 0) ? rates_total - 2 : 2;
@@ -494,6 +588,41 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
       UpdateLevel(g_plus_obj, g_plus_lbl, t2, g_plus_level_price);
    if(!g_minus_completed && g_minus_obj != "")
       UpdateLevel(g_minus_obj, g_minus_lbl, t2, g_minus_level_price);
+
+   if(InpEnableHs && InpHsEntryOnBreakout)
+   {
+      datetime t2b = ExtendTime(time[0], InpExtendBars);
+      if(g_hs_pending_long && !g_hs_breakout_long_fired)
+      {
+         UpdateBreakoutLevel(g_hs_breakout_long_line, g_hs_breakout_long_text, t2b, g_hs_pending_long_level);
+         double buffer = (double)InpHsBreakoutBufferPoints * _Point;
+         if(high[0] >= (g_hs_pending_long_level + buffer))
+         {
+            g_hs_breakout_long_fired = true;
+            if(InpHsAlertOnBreakout)
+            {
+               string msg = "Hammer breakout BUY on " + _Symbol + " TF=" + EnumToString(_Period) + " Level=" + DoubleToString(g_hs_pending_long_level, _Digits);
+               if(InpSendAlert) Alert(msg);
+               if(InpSendPush) SendNotification(msg);
+            }
+         }
+      }
+      if(g_hs_pending_short && !g_hs_breakout_short_fired)
+      {
+         UpdateBreakoutLevel(g_hs_breakout_short_line, g_hs_breakout_short_text, t2b, g_hs_pending_short_level);
+         double buffer = (double)InpHsBreakoutBufferPoints * _Point;
+         if(low[0] <= (g_hs_pending_short_level - buffer))
+         {
+            g_hs_breakout_short_fired = true;
+            if(InpHsAlertOnBreakout)
+            {
+               string msg = "Shooting breakout SELL on " + _Symbol + " TF=" + EnumToString(_Period) + " Level=" + DoubleToString(g_hs_pending_short_level, _Digits);
+               if(InpSendAlert) Alert(msg);
+               if(InpSendPush) SendNotification(msg);
+            }
+         }
+      }
+   }
 
    return(rates_total);
 }

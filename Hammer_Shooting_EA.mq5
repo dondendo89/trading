@@ -32,10 +32,18 @@ input double InpPartialClosePercent = 50.0;
 input int InpPartialCloseTriggerPoints = 200;
 input bool InpPartialMoveSlToBreakeven = false;
 
+input group "Breakout Entry"
+input bool InpEntryOnBreakout = false;
+input int InpBreakoutBufferPoints = 0;
+
 CTrade trade;
 datetime last_bar_time = 0;
 ulong last_partial_ticket = 0;
 bool partial_done = false;
+bool pending_long = false;
+bool pending_short = false;
+double pending_long_level = 0.0;
+double pending_short_level = 0.0;
 
 bool HasOpenPositionForThisEA()
 {
@@ -48,6 +56,54 @@ bool HasOpenPositionForThisEA()
       if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
       return true;
    }
+   return false;
+}
+
+bool TryBreakoutEntry()
+{
+   if(!InpEntryOnBreakout) return false;
+   if(!pending_long && !pending_short) return false;
+
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(point <= 0.0) return false;
+   double buffer = (double)InpBreakoutBufferPoints * point;
+
+   if(pending_long)
+   {
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      if(ask > 0.0 && ask >= (pending_long_level + buffer))
+      {
+         double sl = 0.0;
+         double tp = 0.0;
+         if(InpStopLoss > 0) sl = ask - (InpStopLoss * point);
+         if(InpTakeProfit > 0) tp = ask + (InpTakeProfit * point);
+         if(trade.Buy(InpLotSize, _Symbol, ask, sl, tp, "Hammer Breakout Buy"))
+         {
+            pending_long = false;
+            pending_short = false;
+            return true;
+         }
+      }
+   }
+
+   if(pending_short)
+   {
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(bid > 0.0 && bid <= (pending_short_level - buffer))
+      {
+         double sl = 0.0;
+         double tp = 0.0;
+         if(InpStopLoss > 0) sl = bid + (InpStopLoss * point);
+         if(InpTakeProfit > 0) tp = bid - (InpTakeProfit * point);
+         if(trade.Sell(InpLotSize, _Symbol, bid, sl, tp, "Shooting Breakout Sell"))
+         {
+            pending_long = false;
+            pending_short = false;
+            return true;
+         }
+      }
+   }
+
    return false;
 }
 
@@ -229,15 +285,16 @@ void OnTick()
    ManagePartialClose();
 
    if(HasOpenPositionForThisEA()) return;
-
-   datetime current_time = iTime(_Symbol, _Period, 0);
-   if(current_time == last_bar_time) return; // Lavora solo su candela chiusa
    
    if(InpOnlyLondonNy && !IsLondonNySession(TimeTradeServer()))
    {
-      last_bar_time = current_time;
       return;
    }
+
+   if(TryBreakoutEntry()) return;
+
+   datetime current_time = iTime(_Symbol, _Period, 0);
+   if(current_time == last_bar_time) return; // Lavora solo su candela chiusa
    
    // Dati candele
    double o[2], h[2], l[2], c[2];
@@ -293,11 +350,20 @@ void OnTick()
       bool confirmed = (!InpConfirmWithDxy || !IsXauSymbol() || (haveDxy && dxyBear));
       if(!InpRequireConfirmation || confirmed)
       {
-         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         if(InpStopLoss > 0) sl = ask - (InpStopLoss * point);
-         if(InpTakeProfit > 0) tp = ask + (InpTakeProfit * point);
-         
-         trade.Buy(InpLotSize, _Symbol, ask, sl, tp, "Hammer Buy");
+         if(InpEntryOnBreakout)
+         {
+            int sigIndex = InpConfirmByNextCandle ? 0 : 1;
+            pending_long = true;
+            pending_short = false;
+            pending_long_level = h[sigIndex];
+         }
+         else
+         {
+            double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+            if(InpStopLoss > 0) sl = ask - (InpStopLoss * point);
+            if(InpTakeProfit > 0) tp = ask + (InpTakeProfit * point);
+            trade.Buy(InpLotSize, _Symbol, ask, sl, tp, "Hammer Buy");
+         }
       }
    }
    
@@ -306,11 +372,20 @@ void OnTick()
       bool confirmed = (!InpConfirmWithDxy || !IsXauSymbol() || (haveDxy && dxyBull));
       if(!InpRequireConfirmation || confirmed)
       {
-         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         if(InpStopLoss > 0) sl = bid + (InpStopLoss * point);
-         if(InpTakeProfit > 0) tp = bid - (InpTakeProfit * point);
-         
-         trade.Sell(InpLotSize, _Symbol, bid, sl, tp, "Shooting Sell");
+         if(InpEntryOnBreakout)
+         {
+            int sigIndex = InpConfirmByNextCandle ? 0 : 1;
+            pending_short = true;
+            pending_long = false;
+            pending_short_level = l[sigIndex];
+         }
+         else
+         {
+            double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            if(InpStopLoss > 0) sl = bid + (InpStopLoss * point);
+            if(InpTakeProfit > 0) tp = bid - (InpTakeProfit * point);
+            trade.Sell(InpLotSize, _Symbol, bid, sl, tp, "Shooting Sell");
+         }
       }
    }
    

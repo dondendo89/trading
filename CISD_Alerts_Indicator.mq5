@@ -37,6 +37,7 @@ input bool InpHsEnableM15 = true;
 input bool InpHsEnableM30 = true;
 input bool InpHsEnableH1  = true;
 input bool InpHsEnableH4  = true;
+input bool InpHsMultiTimeframe = true;
 input bool InpHsTrendFilterEnabled = true;
 input int InpHsTrendEmaFast = 50;
 input int InpHsTrendEmaSlow = 200;
@@ -111,6 +112,34 @@ string g_vp_val_line = "";
 int g_ema_fast_handle = INVALID_HANDLE;
 int g_ema_slow_handle = INVALID_HANDLE;
 int g_atr_handle = INVALID_HANDLE;
+int g_ema_fast_m15 = INVALID_HANDLE;
+int g_ema_slow_m15 = INVALID_HANDLE;
+int g_atr_m15 = INVALID_HANDLE;
+int g_ema_fast_m30 = INVALID_HANDLE;
+int g_ema_slow_m30 = INVALID_HANDLE;
+int g_atr_m30 = INVALID_HANDLE;
+int g_ema_fast_h1 = INVALID_HANDLE;
+int g_ema_slow_h1 = INVALID_HANDLE;
+int g_atr_h1 = INVALID_HANDLE;
+int g_ema_fast_h4 = INVALID_HANDLE;
+int g_ema_slow_h4 = INVALID_HANDLE;
+int g_atr_h4 = INVALID_HANDLE;
+datetime g_tf_last_time0_m15 = 0;
+datetime g_tf_last_time0_m30 = 0;
+datetime g_tf_last_time0_h1 = 0;
+datetime g_tf_last_time0_h4 = 0;
+bool g_tf_armed_m15 = false;
+bool g_tf_armed_m30 = false;
+bool g_tf_armed_h1 = false;
+bool g_tf_armed_h4 = false;
+datetime g_last_hammer_time_m15 = 0;
+datetime g_last_shooting_time_m15 = 0;
+datetime g_last_hammer_time_m30 = 0;
+datetime g_last_shooting_time_m30 = 0;
+datetime g_last_hammer_time_h1 = 0;
+datetime g_last_shooting_time_h1 = 0;
+datetime g_last_hammer_time_h4 = 0;
+datetime g_last_shooting_time_h4 = 0;
 
 void DeleteObjectSafe(const string name)
 {
@@ -380,6 +409,18 @@ bool HsTimeframeEnabled()
    }
 }
 
+string TfLabelFromTf(const ENUM_TIMEFRAMES tf)
+{
+   switch(tf)
+   {
+      case PERIOD_M15: return "M15";
+      case PERIOD_M30: return "M30";
+      case PERIOD_H1:  return "H1";
+      case PERIOD_H4:  return "H4";
+      default:         return EnumToString(tf);
+   }
+}
+
 bool GetTrendFlags(const int shift, const double &close[], bool &isUp, bool &isDown)
 {
    isUp = false;
@@ -398,6 +439,220 @@ bool GetTrendFlags(const int shift, const double &close[], bool &isUp, bool &isD
    return true;
 }
 
+string TfLabel()
+{
+   switch(_Period)
+   {
+      case PERIOD_M15: return "M15";
+      case PERIOD_M30: return "M30";
+      case PERIOD_H1:  return "H1";
+      case PERIOD_H4:  return "H4";
+      default:         return EnumToString(_Period);
+   }
+}
+
+bool GetDxyDirectionTf(const ENUM_TIMEFRAMES tf, datetime t, bool &isBullish, bool &isBearish)
+{
+   isBullish = false;
+   isBearish = false;
+   if(!InpConfirmWithDxy) return false;
+   if(InpDxySymbol == "") return false;
+   int shift = iBarShift(InpDxySymbol, tf, t, true);
+   if(shift < 0) return false;
+   double o[1], c[1];
+   if(CopyOpen(InpDxySymbol, tf, shift, 1, o) <= 0) return false;
+   if(CopyClose(InpDxySymbol, tf, shift, 1, c) <= 0) return false;
+   if(c[0] > o[0]) isBullish = true;
+   if(c[0] < o[0]) isBearish = true;
+   return true;
+}
+
+bool ComputeVpLevelsRates(const MqlRates &rates[], const int bars, const int rows, const int valueAreaPercent, double &poc, double &vah, double &val)
+{
+   poc = 0.0;
+   vah = 0.0;
+   val = 0.0;
+   if(bars < 10 || rows < 10) return false;
+   double highest = -DBL_MAX;
+   double lowest = DBL_MAX;
+   for(int i = 0; i < bars; i++)
+   {
+      if(rates[i].high > highest) highest = rates[i].high;
+      if(rates[i].low < lowest) lowest = rates[i].low;
+   }
+   double range = highest - lowest;
+   if(range <= 0.0) return false;
+   double rowHeight = range / (double)rows;
+   if(rowHeight <= 0.0) return false;
+   double levelVol[];
+   ArrayResize(levelVol, rows);
+   for(int i = 0; i < rows; i++) levelVol[i] = 0.0;
+   for(int i = 0; i < bars; i++)
+   {
+      double barVol = (double)rates[i].tick_volume;
+      if(barVol <= 0.0) barVol = 1.0;
+      int startLevel = (int)MathFloor((rates[i].low - lowest) / rowHeight);
+      int endLevel = (int)MathFloor((rates[i].high - lowest) / rowHeight);
+      if(startLevel < 0) startLevel = 0;
+      if(endLevel > rows - 1) endLevel = rows - 1;
+      int levelsInBar = endLevel - startLevel + 1;
+      if(levelsInBar <= 0) continue;
+      double volPerLevel = barVol / (double)levelsInBar;
+      for(int j = startLevel; j <= endLevel; j++) levelVol[j] += volPerLevel;
+   }
+   double totalVol = 0.0;
+   int pocIndex = 0;
+   double maxVol = levelVol[0];
+   for(int i = 0; i < rows; i++)
+   {
+      totalVol += levelVol[i];
+      if(levelVol[i] > maxVol)
+      {
+         maxVol = levelVol[i];
+         pocIndex = i;
+      }
+   }
+   if(totalVol <= 0.0) return false;
+   double targetVa = totalVol * ((double)valueAreaPercent / 100.0);
+   double accumulated = levelVol[pocIndex];
+   int vahIndex = pocIndex;
+   int valIndex = pocIndex;
+   while(accumulated < targetVa)
+   {
+      bool canUp = (vahIndex < rows - 1);
+      bool canDown = (valIndex > 0);
+      double upVol = canUp ? levelVol[vahIndex + 1] : 0.0;
+      double downVol = canDown ? levelVol[valIndex - 1] : 0.0;
+      if(canUp && (!canDown || upVol >= downVol))
+      {
+         accumulated += upVol;
+         vahIndex++;
+      }
+      else if(canDown)
+      {
+         accumulated += downVol;
+         valIndex--;
+      }
+      else
+         break;
+   }
+   poc = lowest + ((double)pocIndex + 0.5) * rowHeight;
+   vah = lowest + ((double)(vahIndex + 1)) * rowHeight;
+   val = lowest + ((double)valIndex) * rowHeight;
+   return true;
+}
+
+datetime VpAsiaOpenLocalTf(const datetime nowLocal)
+{
+   MqlDateTime dt;
+   TimeToStruct(nowLocal, dt);
+   dt.hour = InpVpAsiaOpenHour;
+   dt.min = 0;
+   dt.sec = 0;
+   datetime openLocal = StructToTime(dt);
+   if(nowLocal < openLocal)
+      openLocal = openLocal - 86400;
+   return openLocal;
+}
+
+int VpLookbackBarsFromAsiaTf(const ENUM_TIMEFRAMES tf, const datetime nowServer)
+{
+   if(!InpVpAnchorAsia) return InpVpLookbackBars;
+   datetime nowLocal = nowServer + (datetime)InpVpSessionOffsetHours * 3600;
+   datetime openLocal = VpAsiaOpenLocalTf(nowLocal);
+   datetime openServer = openLocal - (datetime)InpVpSessionOffsetHours * 3600;
+   datetime times[];
+   ArraySetAsSeries(times, true);
+   int copied = CopyTime(_Symbol, tf, 0, InpVpMaxBars, times);
+   if(copied < 10) return InpVpLookbackBars;
+   int count = 0;
+   for(int i = 0; i < copied; i++)
+   {
+      if(times[i] < openServer) break;
+      count++;
+   }
+   if(count < 10) return InpVpLookbackBars;
+   return count;
+}
+
+bool GetTrendFlagsTf(const ENUM_TIMEFRAMES tf, const int shift, const double closePrice, bool &isUp, bool &isDown)
+{
+   isUp = false;
+   isDown = false;
+   if(!InpHsTrendFilterEnabled) return true;
+   int hFast = INVALID_HANDLE;
+   int hSlow = INVALID_HANDLE;
+   int hAtr = INVALID_HANDLE;
+   if(tf == PERIOD_M15) { hFast = g_ema_fast_m15; hSlow = g_ema_slow_m15; hAtr = g_atr_m15; }
+   if(tf == PERIOD_M30) { hFast = g_ema_fast_m30; hSlow = g_ema_slow_m30; hAtr = g_atr_m30; }
+   if(tf == PERIOD_H1) { hFast = g_ema_fast_h1; hSlow = g_ema_slow_h1; hAtr = g_atr_h1; }
+   if(tf == PERIOD_H4) { hFast = g_ema_fast_h4; hSlow = g_ema_slow_h4; hAtr = g_atr_h4; }
+   if(hFast == INVALID_HANDLE || hSlow == INVALID_HANDLE || hAtr == INVALID_HANDLE) return true;
+   double emaFast[1], emaSlow[1], atr[1];
+   if(CopyBuffer(hFast, 0, shift, 1, emaFast) <= 0) return false;
+   if(CopyBuffer(hSlow, 0, shift, 1, emaSlow) <= 0) return false;
+   if(CopyBuffer(hAtr, 0, shift, 1, atr) <= 0) return false;
+   double diff = emaFast[0] - emaSlow[0];
+   double threshold = atr[0] * InpHsTrendAtrMult;
+   if(diff >= threshold && closePrice > emaFast[0]) isUp = true;
+   if((-diff) >= threshold && closePrice < emaFast[0]) isDown = true;
+   return true;
+}
+
+void CreateHsSignalTf(const string kind, const string tfTag, datetime t, double price, color clr, int arrowCode, bool confirmed, bool canAlert)
+{
+   string base = g_prefix + kind + "_" + tfTag + "_" + IntegerToString((long)t);
+   string arrowName = base + "_A";
+   string textName = base + "_T";
+   if(ObjectFind(0, arrowName) >= 0 || ObjectFind(0, textName) >= 0) return;
+
+   if(ObjectCreate(0, arrowName, OBJ_ARROW, 0, t, price))
+   {
+      ObjectSetInteger(0, arrowName, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, arrowName, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, arrowName, OBJPROP_ARROWCODE, arrowCode);
+      ObjectSetInteger(0, arrowName, OBJPROP_SELECTABLE, false);
+   }
+
+   string label = kind + " " + tfTag;
+   if(confirmed) label = label + " confermato";
+   if(ObjectCreate(0, textName, OBJ_TEXT, 0, t, price))
+   {
+      ObjectSetString(0, textName, OBJPROP_TEXT, label);
+      ObjectSetInteger(0, textName, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, textName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, textName, OBJPROP_SELECTABLE, false);
+   }
+
+   if((InpSendAlert || InpSendPush) && canAlert)
+   {
+      if(!g_alerts_armed) return;
+      if(!InpNotifyHistorical) return;
+      string msg = kind + " " + tfTag + (confirmed ? " confermato" : "") + " on " + _Symbol + " Price=" + DoubleToString(price, _Digits);
+      if(InpSendAlert) Alert(msg);
+      if(InpSendPush) SendNotification(msg);
+   }
+}
+
+bool IsHammerRates(const int i, const MqlRates &rates[])
+{
+   if(i < 0 || i >= ArraySize(rates)) return false;
+   double candleSize = MathAbs(rates[i].high - rates[i].low);
+   if(candleSize <= 0.0) return false;
+   double bodyMin = MathMin(rates[i].open, rates[i].close);
+   return (rates[i].high - InpFibLevel * candleSize) < bodyMin;
+}
+
+bool IsShootingRates(const int i, const MqlRates &rates[])
+{
+   if(i < 0 || i >= ArraySize(rates)) return false;
+   double candleSize = MathAbs(rates[i].high - rates[i].low);
+   if(candleSize <= 0.0) return false;
+   double bodyMax = MathMax(rates[i].open, rates[i].close);
+   return (rates[i].low + InpFibLevel * candleSize) > bodyMax;
+}
+
 void CreateHsSignal(const string kind, datetime t, double price, color clr, int arrowCode, bool confirmed)
 {
    string base = g_prefix + kind + "_" + IntegerToString((long)t);
@@ -413,7 +668,7 @@ void CreateHsSignal(const string kind, datetime t, double price, color clr, int 
       ObjectSetInteger(0, arrowName, OBJPROP_SELECTABLE, false);
    }
 
-   string label = kind;
+   string label = kind + " " + TfLabel();
    if(confirmed) label = label + " confermato";
    if(ObjectCreate(0, textName, OBJ_TEXT, 0, t, price))
    {
@@ -431,9 +686,110 @@ void CreateHsSignal(const string kind, datetime t, double price, color clr, int 
       {
          if(t != iTime(_Symbol, _Period, 1)) return;
       }
-      string msg = kind + (confirmed ? " confermato" : "") + " on " + _Symbol + " TF=" + EnumToString(_Period) + " Price=" + DoubleToString(price, _Digits);
+      string msg = kind + " " + TfLabel() + (confirmed ? " confermato" : "") + " on " + _Symbol + " Price=" + DoubleToString(price, _Digits);
       if(InpSendAlert) Alert(msg);
       if(InpSendPush) SendNotification(msg);
+   }
+}
+
+void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &lastTime0, bool &armed, datetime &lastHammerTime, datetime &lastShootingTime)
+{
+   if(!InpHsMultiTimeframe) return;
+   if(!enabled) return;
+   if(tf == _Period) return;
+   if(!InpEnableHs) return;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   int copied = CopyRates(_Symbol, tf, 0, InpVpMaxBars, rates);
+   if(copied < 5) return;
+
+   datetime time0 = rates[0].time;
+   if(InpSuppressAlertsOnLoad)
+   {
+      if(lastTime0 == 0) { lastTime0 = time0; armed = false; return; }
+      if(!armed && time0 != lastTime0) armed = true;
+      lastTime0 = time0;
+   }
+   else
+   {
+      armed = true;
+   }
+
+   int confirmIndex = 1;
+   int signalIndex = InpConfirmByNextCandle ? 2 : 1;
+   if(copied <= signalIndex) return;
+
+   bool isGreen = (rates[confirmIndex].close > rates[confirmIndex].open);
+   bool isRed = (rates[confirmIndex].close < rates[confirmIndex].open);
+
+   bool hammer = false;
+   bool shoot = false;
+   if(!InpConfirmByNextCandle)
+   {
+      hammer = IsHammerRates(signalIndex, rates);
+      shoot = IsShootingRates(signalIndex, rates);
+   }
+   else
+   {
+      double sigBodyHigh = MathMax(rates[signalIndex].open, rates[signalIndex].close);
+      double sigBodyLow = MathMin(rates[signalIndex].open, rates[signalIndex].close);
+      hammer = IsHammerRates(signalIndex, rates) && isGreen && (rates[confirmIndex].close > sigBodyHigh);
+      shoot = IsShootingRates(signalIndex, rates) && isRed && (rates[confirmIndex].close < sigBodyLow);
+   }
+   if(!hammer && !shoot) return;
+
+   bool trendUp = false;
+   bool trendDown = false;
+   if(InpHsTrendFilterEnabled)
+   {
+      if(GetTrendFlagsTf(tf, signalIndex, rates[signalIndex].close, trendUp, trendDown))
+      {
+         if(hammer && !trendDown) hammer = false;
+         if(shoot && !trendUp) shoot = false;
+      }
+   }
+   if(!hammer && !shoot) return;
+
+   bool dxyBull = false;
+   bool dxyBear = false;
+   bool haveDxy = false;
+   if(InpConfirmWithDxy && IsXauSymbol())
+      haveDxy = GetDxyDirectionTf(tf, rates[signalIndex].time, dxyBull, dxyBear);
+
+   double poc = 0.0, vah = 0.0, val = 0.0;
+   bool vpOk = true;
+   if(InpVpFilterEnabled)
+   {
+      int lb = VpLookbackBarsFromAsiaTf(tf, rates[confirmIndex].time);
+      if(lb > copied) lb = copied;
+      vpOk = ComputeVpLevelsRates(rates, lb, InpVpRows, InpVpValueAreaPercent, poc, vah, val);
+   }
+
+   string tfTag = TfLabelFromTf(tf);
+
+   if(hammer)
+   {
+      bool confirmed = (haveDxy && dxyBear);
+      if(InpVpFilterEnabled && vpOk)
+         hammer = (rates[signalIndex].low < val) && (rates[signalIndex].close > val) && (rates[signalIndex].close < vah);
+      if(hammer && rates[signalIndex].time != lastHammerTime)
+      {
+         lastHammerTime = rates[signalIndex].time;
+         CreateHsSignalTf("Hammer", tfTag, rates[signalIndex].time, rates[signalIndex].low, InpHammerColor, InpHammerArrowCode, confirmed, armed);
+      }
+   }
+
+   if(shoot)
+   {
+      bool confirmed = (haveDxy && dxyBull);
+      if(InpVpFilterEnabled && vpOk)
+         shoot = (rates[signalIndex].high > vah) && (rates[signalIndex].close < vah) && (rates[signalIndex].close > val);
+      if(shoot && rates[signalIndex].time != lastShootingTime)
+      {
+         lastShootingTime = rates[signalIndex].time;
+         CreateHsSignalTf("Shooting", tfTag, rates[signalIndex].time, rates[signalIndex].high, InpShootingColor, InpShootingArrowCode, confirmed, armed);
+      }
    }
 }
 
@@ -741,6 +1097,18 @@ int OnInit()
    g_ema_fast_handle = iMA(_Symbol, _Period, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
    g_ema_slow_handle = iMA(_Symbol, _Period, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
    g_atr_handle = iATR(_Symbol, _Period, InpHsTrendAtrPeriod);
+   g_ema_fast_m15 = iMA(_Symbol, PERIOD_M15, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   g_ema_slow_m15 = iMA(_Symbol, PERIOD_M15, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   g_atr_m15 = iATR(_Symbol, PERIOD_M15, InpHsTrendAtrPeriod);
+   g_ema_fast_m30 = iMA(_Symbol, PERIOD_M30, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   g_ema_slow_m30 = iMA(_Symbol, PERIOD_M30, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   g_atr_m30 = iATR(_Symbol, PERIOD_M30, InpHsTrendAtrPeriod);
+   g_ema_fast_h1 = iMA(_Symbol, PERIOD_H1, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   g_ema_slow_h1 = iMA(_Symbol, PERIOD_H1, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   g_atr_h1 = iATR(_Symbol, PERIOD_H1, InpHsTrendAtrPeriod);
+   g_ema_fast_h4 = iMA(_Symbol, PERIOD_H4, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   g_ema_slow_h4 = iMA(_Symbol, PERIOD_H4, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   g_atr_h4 = iATR(_Symbol, PERIOD_H4, InpHsTrendAtrPeriod);
    return(INIT_SUCCEEDED);
 }
 
@@ -753,6 +1121,30 @@ void OnDeinit(const int reason)
    g_ema_fast_handle = INVALID_HANDLE;
    g_ema_slow_handle = INVALID_HANDLE;
    g_atr_handle = INVALID_HANDLE;
+   if(g_ema_fast_m15 != INVALID_HANDLE) IndicatorRelease(g_ema_fast_m15);
+   if(g_ema_slow_m15 != INVALID_HANDLE) IndicatorRelease(g_ema_slow_m15);
+   if(g_atr_m15 != INVALID_HANDLE) IndicatorRelease(g_atr_m15);
+   if(g_ema_fast_m30 != INVALID_HANDLE) IndicatorRelease(g_ema_fast_m30);
+   if(g_ema_slow_m30 != INVALID_HANDLE) IndicatorRelease(g_ema_slow_m30);
+   if(g_atr_m30 != INVALID_HANDLE) IndicatorRelease(g_atr_m30);
+   if(g_ema_fast_h1 != INVALID_HANDLE) IndicatorRelease(g_ema_fast_h1);
+   if(g_ema_slow_h1 != INVALID_HANDLE) IndicatorRelease(g_ema_slow_h1);
+   if(g_atr_h1 != INVALID_HANDLE) IndicatorRelease(g_atr_h1);
+   if(g_ema_fast_h4 != INVALID_HANDLE) IndicatorRelease(g_ema_fast_h4);
+   if(g_ema_slow_h4 != INVALID_HANDLE) IndicatorRelease(g_ema_slow_h4);
+   if(g_atr_h4 != INVALID_HANDLE) IndicatorRelease(g_atr_h4);
+   g_ema_fast_m15 = INVALID_HANDLE;
+   g_ema_slow_m15 = INVALID_HANDLE;
+   g_atr_m15 = INVALID_HANDLE;
+   g_ema_fast_m30 = INVALID_HANDLE;
+   g_ema_slow_m30 = INVALID_HANDLE;
+   g_atr_m30 = INVALID_HANDLE;
+   g_ema_fast_h1 = INVALID_HANDLE;
+   g_ema_slow_h1 = INVALID_HANDLE;
+   g_atr_h1 = INVALID_HANDLE;
+   g_ema_fast_h4 = INVALID_HANDLE;
+   g_ema_slow_h4 = INVALID_HANDLE;
+   g_atr_h4 = INVALID_HANDLE;
 }
 
 datetime VpAsiaOpenLocal(datetime nowLocal)
@@ -803,6 +1195,10 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    ArraySetAsSeries(close, true);
 
    DrawHsStatusOnChart();
+   ProcessHsTimeframe(PERIOD_M15, InpHsEnableM15, g_tf_last_time0_m15, g_tf_armed_m15, g_last_hammer_time_m15, g_last_shooting_time_m15);
+   ProcessHsTimeframe(PERIOD_M30, InpHsEnableM30, g_tf_last_time0_m30, g_tf_armed_m30, g_last_hammer_time_m30, g_last_shooting_time_m30);
+   ProcessHsTimeframe(PERIOD_H1, InpHsEnableH1, g_tf_last_time0_h1, g_tf_armed_h1, g_last_hammer_time_h1, g_last_shooting_time_h1);
+   ProcessHsTimeframe(PERIOD_H4, InpHsEnableH4, g_tf_last_time0_h4, g_tf_armed_h4, g_last_hammer_time_h4, g_last_shooting_time_h4);
 
    if(InpSuppressAlertsOnLoad)
    {

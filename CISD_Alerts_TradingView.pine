@@ -18,6 +18,13 @@ fibLevel = input.float(0.382, "Fibonacci Level", options=[0.236, 0.382, 0.5], gr
 confirmByNext = input.bool(false, "Confirm by next candle", group="Hammer/Shooting")
 confirmWithDxy = input.bool(true, "Confirm with DXY", group="Hammer/Shooting")
 dxySymbol = input.symbol("TVC:DXY", "DXY Symbol", group="Hammer/Shooting")
+wyckSpikeFilterEnabled = input.bool(true, "Wyck spike filter", group="Hammer/Shooting")
+wyckSpikeMinPoints = input.int(600, "Wyck min points (default)", minval=1, group="Hammer/Shooting")
+wyckSpikeMinPointsCur = input.int(0, "Wyck min points (Current TF, 0=default)", minval=0, group="Hammer/Shooting")
+wyckSpikeMinPointsM15 = input.int(0, "Wyck min points (M15, 0=default)", minval=0, group="Hammer/Shooting")
+wyckSpikeMinPointsM30 = input.int(0, "Wyck min points (M30, 0=default)", minval=0, group="Hammer/Shooting")
+wyckSpikeMinPointsH1 = input.int(0, "Wyck min points (H1, 0=default)", minval=0, group="Hammer/Shooting")
+wyckSpikeMinPointsH4 = input.int(0, "Wyck min points (H4, 0=default)", minval=0, group="Hammer/Shooting")
 
 hsEnableM15 = input.bool(true, "M15", inline="tf", group="Hammer/Shooting TF")
 hsEnableM30 = input.bool(true, "M30", inline="tf", group="Hammer/Shooting TF")
@@ -167,14 +174,6 @@ if array.size(cisdLevelsBe) >= 1 and not keepLevels
 alertcondition(sendAlerts and bearCisdFormed, "Bearish CISD Formed", "Bearish CISD Formed on {{ticker}} {{interval}}")
 alertcondition(sendAlerts and bullCisdFormed, "Bullish CISD Formed", "Bullish CISD Formed on {{ticker}} {{interval}}")
 
-f_tf_label(tf) =>
-    switch tf
-        "15" => "M15"
-        "30" => "M30"
-        "60" => "H1"
-        "240" => "H4"
-        => tf
-
 f_is_hammer(_o, _h, _l, _c) =>
     cs = math.abs(_h - _l)
     cs > 0 and _h - fibLevel * cs < math.min(_o, _c)
@@ -194,25 +193,32 @@ f_trend_flags(_c) =>
     [up, dn]
 
 f_asia_start() =>
-    h = hour(time, vpTz)
-    m = minute(time, vpTz)
+    tz = str.length(vpTz) > 0 ? vpTz : syminfo.timezone
+    h = hour(time, tz)
+    m = minute(time, tz)
     h == vpAsiaOpenHour and m == 0
 
 f_vp_len() =>
-    vpAnchorAsia ? math.min(ta.barssince(f_asia_start()) + 1, vpMaxBars) : vpFixedLookback
+    if vpAnchorAsia
+        bs = ta.barssince(f_asia_start())
+        base = na(bs) ? (bar_index + 1) : (bs + 1)
+        math.min(base, vpMaxBars)
+    else
+        vpFixedLookback
 
 f_vp_levels(_len) =>
     bins = vpRows
-    hi = ta.highest(high, _len)
-    lo = ta.lowest(low, _len)
+    ln = int(math.max(1, _len))
+    hi = ta.highest(high, ln)
+    lo = ta.lowest(low, ln)
     rng = hi - lo
     float poc = na
     float vah = na
     float val = na
-    if rng > 0 and _len >= 10
+    if rng > 0 and ln >= 10
         rowH = rng / bins
         vols = array.new_float(bins, 0.0)
-        for i = 0 to _len - 1
+        for i = 0 to ln - 1
             bh = high[i]
             bl = low[i]
             bv = volume[i]
@@ -259,9 +265,9 @@ f_vp_levels(_len) =>
             val := lo + (valI + 0.0) * rowH
     [poc, vah, val]
 
-f_hs_calc() =>
+f_hs_calc(_wyckMinPoints) =>
     if not enableHs
-        [0, na, na, na, na]
+        [0, na, na, na, na, na]
     else
         _len = f_vp_len()
         [poc, vah, val] = f_vp_levels(_len)
@@ -271,6 +277,11 @@ f_hs_calc() =>
         confOkShoot = confirmByNext ? (close < math.min(open[1], close[1])) : true
         hammer = f_is_hammer(open[sigIdx], high[sigIdx], low[sigIdx], close[sigIdx]) and (not confirmByNext or (close > open and confOkHammer))
         shoot = f_is_shoot(open[sigIdx], high[sigIdx], low[sigIdx], close[sigIdx]) and (not confirmByNext or (close < open and confOkShoot))
+        if wyckSpikeFilterEnabled
+            minPts = _wyckMinPoints > 0 ? _wyckMinPoints : wyckSpikeMinPoints
+            rangePts = (high[sigIdx] - low[sigIdx]) / syminfo.mintick
+            hammer := hammer and rangePts >= minPts
+            shoot := shoot and rangePts >= minPts
         if hsTrendFilterEnabled
             hammer := hammer and dn
             shoot := shoot and up
@@ -289,10 +300,11 @@ f_hs_calc() =>
                     shoot := shoot and (bmin >= poc) and (bmax <= vah)
         sig = barstate.isconfirmed ? (hammer ? 1 : shoot ? -1 : 0) : 0
         price = sig == 1 ? low[sigIdx] : sig == -1 ? high[sigIdx] : na
-        [sig, price, poc, vah, val]
+        sigTime = time_close
+        [sig, price, poc, vah, val, sigTime]
 
-f_hs_raw(tf) =>
-    request.security(syminfo.tickerid, tf, f_hs_calc(), barmerge.gaps_off, barmerge.lookahead_off)
+f_hs_raw(tf, _wyckMinPoints) =>
+    request.security(syminfo.tickerid, tf, f_hs_calc(_wyckMinPoints), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
 isXau = str.contains(syminfo.ticker, "XAU")
 
@@ -300,42 +312,66 @@ f_confirm_sig(rawSig, tf) =>
     if not confirmWithDxy or not isXau
         rawSig
     else
-        dxyBull = request.security(dxySymbol, tf, close > open, barmerge.gaps_off, barmerge.lookahead_off)
-        dxyBear = request.security(dxySymbol, tf, close < open, barmerge.gaps_off, barmerge.lookahead_off)
+        dxyBull = request.security(dxySymbol, tf, close > open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+        dxyBear = request.security(dxySymbol, tf, close < open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
         rawSig == 1 and dxyBear ? 1 : rawSig == -1 and dxyBull ? -1 : 0
 
 show = plotHistory or barstate.isrealtime
 
-[raw15, p15, _, _, _] = f_hs_raw("15")
+f_plot_sig(_cond, _x, _price, _txt, _clr, _isUp) =>
+    if _cond and not na(_price)
+        label.new(x=_x, y=_price, text=_txt, xloc=xloc.bar_time, yloc=yloc.price, style=_isUp ? label.style_label_up : label.style_label_down, textcolor=_clr, color=color.new(color.white, 100), size=size.tiny)
+
+wyckCur = wyckSpikeMinPointsCur > 0 ? wyckSpikeMinPointsCur : wyckSpikeMinPoints
+wyckM15 = wyckSpikeMinPointsM15 > 0 ? wyckSpikeMinPointsM15 : wyckSpikeMinPoints
+wyckM30 = wyckSpikeMinPointsM30 > 0 ? wyckSpikeMinPointsM30 : wyckSpikeMinPoints
+wyckH1 = wyckSpikeMinPointsH1 > 0 ? wyckSpikeMinPointsH1 : wyckSpikeMinPoints
+wyckH4 = wyckSpikeMinPointsH4 > 0 ? wyckSpikeMinPointsH4 : wyckSpikeMinPoints
+
+[raw15, p15, _, _, _, x15] = f_hs_raw("15", wyckM15)
 sig15 = hsEnableM15 ? f_confirm_sig(raw15, "15") : 0
-plotshape(show and sig15 == 1, title="Hammer M15", style=shape.arrowup, location=location.absolute, y=p15, color=color.lime, text="Hammer M15", textcolor=color.lime, size=size.tiny)
-plotshape(show and sig15 == -1, title="Shooting M15", style=shape.arrowdown, location=location.absolute, y=p15, color=color.red, text="Shooting M15", textcolor=color.red, size=size.tiny)
+new15 = sig15 != 0 and x15 != x15[1]
+f_plot_sig(show and new15 and sig15 == 1, x15, p15, "Hammer M15", color.lime, true)
+f_plot_sig(show and new15 and sig15 == -1, x15, p15, "Shooting M15", color.red, false)
 
-[raw30, p30, _, _, _] = f_hs_raw("30")
+[raw30, p30, _, _, _, x30] = f_hs_raw("30", wyckM30)
 sig30 = hsEnableM30 ? f_confirm_sig(raw30, "30") : 0
-plotshape(show and sig30 == 1, title="Hammer M30", style=shape.arrowup, location=location.absolute, y=p30, color=color.lime, text="Hammer M30", textcolor=color.lime, size=size.tiny)
-plotshape(show and sig30 == -1, title="Shooting M30", style=shape.arrowdown, location=location.absolute, y=p30, color=color.red, text="Shooting M30", textcolor=color.red, size=size.tiny)
+new30 = sig30 != 0 and x30 != x30[1]
+f_plot_sig(show and new30 and sig30 == 1, x30, p30, "Hammer M30", color.lime, true)
+f_plot_sig(show and new30 and sig30 == -1, x30, p30, "Shooting M30", color.red, false)
 
-[raw60, p60, _, _, _] = f_hs_raw("60")
+[raw60, p60, _, _, _, x60] = f_hs_raw("60", wyckH1)
 sig60 = hsEnableH1 ? f_confirm_sig(raw60, "60") : 0
-plotshape(show and sig60 == 1, title="Hammer H1", style=shape.arrowup, location=location.absolute, y=p60, color=color.lime, text="Hammer H1", textcolor=color.lime, size=size.tiny)
-plotshape(show and sig60 == -1, title="Shooting H1", style=shape.arrowdown, location=location.absolute, y=p60, color=color.red, text="Shooting H1", textcolor=color.red, size=size.tiny)
+new60 = sig60 != 0 and x60 != x60[1]
+f_plot_sig(show and new60 and sig60 == 1, x60, p60, "Hammer H1", color.lime, true)
+f_plot_sig(show and new60 and sig60 == -1, x60, p60, "Shooting H1", color.red, false)
 
-[raw240, p240, _, _, _] = f_hs_raw("240")
+[raw240, p240, _, _, _, x240] = f_hs_raw("240", wyckH4)
 sig240 = hsEnableH4 ? f_confirm_sig(raw240, "240") : 0
-plotshape(show and sig240 == 1, title="Hammer H4", style=shape.arrowup, location=location.absolute, y=p240, color=color.lime, text="Hammer H4", textcolor=color.lime, size=size.tiny)
-plotshape(show and sig240 == -1, title="Shooting H4", style=shape.arrowdown, location=location.absolute, y=p240, color=color.red, text="Shooting H4", textcolor=color.red, size=size.tiny)
+new240 = sig240 != 0 and x240 != x240[1]
+f_plot_sig(show and new240 and sig240 == 1, x240, p240, "Hammer H4", color.lime, true)
+f_plot_sig(show and new240 and sig240 == -1, x240, p240, "Shooting H4", color.red, false)
 
-[rawCur, _, pocCur, vahCur, valCur] = f_hs_raw(timeframe.period)
-plot(vpShowLines and vpFilterEnabled ? pocCur : na, "POC", color=color.new(color.aqua, 0), linewidth=2)
-plot(vpShowLines and vpFilterEnabled ? vahCur : na, "VAH", color=color.new(color.purple, 0), linewidth=1)
-plot(vpShowLines and vpFilterEnabled ? valCur : na, "VAL", color=color.new(color.orange, 0), linewidth=1)
+[sigCur, pCurSig, pocCur, vahCur, valCur, xCur] = f_hs_calc(wyckCur)
+newCur = sigCur != 0 and xCur != xCur[1]
+f_plot_sig(show and newCur and sigCur == 1, xCur, pCurSig, "Hammer " + timeframe.period, color.lime, true)
+f_plot_sig(show and newCur and sigCur == -1, xCur, pCurSig, "Shooting " + timeframe.period, color.red, false)
 
-alertcondition(sendAlerts and sig15 == 1, "Hammer M15", "Hammer M15 on {{ticker}}")
-alertcondition(sendAlerts and sig15 == -1, "Shooting M15", "Shooting M15 on {{ticker}}")
-alertcondition(sendAlerts and sig30 == 1, "Hammer M30", "Hammer M30 on {{ticker}}")
-alertcondition(sendAlerts and sig30 == -1, "Shooting M30", "Shooting M30 on {{ticker}}")
-alertcondition(sendAlerts and sig60 == 1, "Hammer H1", "Hammer H1 on {{ticker}}")
-alertcondition(sendAlerts and sig60 == -1, "Shooting H1", "Shooting H1 on {{ticker}}")
-alertcondition(sendAlerts and sig240 == 1, "Hammer H4", "Hammer H4 on {{ticker}}")
-alertcondition(sendAlerts and sig240 == -1, "Shooting H4", "Shooting H4 on {{ticker}}")
+[rawCur, _, pocCurSec, vahCurSec, valCurSec, _] = f_hs_raw(timeframe.period, wyckCur)
+pocStable = barstate.isconfirmed ? pocCurSec : pocCurSec[1]
+vahStable = barstate.isconfirmed ? vahCurSec : vahCurSec[1]
+valStable = barstate.isconfirmed ? valCurSec : valCurSec[1]
+plot(vpShowLines and vpFilterEnabled ? pocStable : na, "POC", color=color.new(color.aqua, 0), linewidth=2)
+plot(vpShowLines and vpFilterEnabled ? vahStable : na, "VAH", color=color.new(color.purple, 0), linewidth=1)
+plot(vpShowLines and vpFilterEnabled ? valStable : na, "VAL", color=color.new(color.orange, 0), linewidth=1)
+
+alertcondition(sendAlerts and new15 and sig15 == 1, "Hammer M15", "Hammer M15 on {{ticker}}")
+alertcondition(sendAlerts and new15 and sig15 == -1, "Shooting M15", "Shooting M15 on {{ticker}}")
+alertcondition(sendAlerts and new30 and sig30 == 1, "Hammer M30", "Hammer M30 on {{ticker}}")
+alertcondition(sendAlerts and new30 and sig30 == -1, "Shooting M30", "Shooting M30 on {{ticker}}")
+alertcondition(sendAlerts and new60 and sig60 == 1, "Hammer H1", "Hammer H1 on {{ticker}}")
+alertcondition(sendAlerts and new60 and sig60 == -1, "Shooting H1", "Shooting H1 on {{ticker}}")
+alertcondition(sendAlerts and new240 and sig240 == 1, "Hammer H4", "Hammer H4 on {{ticker}}")
+alertcondition(sendAlerts and new240 and sig240 == -1, "Shooting H4", "Shooting H4 on {{ticker}}")
+alertcondition(sendAlerts and newCur and sigCur == 1, "Hammer Current TF", "Hammer on {{ticker}} {{interval}}")
+alertcondition(sendAlerts and newCur and sigCur == -1, "Shooting Current TF", "Shooting on {{ticker}} {{interval}}")

@@ -43,6 +43,13 @@ input int InpHsTrendEmaFast = 50;
 input int InpHsTrendEmaSlow = 200;
 input int InpHsTrendAtrPeriod = 14;
 input double InpHsTrendAtrMult = 0.5;
+input bool InpWyckSpikeFilterEnabled = true;
+input int InpWyckSpikeMinPoints = 600;
+input int InpWyckSpikeMinPointsCurrent = 0;
+input int InpWyckSpikeMinPointsM15 = 0;
+input int InpWyckSpikeMinPointsM30 = 0;
+input int InpWyckSpikeMinPointsH1 = 0;
+input int InpWyckSpikeMinPointsH4 = 0;
 
 input group "Volume Profile Filter"
 input bool InpVpFilterEnabled = true;
@@ -406,7 +413,7 @@ bool HsTimeframeEnabled()
       case PERIOD_M30:  return InpHsEnableM30;
       case PERIOD_H1:   return InpHsEnableH1;
       case PERIOD_H4:   return InpHsEnableH4;
-      default:          return false;
+      default:          return true;
    }
 }
 
@@ -654,6 +661,21 @@ bool IsShootingRates(const int i, const MqlRates &rates[])
    return (rates[i].low + InpFibLevel * candleSize) > bodyMax;
 }
 
+int WyckMinPointsForTf(const ENUM_TIMEFRAMES tf)
+{
+   int v = 0;
+   switch(tf)
+   {
+      case PERIOD_M15: v = InpWyckSpikeMinPointsM15; break;
+      case PERIOD_M30: v = InpWyckSpikeMinPointsM30; break;
+      case PERIOD_H1:  v = InpWyckSpikeMinPointsH1;  break;
+      case PERIOD_H4:  v = InpWyckSpikeMinPointsH4;  break;
+      default:         v = InpWyckSpikeMinPointsCurrent; break;
+   }
+   if(v <= 0) v = InpWyckSpikeMinPoints;
+   return v;
+}
+
 void CreateHsSignal(const string kind, datetime t, double price, color clr, int arrowCode, bool confirmed)
 {
    string base = g_prefix + kind + "_" + IntegerToString((long)t);
@@ -737,6 +759,17 @@ void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &
       double sigBodyLow = MathMin(rates[signalIndex].open, rates[signalIndex].close);
       hammer = IsHammerRates(signalIndex, rates) && isGreen && (rates[confirmIndex].close > sigBodyHigh);
       shoot = IsShootingRates(signalIndex, rates) && isRed && (rates[confirmIndex].close < sigBodyLow);
+   }
+   if(!hammer && !shoot) return;
+
+   if(InpWyckSpikeFilterEnabled)
+   {
+      double pt = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      if(pt <= 0.0) pt = _Point;
+      double rangePts = (rates[signalIndex].high - rates[signalIndex].low) / pt;
+      int minPts = WyckMinPointsForTf(tf);
+      if(hammer && rangePts < (double)minPts) hammer = false;
+      if(shoot && rangePts < (double)minPts) shoot = false;
    }
    if(!hammer && !shoot) return;
 
@@ -862,6 +895,18 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    }
 
    if(!hammer && !shoot) return;
+
+   if(InpWyckSpikeFilterEnabled)
+   {
+      double pt = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      if(pt <= 0.0) pt = _Point;
+      double rangePts = (high[signalIndex] - low[signalIndex]) / pt;
+      int minPts = WyckMinPointsForTf(_Period);
+      if(hammer && rangePts < (double)minPts) hammer = false;
+      if(shoot && rangePts < (double)minPts) shoot = false;
+   }
+   if(!hammer && !shoot) return;
+
    if(InpHsTrendFilterEnabled)
    {
       bool trendUp = false;

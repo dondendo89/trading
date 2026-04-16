@@ -22,6 +22,8 @@ input int InpHsTrendEmaFast = 50;
 input int InpHsTrendEmaSlow = 200;
 input int InpHsTrendAtrPeriod = 14;
 input double InpHsTrendAtrMult = 0.5;
+input bool InpWyckSpikeFilterEnabled = true;
+input int InpWyckSpikeMinPoints = 600;
 
 input group "Session Filter"
 input bool InpOnlyLondonNy = true;
@@ -558,8 +560,13 @@ void OnTick()
    datetime current_time = iTime(_Symbol, _Period, 0);
    if(current_time == last_bar_time) return; // Lavora solo su candela chiusa
    
-   double o[3], h[3], l[3], c[3];
-   datetime t[3];
+   double o[], h[], l[], c[];
+   datetime t[];
+   ArrayResize(o, 3);
+   ArrayResize(h, 3);
+   ArrayResize(l, 3);
+   ArrayResize(c, 3);
+   ArrayResize(t, 3);
    ArraySetAsSeries(o, true);
    ArraySetAsSeries(h, true);
    ArraySetAsSeries(l, true);
@@ -591,6 +598,15 @@ void OnTick()
       double sigBodyLow = MathMin(o[signalIndex], c[signalIndex]);
       hammer = IsHammerCandle(o[signalIndex], h[signalIndex], l[signalIndex], c[signalIndex]) && isGreen && (c[confirmIndex] > sigBodyHigh);
       shoot = IsShootingCandle(o[signalIndex], h[signalIndex], l[signalIndex], c[signalIndex]) && isRed && (c[confirmIndex] < sigBodyLow);
+   }
+
+   if(InpWyckSpikeFilterEnabled)
+   {
+      double pt = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      if(pt <= 0.0) pt = _Point;
+      double rangePts = (h[signalIndex] - l[signalIndex]) / pt;
+      if(hammer && rangePts < (double)InpWyckSpikeMinPoints) hammer = false;
+      if(shoot && rangePts < (double)InpWyckSpikeMinPoints) shoot = false;
    }
    
    if(!hammer && !shoot)

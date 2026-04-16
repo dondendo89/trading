@@ -17,6 +17,11 @@ input bool InpConfirmByNextCandle = false;
 input bool InpConfirmWithDxy = true;
 input string InpDxySymbol = "DXY.cash";
 input bool InpRequireConfirmation = false;
+input bool InpHsTrendFilterEnabled = true;
+input int InpHsTrendEmaFast = 50;
+input int InpHsTrendEmaSlow = 200;
+input int InpHsTrendAtrPeriod = 14;
+input double InpHsTrendAtrMult = 0.5;
 
 input group "Session Filter"
 input bool InpOnlyLondonNy = true;
@@ -49,6 +54,7 @@ input bool InpVpShowLines = true;
 input color InpVpPocColor = clrDeepSkyBlue;
 input color InpVpVahColor = clrMediumPurple;
 input color InpVpValColor = clrOrange;
+input bool InpVpBodyZoneFilter = true;
 
 CTrade trade;
 datetime last_bar_time = 0;
@@ -66,6 +72,9 @@ string vp_val_line = "HS_EA_VP_VAL";
 string vp_poc_text = "HS_EA_VP_POC_TXT";
 string vp_vah_text = "HS_EA_VP_VAH_TXT";
 string vp_val_text = "HS_EA_VP_VAL_TXT";
+int g_ema_fast_handle = INVALID_HANDLE;
+int g_ema_slow_handle = INVALID_HANDLE;
+int g_atr_handle = INVALID_HANDLE;
 
 bool HasOpenPositionForThisEA()
 {
@@ -269,6 +278,27 @@ void UpdateVpLinesIfNeeded()
    CreateOrUpdatePriceLabel(vp_vah_text, "VAH", vah, InpVpVahColor);
    CreateOrUpdatePriceLabel(vp_val_text, "VAL", val, InpVpValColor);
    ChartRedraw(0);
+}
+
+bool GetTrendFlagsEA(const int shift, bool &isUp, bool &isDown)
+{
+   isUp = false;
+   isDown = false;
+   if(!InpHsTrendFilterEnabled) return true;
+   if(g_ema_fast_handle == INVALID_HANDLE || g_ema_slow_handle == INVALID_HANDLE || g_atr_handle == INVALID_HANDLE) return true;
+   if(shift < 0) return false;
+
+   double emaFast[1], emaSlow[1], atr[1], closeArr[1];
+   if(CopyBuffer(g_ema_fast_handle, 0, shift, 1, emaFast) <= 0) return false;
+   if(CopyBuffer(g_ema_slow_handle, 0, shift, 1, emaSlow) <= 0) return false;
+   if(CopyBuffer(g_atr_handle, 0, shift, 1, atr) <= 0) return false;
+   if(CopyClose(_Symbol, _Period, shift, 1, closeArr) <= 0) return false;
+
+   double diff = emaFast[0] - emaSlow[0];
+   double threshold = atr[0] * InpHsTrendAtrMult;
+   if(diff >= threshold && closeArr[0] > emaFast[0]) isUp = true;
+   if((-diff) >= threshold && closeArr[0] < emaFast[0]) isDown = true;
+   return true;
 }
 
 bool TryBreakoutEntry()
@@ -486,6 +516,10 @@ int OnInit()
    
    if(InpConfirmWithDxy && InpDxySymbol != "")
       SymbolSelect(InpDxySymbol, true);
+
+   g_ema_fast_handle = iMA(_Symbol, _Period, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   g_ema_slow_handle = iMA(_Symbol, _Period, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   g_atr_handle = iATR(_Symbol, _Period, InpHsTrendAtrPeriod);
       
    return(INIT_SUCCEEDED);
 }
@@ -498,6 +532,12 @@ void OnDeinit(const int reason)
    ObjectDelete(0, vp_poc_text);
    ObjectDelete(0, vp_vah_text);
    ObjectDelete(0, vp_val_text);
+   if(g_ema_fast_handle != INVALID_HANDLE) IndicatorRelease(g_ema_fast_handle);
+   if(g_ema_slow_handle != INVALID_HANDLE) IndicatorRelease(g_ema_slow_handle);
+   if(g_atr_handle != INVALID_HANDLE) IndicatorRelease(g_atr_handle);
+   g_ema_fast_handle = INVALID_HANDLE;
+   g_ema_slow_handle = INVALID_HANDLE;
+   g_atr_handle = INVALID_HANDLE;
 }
 
 void OnTick()
@@ -558,6 +598,23 @@ void OnTick()
       last_bar_time = current_time;
       return;
    }
+
+   int trendShift = InpConfirmByNextCandle ? 2 : 1;
+   bool trendUp = false;
+   bool trendDown = false;
+   if(InpHsTrendFilterEnabled)
+   {
+      if(GetTrendFlagsEA(trendShift, trendUp, trendDown))
+      {
+         if(hammer && !trendDown) hammer = false;
+         if(shoot && !trendUp) shoot = false;
+      }
+   }
+   if(!hammer && !shoot)
+   {
+      last_bar_time = current_time;
+      return;
+   }
    
    bool dxyBull = false;
    bool dxyBear = false;
@@ -588,6 +645,12 @@ void OnTick()
             if(vpOk)
             {
                vpOk = (l[sigIndex] < val) && (c[sigIndex] > val) && (c[sigIndex] < vah);
+               if(vpOk && InpVpBodyZoneFilter)
+               {
+                  double bodyMin = MathMin(o[sigIndex], c[sigIndex]);
+                  double bodyMax = MathMax(o[sigIndex], c[sigIndex]);
+                  vpOk = (bodyMin >= val) && (bodyMax <= poc);
+               }
             }
          }
          if(!vpOk)
@@ -634,6 +697,12 @@ void OnTick()
             if(vpOk)
             {
                vpOk = (h[sigIndex] > vah) && (c[sigIndex] < vah) && (c[sigIndex] > val);
+               if(vpOk && InpVpBodyZoneFilter)
+               {
+                  double bodyMin = MathMin(o[sigIndex], c[sigIndex]);
+                  double bodyMax = MathMax(o[sigIndex], c[sigIndex]);
+                  vpOk = (bodyMin >= poc) && (bodyMax <= vah);
+               }
             }
          }
          if(!vpOk)

@@ -57,6 +57,7 @@ input bool InpVpShowLines = true;
 input color InpVpPocColor = clrDeepSkyBlue;
 input color InpVpVahColor = clrMediumPurple;
 input color InpVpValColor = clrOrange;
+input bool InpVpBodyZoneFilter = true;
 
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
@@ -772,7 +773,15 @@ void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &
    {
       bool confirmed = (haveDxy && dxyBear);
       if(InpVpFilterEnabled && vpOk)
+      {
          hammer = (rates[signalIndex].low < val) && (rates[signalIndex].close > val) && (rates[signalIndex].close < vah);
+         if(hammer && InpVpBodyZoneFilter)
+         {
+            double bodyMin = MathMin(rates[signalIndex].open, rates[signalIndex].close);
+            double bodyMax = MathMax(rates[signalIndex].open, rates[signalIndex].close);
+            hammer = (bodyMin >= val) && (bodyMax <= poc);
+         }
+      }
       if(hammer && rates[signalIndex].time != lastHammerTime)
       {
          lastHammerTime = rates[signalIndex].time;
@@ -784,7 +793,15 @@ void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &
    {
       bool confirmed = (haveDxy && dxyBull);
       if(InpVpFilterEnabled && vpOk)
+      {
          shoot = (rates[signalIndex].high > vah) && (rates[signalIndex].close < vah) && (rates[signalIndex].close > val);
+         if(shoot && InpVpBodyZoneFilter)
+         {
+            double bodyMin = MathMin(rates[signalIndex].open, rates[signalIndex].close);
+            double bodyMax = MathMax(rates[signalIndex].open, rates[signalIndex].close);
+            shoot = (bodyMin >= poc) && (bodyMax <= vah);
+         }
+      }
       if(shoot && rates[signalIndex].time != lastShootingTime)
       {
          lastShootingTime = rates[signalIndex].time;
@@ -872,6 +889,12 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
          bool vpOk = true;
          if(InpVpFilterEnabled)
             vpOk = (low[signalIndex] < g_vp_val) && (close[signalIndex] > g_vp_val) && (close[signalIndex] < g_vp_vah);
+         if(vpOk && InpVpBodyZoneFilter)
+         {
+            double bodyMin = MathMin(open[signalIndex], close[signalIndex]);
+            double bodyMax = MathMax(open[signalIndex], close[signalIndex]);
+            vpOk = (bodyMin >= g_vp_val) && (bodyMax <= g_vp_poc);
+         }
          if(!vpOk) return;
          g_hs_pending_long = true;
          g_hs_pending_short = false;
@@ -897,6 +920,12 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
          bool vpOk = true;
          if(InpVpFilterEnabled)
             vpOk = (high[signalIndex] > g_vp_vah) && (close[signalIndex] < g_vp_vah) && (close[signalIndex] > g_vp_val);
+         if(vpOk && InpVpBodyZoneFilter)
+         {
+            double bodyMin = MathMin(open[signalIndex], close[signalIndex]);
+            double bodyMax = MathMax(open[signalIndex], close[signalIndex]);
+            vpOk = (bodyMin >= g_vp_poc) && (bodyMax <= g_vp_vah);
+         }
          if(!vpOk) return;
          g_hs_pending_short = true;
          g_hs_pending_long = false;

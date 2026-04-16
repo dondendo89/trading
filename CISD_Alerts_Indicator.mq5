@@ -16,6 +16,7 @@ input group "Alerts"
 input bool InpSendAlert = true;
 input bool InpSendPush = false;
 input bool InpNotifyHistorical = false;
+input bool InpSuppressAlertsOnLoad = true;
 
 input group "Hammer / Shooting"
 input bool InpEnableHs = true;
@@ -32,6 +33,20 @@ input int InpHsBreakoutBufferPoints = 0;
 input bool InpHsAlertOnBreakout = true;
 input bool InpHsShowBreakoutLine = true;
 input color InpHsBreakoutLineColor = clrDodgerBlue;
+
+input group "Volume Profile Filter"
+input bool InpVpFilterEnabled = true;
+input bool InpVpAnchorAsia = true;
+input int InpVpAsiaOpenHour = 0;
+input int InpVpSessionOffsetHours = 0;
+input int InpVpMaxBars = 600;
+input int InpVpLookbackBars = 100;
+input int InpVpRows = 30;
+input int InpVpValueAreaPercent = 70;
+input bool InpVpShowLines = true;
+input color InpVpPocColor = clrDeepSkyBlue;
+input color InpVpVahColor = clrMediumPurple;
+input color InpVpValColor = clrOrange;
 
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
@@ -60,6 +75,8 @@ datetime g_last_alert_time_plus = 0;
 datetime g_last_alert_time_minus = 0;
 
 string g_prefix = "CISD_";
+bool g_alerts_armed = false;
+datetime g_last_time0 = 0;
 
 datetime g_last_hammer_alert_time = 0;
 datetime g_last_shooting_alert_time = 0;
@@ -76,6 +93,13 @@ string g_hs_breakout_long_text = "";
 string g_hs_breakout_short_line = "";
 string g_hs_breakout_short_text = "";
 
+double g_vp_poc = 0.0;
+double g_vp_vah = 0.0;
+double g_vp_val = 0.0;
+string g_vp_poc_line = "";
+string g_vp_vah_line = "";
+string g_vp_val_line = "";
+
 void DeleteObjectSafe(const string name)
 {
    if(name == "") return;
@@ -87,6 +111,105 @@ datetime ExtendTime(datetime t, int bars)
    long sec = PeriodSeconds(_Period);
    if(sec <= 0) sec = 60;
    return (datetime)(t + (long)bars * sec);
+}
+
+bool ComputeVpLevelsSeries(const int lookbackBars, const int rows, const int valueAreaPercent, const double &high[], const double &low[], const long &tick_volume[], double &poc, double &vah, double &val)
+{
+   poc = 0.0;
+   vah = 0.0;
+   val = 0.0;
+   if(lookbackBars < 10 || rows < 10) return false;
+   if(ArraySize(high) < lookbackBars || ArraySize(low) < lookbackBars) return false;
+
+   double highest = -DBL_MAX;
+   double lowest = DBL_MAX;
+   for(int i = 0; i < lookbackBars; i++)
+   {
+      if(high[i] > highest) highest = high[i];
+      if(low[i] < lowest) lowest = low[i];
+   }
+   double range = highest - lowest;
+   if(range <= 0.0) return false;
+
+   double rowHeight = range / (double)rows;
+   if(rowHeight <= 0.0) return false;
+
+   double levelVol[];
+   ArrayResize(levelVol, rows);
+   for(int i = 0; i < rows; i++) levelVol[i] = 0.0;
+
+   for(int i = 0; i < lookbackBars; i++)
+   {
+      double barHigh = high[i];
+      double barLow = low[i];
+      double barVol = (double)tick_volume[i];
+      if(barVol <= 0.0) barVol = 1.0;
+
+      int startLevel = (int)MathFloor((barLow - lowest) / rowHeight);
+      int endLevel = (int)MathFloor((barHigh - lowest) / rowHeight);
+      if(startLevel < 0) startLevel = 0;
+      if(endLevel > rows - 1) endLevel = rows - 1;
+      int levelsInBar = endLevel - startLevel + 1;
+      if(levelsInBar <= 0) continue;
+      double volPerLevel = barVol / (double)levelsInBar;
+      for(int j = startLevel; j <= endLevel; j++) levelVol[j] += volPerLevel;
+   }
+
+   double totalVol = 0.0;
+   int pocIndex = 0;
+   double maxVol = levelVol[0];
+   for(int i = 0; i < rows; i++)
+   {
+      totalVol += levelVol[i];
+      if(levelVol[i] > maxVol)
+      {
+         maxVol = levelVol[i];
+         pocIndex = i;
+      }
+   }
+   if(totalVol <= 0.0) return false;
+
+   double targetVa = totalVol * ((double)valueAreaPercent / 100.0);
+   double accumulated = levelVol[pocIndex];
+   int vahIndex = pocIndex;
+   int valIndex = pocIndex;
+   while(accumulated < targetVa)
+   {
+      bool canUp = (vahIndex < rows - 1);
+      bool canDown = (valIndex > 0);
+      double upVol = canUp ? levelVol[vahIndex + 1] : 0.0;
+      double downVol = canDown ? levelVol[valIndex - 1] : 0.0;
+      if(canUp && (!canDown || upVol >= downVol))
+      {
+         accumulated += upVol;
+         vahIndex++;
+      }
+      else if(canDown)
+      {
+         accumulated += downVol;
+         valIndex--;
+      }
+      else
+         break;
+   }
+
+   poc = lowest + ((double)pocIndex + 0.5) * rowHeight;
+   vah = lowest + ((double)(vahIndex + 1)) * rowHeight;
+   val = lowest + ((double)valIndex) * rowHeight;
+   return true;
+}
+
+void CreateOrUpdateHLine(const string name, const double price, const color clr, const ENUM_LINE_STYLE style)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      if(!ObjectCreate(0, name, OBJ_HLINE, 0, 0, price)) return;
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
 }
 
 void CreateBreakoutLevel(const string side, datetime t1, datetime t2, double price, bool confirmed, string &outLine, string &outLbl)
@@ -177,6 +300,7 @@ void UpdateLevel(const string lineName, const string lblName, datetime t2, doubl
 
 void NotifyCisd(const string kind, datetime t, double levelPrice)
 {
+   if(!g_alerts_armed) return;
    if(!InpNotifyHistorical)
    {
       if(t != iTime(_Symbol, _Period, 1)) return;
@@ -260,6 +384,7 @@ void CreateHsSignal(const string kind, datetime t, double price, color clr, int 
 
    if(InpSendAlert || InpSendPush)
    {
+      if(!g_alerts_armed) return;
       if(!InpNotifyHistorical)
       {
          if(t != iTime(_Symbol, _Period, 1)) return;
@@ -275,23 +400,26 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    if(!InpEnableHs) return;
    if(i + 1 >= ArraySize(time)) return;
 
-   bool isGreen = (close[i] > open[i]);
-   bool isRed = (close[i] < open[i]);
+   int confirmIndex = i;
+   int signalIndex = InpConfirmByNextCandle ? (i + 1) : i;
 
-   int sigIndex = i;
+   bool isGreen = (close[confirmIndex] > open[confirmIndex]);
+   bool isRed = (close[confirmIndex] < open[confirmIndex]);
+
    bool hammer = false;
    bool shoot = false;
 
    if(!InpConfirmByNextCandle)
    {
-      hammer = IsHammerCandle(sigIndex, open, high, low, close);
-      shoot = IsShootingCandle(sigIndex, open, high, low, close);
+      hammer = IsHammerCandle(signalIndex, open, high, low, close);
+      shoot = IsShootingCandle(signalIndex, open, high, low, close);
    }
    else
    {
-      sigIndex = i + 1;
-      hammer = IsHammerCandle(sigIndex, open, high, low, close) && isGreen;
-      shoot = IsShootingCandle(sigIndex, open, high, low, close) && isRed;
+      double sigBodyHigh = MathMax(open[signalIndex], close[signalIndex]);
+      double sigBodyLow = MathMin(open[signalIndex], close[signalIndex]);
+      hammer = IsHammerCandle(signalIndex, open, high, low, close) && isGreen && (close[confirmIndex] > sigBodyHigh);
+      shoot = IsShootingCandle(signalIndex, open, high, low, close) && isRed && (close[confirmIndex] < sigBodyLow);
    }
 
    if(!hammer && !shoot) return;
@@ -300,48 +428,56 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    bool dxyBear = false;
    bool haveDxy = false;
    if(InpConfirmWithDxy && IsXauSymbol())
-      haveDxy = GetDxyDirection(time[sigIndex], dxyBull, dxyBear);
+      haveDxy = GetDxyDirection(time[signalIndex], dxyBull, dxyBear);
 
    if(hammer)
    {
       bool confirmed = (haveDxy && dxyBear);
-      CreateHsSignal("Hammer", time[sigIndex], low[sigIndex], InpHammerColor, InpHammerArrowCode, confirmed);
+      CreateHsSignal("Hammer", time[signalIndex], low[signalIndex], InpHammerColor, InpHammerArrowCode, confirmed);
       if(InpHsEntryOnBreakout)
       {
+         bool vpOk = true;
+         if(InpVpFilterEnabled)
+            vpOk = (low[signalIndex] < g_vp_val) && (close[signalIndex] > g_vp_val) && (close[signalIndex] < g_vp_vah);
+         if(!vpOk) return;
          g_hs_pending_long = true;
          g_hs_pending_short = false;
-         g_hs_pending_long_level = high[sigIndex];
-         g_hs_pending_long_time = time[sigIndex];
+         g_hs_pending_long_level = high[signalIndex];
+         g_hs_pending_long_time = time[signalIndex];
          g_hs_breakout_long_fired = false;
          datetime t2 = ExtendTime(time[i], InpExtendBars);
-         CreateBreakoutLevel("LONG", time[sigIndex], t2, g_hs_pending_long_level, confirmed, g_hs_breakout_long_line, g_hs_breakout_long_text);
+         CreateBreakoutLevel("LONG", time[signalIndex], t2, g_hs_pending_long_level, confirmed, g_hs_breakout_long_line, g_hs_breakout_long_text);
          DeleteObjectSafe(g_hs_breakout_short_line);
          DeleteObjectSafe(g_hs_breakout_short_text);
          g_hs_breakout_short_line = "";
          g_hs_breakout_short_text = "";
       }
-      g_last_hammer_alert_time = time[sigIndex];
+      g_last_hammer_alert_time = time[signalIndex];
    }
 
    if(shoot)
    {
       bool confirmed = (haveDxy && dxyBull);
-      CreateHsSignal("Shooting", time[sigIndex], high[sigIndex], InpShootingColor, InpShootingArrowCode, confirmed);
+      CreateHsSignal("Shooting", time[signalIndex], high[signalIndex], InpShootingColor, InpShootingArrowCode, confirmed);
       if(InpHsEntryOnBreakout)
       {
+         bool vpOk = true;
+         if(InpVpFilterEnabled)
+            vpOk = (high[signalIndex] > g_vp_vah) && (close[signalIndex] < g_vp_vah) && (close[signalIndex] > g_vp_val);
+         if(!vpOk) return;
          g_hs_pending_short = true;
          g_hs_pending_long = false;
-         g_hs_pending_short_level = low[sigIndex];
-         g_hs_pending_short_time = time[sigIndex];
+         g_hs_pending_short_level = low[signalIndex];
+         g_hs_pending_short_time = time[signalIndex];
          g_hs_breakout_short_fired = false;
          datetime t2 = ExtendTime(time[i], InpExtendBars);
-         CreateBreakoutLevel("SHORT", time[sigIndex], t2, g_hs_pending_short_level, confirmed, g_hs_breakout_short_line, g_hs_breakout_short_text);
+         CreateBreakoutLevel("SHORT", time[signalIndex], t2, g_hs_pending_short_level, confirmed, g_hs_breakout_short_line, g_hs_breakout_short_text);
          DeleteObjectSafe(g_hs_breakout_long_line);
          DeleteObjectSafe(g_hs_breakout_long_text);
          g_hs_breakout_long_line = "";
          g_hs_breakout_long_text = "";
       }
-      g_last_shooting_alert_time = time[sigIndex];
+      g_last_shooting_alert_time = time[signalIndex];
    }
 }
 
@@ -523,12 +659,48 @@ int OnInit()
 {
    if(InpConfirmWithDxy && InpDxySymbol != "")
       SymbolSelect(InpDxySymbol, true);
+   g_alerts_armed = !InpSuppressAlertsOnLoad;
+   g_last_time0 = 0;
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason)
 {
    ObjectsDeleteAll(0, g_prefix);
+}
+
+datetime VpAsiaOpenLocal(datetime nowLocal)
+{
+   MqlDateTime dt;
+   TimeToStruct(nowLocal, dt);
+   dt.hour = InpVpAsiaOpenHour;
+   dt.min = 0;
+   dt.sec = 0;
+   datetime openLocal = StructToTime(dt);
+   if(nowLocal < openLocal)
+      openLocal = openLocal - 86400;
+   return openLocal;
+}
+
+int VpLookbackBarsFromAsia(const datetime &time[])
+{
+   if(!InpVpAnchorAsia) return InpVpLookbackBars;
+   int total = ArraySize(time);
+   if(total < 2) return InpVpLookbackBars;
+
+   datetime nowServer = time[0];
+   datetime nowLocal = nowServer + (datetime)InpVpSessionOffsetHours * 3600;
+   datetime openLocal = VpAsiaOpenLocal(nowLocal);
+   datetime openServer = openLocal - (datetime)InpVpSessionOffsetHours * 3600;
+
+   int count = 0;
+   for(int i = 0; i < total && i < InpVpMaxBars; i++)
+   {
+      if(time[i] < openServer) break;
+      count++;
+   }
+   if(count < 10) return InpVpLookbackBars;
+   return count;
 }
 
 int OnCalculate(const int rates_total, const int prev_calculated, const datetime &time[],
@@ -543,6 +715,19 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    ArraySetAsSeries(high, true);
    ArraySetAsSeries(low, true);
    ArraySetAsSeries(close, true);
+
+   if(InpSuppressAlertsOnLoad)
+   {
+      if(g_last_time0 == 0)
+         g_last_time0 = time[0];
+      else if(!g_alerts_armed && time[0] != g_last_time0)
+         g_alerts_armed = true;
+      g_last_time0 = time[0];
+   }
+   else
+   {
+      g_alerts_armed = true;
+   }
 
    if(prev_calculated == 0)
    {
@@ -573,6 +758,34 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
       g_hs_breakout_long_text = "";
       g_hs_breakout_short_line = "";
       g_hs_breakout_short_text = "";
+      g_vp_poc = 0.0;
+      g_vp_vah = 0.0;
+      g_vp_val = 0.0;
+      g_vp_poc_line = "";
+      g_vp_vah_line = "";
+      g_vp_val_line = "";
+   }
+
+   if(InpVpShowLines || InpVpFilterEnabled)
+   {
+      int lb = VpLookbackBarsFromAsia(time);
+      if(lb > rates_total - 1) lb = rates_total - 1;
+      double poc = 0.0, vah = 0.0, val = 0.0;
+      if(ComputeVpLevelsSeries(lb, InpVpRows, InpVpValueAreaPercent, high, low, tick_volume, poc, vah, val))
+      {
+         g_vp_poc = poc;
+         g_vp_vah = vah;
+         g_vp_val = val;
+         if(InpVpShowLines)
+         {
+            g_vp_poc_line = g_prefix + "VP_POC";
+            g_vp_vah_line = g_prefix + "VP_VAH";
+            g_vp_val_line = g_prefix + "VP_VAL";
+            CreateOrUpdateHLine(g_vp_poc_line, g_vp_poc, InpVpPocColor, STYLE_SOLID);
+            CreateOrUpdateHLine(g_vp_vah_line, g_vp_vah, InpVpVahColor, STYLE_DOT);
+            CreateOrUpdateHLine(g_vp_val_line, g_vp_val, InpVpValColor, STYLE_DOT);
+         }
+      }
    }
 
    int limit = (prev_calculated == 0) ? rates_total - 2 : 2;
@@ -599,7 +812,7 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
          if(high[0] >= (g_hs_pending_long_level + buffer))
          {
             g_hs_breakout_long_fired = true;
-            if(InpHsAlertOnBreakout)
+            if(g_alerts_armed && InpHsAlertOnBreakout)
             {
                string msg = "Hammer breakout BUY on " + _Symbol + " TF=" + EnumToString(_Period) + " Level=" + DoubleToString(g_hs_pending_long_level, _Digits);
                if(InpSendAlert) Alert(msg);
@@ -614,7 +827,7 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
          if(low[0] <= (g_hs_pending_short_level - buffer))
          {
             g_hs_breakout_short_fired = true;
-            if(InpHsAlertOnBreakout)
+            if(g_alerts_armed && InpHsAlertOnBreakout)
             {
                string msg = "Shooting breakout SELL on " + _Symbol + " TF=" + EnumToString(_Period) + " Level=" + DoubleToString(g_hs_pending_short_level, _Digits);
                if(InpSendAlert) Alert(msg);

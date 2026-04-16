@@ -36,6 +36,20 @@ input group "Breakout Entry"
 input bool InpEntryOnBreakout = false;
 input int InpBreakoutBufferPoints = 0;
 
+input group "Volume Profile Filter"
+input bool InpVpFilterEnabled = true;
+input bool InpVpAnchorAsia = true;
+input int InpVpAsiaOpenHour = 0;
+input int InpVpMaxBars = 600;
+input int InpVpLookbackBars = 100;
+input int InpVpRows = 30;
+input int InpVpValueAreaPercent = 70;
+input bool InpVpUsePocTarget = false;
+input bool InpVpShowLines = true;
+input color InpVpPocColor = clrDeepSkyBlue;
+input color InpVpVahColor = clrMediumPurple;
+input color InpVpValColor = clrOrange;
+
 CTrade trade;
 datetime last_bar_time = 0;
 ulong last_partial_ticket = 0;
@@ -44,6 +58,14 @@ bool pending_long = false;
 bool pending_short = false;
 double pending_long_level = 0.0;
 double pending_short_level = 0.0;
+double pending_tp = 0.0;
+datetime last_vp_update_bar_time = 0;
+string vp_poc_line = "HS_EA_VP_POC";
+string vp_vah_line = "HS_EA_VP_VAH";
+string vp_val_line = "HS_EA_VP_VAL";
+string vp_poc_text = "HS_EA_VP_POC_TXT";
+string vp_vah_text = "HS_EA_VP_VAH_TXT";
+string vp_val_text = "HS_EA_VP_VAL_TXT";
 
 bool HasOpenPositionForThisEA()
 {
@@ -57,6 +79,196 @@ bool HasOpenPositionForThisEA()
       return true;
    }
    return false;
+}
+
+datetime ShiftTime(datetime t, int hours);
+
+bool ComputeVpLevels(const int startShift, const int lookbackBars, const int rows, const int valueAreaPercent, double &poc, double &vah, double &val)
+{
+   poc = 0.0;
+   vah = 0.0;
+   val = 0.0;
+
+   if(lookbackBars < 10 || rows < 10) return false;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   int copied = CopyRates(_Symbol, _Period, startShift, lookbackBars, rates);
+   if(copied < 10) return false;
+
+   double highest = -DBL_MAX;
+   double lowest = DBL_MAX;
+   for(int i = 0; i < copied; i++)
+   {
+      if(rates[i].high > highest) highest = rates[i].high;
+      if(rates[i].low < lowest) lowest = rates[i].low;
+   }
+   double range = highest - lowest;
+   if(range <= 0.0) return false;
+
+   double rowHeight = range / (double)rows;
+   if(rowHeight <= 0.0) return false;
+
+   double levelVol[];
+   ArrayResize(levelVol, rows);
+   for(int i = 0; i < rows; i++) levelVol[i] = 0.0;
+
+   for(int i = 0; i < copied; i++)
+   {
+      double barHigh = rates[i].high;
+      double barLow = rates[i].low;
+      double barVol = (double)rates[i].tick_volume;
+      if(barVol <= 0.0) barVol = 1.0;
+
+      int startLevel = (int)MathFloor((barLow - lowest) / rowHeight);
+      int endLevel = (int)MathFloor((barHigh - lowest) / rowHeight);
+      if(startLevel < 0) startLevel = 0;
+      if(endLevel > rows - 1) endLevel = rows - 1;
+      int levelsInBar = endLevel - startLevel + 1;
+      if(levelsInBar <= 0) continue;
+      double volPerLevel = barVol / (double)levelsInBar;
+      for(int j = startLevel; j <= endLevel; j++) levelVol[j] += volPerLevel;
+   }
+
+   double totalVol = 0.0;
+   int pocIndex = 0;
+   double maxVol = levelVol[0];
+   for(int i = 0; i < rows; i++)
+   {
+      totalVol += levelVol[i];
+      if(levelVol[i] > maxVol)
+      {
+         maxVol = levelVol[i];
+         pocIndex = i;
+      }
+   }
+   if(totalVol <= 0.0) return false;
+
+   double targetVa = totalVol * ((double)valueAreaPercent / 100.0);
+   double accumulated = levelVol[pocIndex];
+   int vahIndex = pocIndex;
+   int valIndex = pocIndex;
+   while(accumulated < targetVa)
+   {
+      bool canUp = (vahIndex < rows - 1);
+      bool canDown = (valIndex > 0);
+      double upVol = canUp ? levelVol[vahIndex + 1] : 0.0;
+      double downVol = canDown ? levelVol[valIndex - 1] : 0.0;
+      if(canUp && (!canDown || upVol >= downVol))
+      {
+         accumulated += upVol;
+         vahIndex++;
+      }
+      else if(canDown)
+      {
+         accumulated += downVol;
+         valIndex--;
+      }
+      else
+         break;
+   }
+
+   poc = lowest + ((double)pocIndex + 0.5) * rowHeight;
+   vah = lowest + ((double)(vahIndex + 1)) * rowHeight;
+   val = lowest + ((double)valIndex) * rowHeight;
+   return true;
+}
+
+datetime AsiaOpenServerTime(datetime serverTime)
+{
+   datetime localTime = ShiftTime(serverTime, InpSessionOffsetHours);
+   MqlDateTime dt;
+   TimeToStruct(localTime, dt);
+   dt.hour = InpVpAsiaOpenHour;
+   dt.min = 0;
+   dt.sec = 0;
+   datetime openLocal = StructToTime(dt);
+   if(localTime < openLocal)
+      openLocal = openLocal - 86400;
+   datetime openServer = ShiftTime(openLocal, -InpSessionOffsetHours);
+   return openServer;
+}
+
+int GetVpLookbackBars(const int startShift)
+{
+   if(!InpVpAnchorAsia)
+      return InpVpLookbackBars;
+
+   datetime barTime = iTime(_Symbol, _Period, startShift);
+   if(barTime == 0) return InpVpLookbackBars;
+   datetime asiaOpen = AsiaOpenServerTime(barTime);
+
+   datetime times[];
+   ArraySetAsSeries(times, true);
+   int copied = CopyTime(_Symbol, _Period, startShift, InpVpMaxBars, times);
+   if(copied < 10) return InpVpLookbackBars;
+
+   int count = 0;
+   for(int i = 0; i < copied; i++)
+   {
+      if(times[i] < asiaOpen) break;
+      count++;
+   }
+   if(count < 10) return InpVpLookbackBars;
+   return count;
+}
+
+void CreateOrUpdateHLine(const string name, const double price, const color clr, const ENUM_LINE_STYLE style)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      if(!ObjectCreate(0, name, OBJ_HLINE, 0, 0, price)) return;
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
+}
+
+void CreateOrUpdatePriceLabel(const string name, const string text, const double price, const color clr)
+{
+   datetime t = iTime(_Symbol, _Period, 0);
+   if(t == 0) return;
+   if(ObjectFind(0, name) < 0)
+   {
+      if(!ObjectCreate(0, name, OBJ_TEXT, 0, t, price)) return;
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   }
+   ObjectMove(0, name, 0, t, price);
+   ObjectSetString(0, name, OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+}
+
+void UpdateVpLinesIfNeeded()
+{
+   if(!InpVpShowLines)
+   {
+      ObjectDelete(0, vp_poc_line);
+      ObjectDelete(0, vp_vah_line);
+      ObjectDelete(0, vp_val_line);
+      ObjectDelete(0, vp_poc_text);
+      ObjectDelete(0, vp_vah_text);
+      ObjectDelete(0, vp_val_text);
+      return;
+   }
+   datetime barTime = iTime(_Symbol, _Period, 0);
+   if(barTime == 0) return;
+   if(barTime == last_vp_update_bar_time) return;
+   last_vp_update_bar_time = barTime;
+
+   double poc = 0.0, vah = 0.0, val = 0.0;
+   int lb = GetVpLookbackBars(1);
+   if(!ComputeVpLevels(1, lb, InpVpRows, InpVpValueAreaPercent, poc, vah, val)) return;
+   CreateOrUpdateHLine(vp_poc_line, poc, InpVpPocColor, STYLE_SOLID);
+   CreateOrUpdateHLine(vp_vah_line, vah, InpVpVahColor, STYLE_DOT);
+   CreateOrUpdateHLine(vp_val_line, val, InpVpValColor, STYLE_DOT);
+   CreateOrUpdatePriceLabel(vp_poc_text, "POC", poc, InpVpPocColor);
+   CreateOrUpdatePriceLabel(vp_vah_text, "VAH", vah, InpVpVahColor);
+   CreateOrUpdatePriceLabel(vp_val_text, "VAL", val, InpVpValColor);
+   ChartRedraw(0);
 }
 
 bool TryBreakoutEntry()
@@ -74,13 +286,14 @@ bool TryBreakoutEntry()
       if(ask > 0.0 && ask >= (pending_long_level + buffer))
       {
          double sl = 0.0;
-         double tp = 0.0;
+         double tp = pending_tp;
          if(InpStopLoss > 0) sl = ask - (InpStopLoss * point);
          if(InpTakeProfit > 0) tp = ask + (InpTakeProfit * point);
          if(trade.Buy(InpLotSize, _Symbol, ask, sl, tp, "Hammer Breakout Buy"))
          {
             pending_long = false;
             pending_short = false;
+            pending_tp = 0.0;
             return true;
          }
       }
@@ -92,13 +305,14 @@ bool TryBreakoutEntry()
       if(bid > 0.0 && bid <= (pending_short_level - buffer))
       {
          double sl = 0.0;
-         double tp = 0.0;
+         double tp = pending_tp;
          if(InpStopLoss > 0) sl = bid + (InpStopLoss * point);
          if(InpTakeProfit > 0) tp = bid - (InpTakeProfit * point);
          if(trade.Sell(InpLotSize, _Symbol, bid, sl, tp, "Shooting Breakout Sell"))
          {
             pending_long = false;
             pending_short = false;
+            pending_tp = 0.0;
             return true;
          }
       }
@@ -278,10 +492,18 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
+   ObjectDelete(0, vp_poc_line);
+   ObjectDelete(0, vp_vah_line);
+   ObjectDelete(0, vp_val_line);
+   ObjectDelete(0, vp_poc_text);
+   ObjectDelete(0, vp_vah_text);
+   ObjectDelete(0, vp_val_text);
 }
 
 void OnTick()
 {
+   UpdateVpLinesIfNeeded();
+
    ManagePartialClose();
 
    if(HasOpenPositionForThisEA()) return;
@@ -296,34 +518,39 @@ void OnTick()
    datetime current_time = iTime(_Symbol, _Period, 0);
    if(current_time == last_bar_time) return; // Lavora solo su candela chiusa
    
-   // Dati candele
-   double o[2], h[2], l[2], c[2];
-   datetime t[2];
-   if(CopyOpen(_Symbol, _Period, 1, 2, o) <= 0) return;
-   if(CopyHigh(_Symbol, _Period, 1, 2, h) <= 0) return;
-   if(CopyLow(_Symbol, _Period, 1, 2, l) <= 0) return;
-   if(CopyClose(_Symbol, _Period, 1, 2, c) <= 0) return;
-   if(CopyTime(_Symbol, _Period, 1, 2, t) <= 0) return;
+   double o[3], h[3], l[3], c[3];
+   datetime t[3];
+   ArraySetAsSeries(o, true);
+   ArraySetAsSeries(h, true);
+   ArraySetAsSeries(l, true);
+   ArraySetAsSeries(c, true);
+   ArraySetAsSeries(t, true);
+   if(CopyOpen(_Symbol, _Period, 1, 3, o) <= 0) return;
+   if(CopyHigh(_Symbol, _Period, 1, 3, h) <= 0) return;
+   if(CopyLow(_Symbol, _Period, 1, 3, l) <= 0) return;
+   if(CopyClose(_Symbol, _Period, 1, 3, c) <= 0) return;
+   if(CopyTime(_Symbol, _Period, 1, 3, t) <= 0) return;
    
-   // Indici array: [1] è candela corrente appena chiusa (shift 1), [0] è candela precedente (shift 2)
-   bool isGreen = (c[1] > o[1]);
-   bool isRed = (c[1] < o[1]);
+   int confirmIndex = 0;
+   int signalIndex = InpConfirmByNextCandle ? 1 : 0;
+   bool isGreen = (c[confirmIndex] > o[confirmIndex]);
+   bool isRed = (c[confirmIndex] < o[confirmIndex]);
    
    bool hammer = false;
    bool shoot = false;
-   datetime sigTime = t[1];
+   datetime sigTime = t[signalIndex];
    
    if(!InpConfirmByNextCandle)
    {
-      hammer = IsHammerCandle(o[1], h[1], l[1], c[1]);
-      shoot = IsShootingCandle(o[1], h[1], l[1], c[1]);
+      hammer = IsHammerCandle(o[signalIndex], h[signalIndex], l[signalIndex], c[signalIndex]);
+      shoot = IsShootingCandle(o[signalIndex], h[signalIndex], l[signalIndex], c[signalIndex]);
    }
    else
    {
-      // [0] = sigIndex, [1] = confirmIndex (candela chiusa ora)
-      hammer = IsHammerCandle(o[0], h[0], l[0], c[0]) && isGreen;
-      shoot = IsShootingCandle(o[0], h[0], l[0], c[0]) && isRed;
-      sigTime = t[0];
+      double sigBodyHigh = MathMax(o[signalIndex], c[signalIndex]);
+      double sigBodyLow = MathMin(o[signalIndex], c[signalIndex]);
+      hammer = IsHammerCandle(o[signalIndex], h[signalIndex], l[signalIndex], c[signalIndex]) && isGreen && (c[confirmIndex] > sigBodyHigh);
+      shoot = IsShootingCandle(o[signalIndex], h[signalIndex], l[signalIndex], c[signalIndex]) && isRed && (c[confirmIndex] < sigBodyLow);
    }
    
    if(!hammer && !shoot)
@@ -350,19 +577,43 @@ void OnTick()
       bool confirmed = (!InpConfirmWithDxy || !IsXauSymbol() || (haveDxy && dxyBear));
       if(!InpRequireConfirmation || confirmed)
       {
+         int sigIndex = signalIndex;
+         int sigShift = InpConfirmByNextCandle ? 2 : 1;
+         bool vpOk = true;
+         double poc = 0.0, vah = 0.0, val = 0.0;
+         if(InpVpFilterEnabled)
+         {
+            int lb = GetVpLookbackBars(sigShift);
+            vpOk = ComputeVpLevels(sigShift, lb, InpVpRows, InpVpValueAreaPercent, poc, vah, val);
+            if(vpOk)
+            {
+               vpOk = (l[sigIndex] < val) && (c[sigIndex] > val) && (c[sigIndex] < vah);
+            }
+         }
+         if(!vpOk)
+         {
+         }
+         else
+         {
          if(InpEntryOnBreakout)
          {
-            int sigIndex = InpConfirmByNextCandle ? 0 : 1;
             pending_long = true;
             pending_short = false;
             pending_long_level = h[sigIndex];
+            pending_tp = 0.0;
+            if(InpVpFilterEnabled && InpVpUsePocTarget && InpTakeProfit <= 0 && poc > 0.0)
+               pending_tp = poc;
          }
          else
          {
             double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
             if(InpStopLoss > 0) sl = ask - (InpStopLoss * point);
-            if(InpTakeProfit > 0) tp = ask + (InpTakeProfit * point);
+            if(InpTakeProfit > 0)
+               tp = ask + (InpTakeProfit * point);
+            else if(InpVpFilterEnabled && InpVpUsePocTarget && poc > 0.0)
+               tp = poc;
             trade.Buy(InpLotSize, _Symbol, ask, sl, tp, "Hammer Buy");
+         }
          }
       }
    }
@@ -372,19 +623,43 @@ void OnTick()
       bool confirmed = (!InpConfirmWithDxy || !IsXauSymbol() || (haveDxy && dxyBull));
       if(!InpRequireConfirmation || confirmed)
       {
+         int sigIndex = signalIndex;
+         int sigShift = InpConfirmByNextCandle ? 2 : 1;
+         bool vpOk = true;
+         double poc = 0.0, vah = 0.0, val = 0.0;
+         if(InpVpFilterEnabled)
+         {
+            int lb = GetVpLookbackBars(sigShift);
+            vpOk = ComputeVpLevels(sigShift, lb, InpVpRows, InpVpValueAreaPercent, poc, vah, val);
+            if(vpOk)
+            {
+               vpOk = (h[sigIndex] > vah) && (c[sigIndex] < vah) && (c[sigIndex] > val);
+            }
+         }
+         if(!vpOk)
+         {
+         }
+         else
+         {
          if(InpEntryOnBreakout)
          {
-            int sigIndex = InpConfirmByNextCandle ? 0 : 1;
             pending_short = true;
             pending_long = false;
             pending_short_level = l[sigIndex];
+            pending_tp = 0.0;
+            if(InpVpFilterEnabled && InpVpUsePocTarget && InpTakeProfit <= 0 && poc > 0.0)
+               pending_tp = poc;
          }
          else
          {
             double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
             if(InpStopLoss > 0) sl = bid + (InpStopLoss * point);
-            if(InpTakeProfit > 0) tp = bid - (InpTakeProfit * point);
+            if(InpTakeProfit > 0)
+               tp = bid - (InpTakeProfit * point);
+            else if(InpVpFilterEnabled && InpVpUsePocTarget && poc > 0.0)
+               tp = poc;
             trade.Sell(InpLotSize, _Symbol, bid, sl, tp, "Shooting Sell");
+         }
          }
       }
    }

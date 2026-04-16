@@ -33,6 +33,15 @@ input int InpHsBreakoutBufferPoints = 0;
 input bool InpHsAlertOnBreakout = true;
 input bool InpHsShowBreakoutLine = true;
 input color InpHsBreakoutLineColor = clrDodgerBlue;
+input bool InpHsEnableM15 = true;
+input bool InpHsEnableM30 = true;
+input bool InpHsEnableH1  = true;
+input bool InpHsEnableH4  = true;
+input bool InpHsTrendFilterEnabled = true;
+input int InpHsTrendEmaFast = 50;
+input int InpHsTrendEmaSlow = 200;
+input int InpHsTrendAtrPeriod = 14;
+input double InpHsTrendAtrMult = 0.5;
 
 input group "Volume Profile Filter"
 input bool InpVpFilterEnabled = true;
@@ -99,6 +108,9 @@ double g_vp_val = 0.0;
 string g_vp_poc_line = "";
 string g_vp_vah_line = "";
 string g_vp_val_line = "";
+int g_ema_fast_handle = INVALID_HANDLE;
+int g_ema_slow_handle = INVALID_HANDLE;
+int g_atr_handle = INVALID_HANDLE;
 
 void DeleteObjectSafe(const string name)
 {
@@ -356,6 +368,36 @@ bool IsXauSymbol()
    return (StringFind(s, "XAU") >= 0);
 }
 
+bool HsTimeframeEnabled()
+{
+   switch(_Period)
+   {
+      case PERIOD_M15:  return InpHsEnableM15;
+      case PERIOD_M30:  return InpHsEnableM30;
+      case PERIOD_H1:   return InpHsEnableH1;
+      case PERIOD_H4:   return InpHsEnableH4;
+      default:          return false;
+   }
+}
+
+bool GetTrendFlags(const int shift, const double &close[], bool &isUp, bool &isDown)
+{
+   isUp = false;
+   isDown = false;
+   if(!InpHsTrendFilterEnabled) return true;
+   if(g_ema_fast_handle == INVALID_HANDLE || g_ema_slow_handle == INVALID_HANDLE || g_atr_handle == INVALID_HANDLE) return true;
+   if(shift < 0) return false;
+   double emaFast[1], emaSlow[1], atr[1];
+   if(CopyBuffer(g_ema_fast_handle, 0, shift, 1, emaFast) <= 0) return false;
+   if(CopyBuffer(g_ema_slow_handle, 0, shift, 1, emaSlow) <= 0) return false;
+   if(CopyBuffer(g_atr_handle, 0, shift, 1, atr) <= 0) return false;
+   double diff = emaFast[0] - emaSlow[0];
+   double threshold = atr[0] * InpHsTrendAtrMult;
+   if(diff >= threshold && close[shift] > emaFast[0]) isUp = true;
+   if((-diff) >= threshold && close[shift] < emaFast[0]) isDown = true;
+   return true;
+}
+
 void CreateHsSignal(const string kind, datetime t, double price, color clr, int arrowCode, bool confirmed)
 {
    string base = g_prefix + kind + "_" + IntegerToString((long)t);
@@ -395,9 +437,33 @@ void CreateHsSignal(const string kind, datetime t, double price, color clr, int 
    }
 }
 
+void DrawHsStatusOnChart()
+{
+   string name = g_prefix + "HS_TF_STATUS";
+   string txt = "HS TF: ";
+   txt = txt + (InpHsEnableM15 ? "M15 " : "");
+   txt = txt + (InpHsEnableM30 ? "M30 " : "");
+   txt = txt + (InpHsEnableH1 ? "H1 " : "");
+   txt = txt + (InpHsEnableH4 ? "H4 " : "");
+   if(txt == "HS TF: ") txt = "HS TF: OFF";
+
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 10);
+      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, 20);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   ObjectSetString(0, name, OBJPROP_TEXT, txt);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
+}
+
 void ProcessHammerShooting(const int i, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[])
 {
    if(!InpEnableHs) return;
+   if(!HsTimeframeEnabled()) return;
    if(i + 1 >= ArraySize(time)) return;
 
    int confirmIndex = i;
@@ -422,6 +488,17 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
       shoot = IsShootingCandle(signalIndex, open, high, low, close) && isRed && (close[confirmIndex] < sigBodyLow);
    }
 
+   if(!hammer && !shoot) return;
+   if(InpHsTrendFilterEnabled)
+   {
+      bool trendUp = false;
+      bool trendDown = false;
+      if(GetTrendFlags(signalIndex, close, trendUp, trendDown))
+      {
+         if(hammer && !trendDown) hammer = false;
+         if(shoot && !trendUp) shoot = false;
+      }
+   }
    if(!hammer && !shoot) return;
 
    bool dxyBull = false;
@@ -661,12 +738,21 @@ int OnInit()
       SymbolSelect(InpDxySymbol, true);
    g_alerts_armed = !InpSuppressAlertsOnLoad;
    g_last_time0 = 0;
+   g_ema_fast_handle = iMA(_Symbol, _Period, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   g_ema_slow_handle = iMA(_Symbol, _Period, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   g_atr_handle = iATR(_Symbol, _Period, InpHsTrendAtrPeriod);
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason)
 {
    ObjectsDeleteAll(0, g_prefix);
+   if(g_ema_fast_handle != INVALID_HANDLE) IndicatorRelease(g_ema_fast_handle);
+   if(g_ema_slow_handle != INVALID_HANDLE) IndicatorRelease(g_ema_slow_handle);
+   if(g_atr_handle != INVALID_HANDLE) IndicatorRelease(g_atr_handle);
+   g_ema_fast_handle = INVALID_HANDLE;
+   g_ema_slow_handle = INVALID_HANDLE;
+   g_atr_handle = INVALID_HANDLE;
 }
 
 datetime VpAsiaOpenLocal(datetime nowLocal)
@@ -715,6 +801,8 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    ArraySetAsSeries(high, true);
    ArraySetAsSeries(low, true);
    ArraySetAsSeries(close, true);
+
+   DrawHsStatusOnChart();
 
    if(InpSuppressAlertsOnLoad)
    {

@@ -22,7 +22,7 @@ input int InpHsTrendEmaFast = 50;
 input int InpHsTrendEmaSlow = 200;
 input int InpHsTrendAtrPeriod = 14;
 input double InpHsTrendAtrMult = 0.5;
-input bool InpWyckSpikeFilterEnabled = true;
+input bool InpWyckSpikeFilterEnabled = false;
 input int InpWyckSpikeMinPoints = 600;
 
 input group "Session Filter"

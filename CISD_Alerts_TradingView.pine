@@ -25,6 +25,12 @@ wyckSpikeMinPointsM15 = input.int(0, "Wyck min points (M15, 0=default)", minval=
 wyckSpikeMinPointsM30 = input.int(0, "Wyck min points (M30, 0=default)", minval=0, group="Hammer/Shooting")
 wyckSpikeMinPointsH1 = input.int(0, "Wyck min points (H1, 0=default)", minval=0, group="Hammer/Shooting")
 wyckSpikeMinPointsH4 = input.int(0, "Wyck min points (H4, 0=default)", minval=0, group="Hammer/Shooting")
+smtFilterEnabled = input.bool(true, "SMT filter (DXY inverse + XAG direct)", group="Hammer/Shooting")
+smtXagSymbol = input.symbol("OANDA:XAGUSD", "XAGUSD Symbol", group="Hammer/Shooting")
+smtPivotLeft = input.int(3, "SMT pivot left", minval=1, group="Hammer/Shooting")
+smtPivotRight = input.int(3, "SMT pivot right", minval=1, group="Hammer/Shooting")
+smtPlotDxyInv = input.bool(true, "Plot DXY inverted", group="Hammer/Shooting")
+smtNormLen = input.int(200, "DXY inv normalize len", minval=20, group="Hammer/Shooting")
 
 hsEnableM15 = input.bool(true, "M15", inline="tf", group="Hammer/Shooting TF")
 hsEnableM30 = input.bool(true, "M30", inline="tf", group="Hammer/Shooting TF")
@@ -182,6 +188,22 @@ f_is_shoot(_o, _h, _l, _c) =>
     cs = math.abs(_h - _l)
     cs > 0 and _l + fibLevel * cs > math.max(_o, _c)
 
+f_pl(_l, _r, _occ) =>
+    p = ta.pivotlow(low, _l, _r)
+    ta.valuewhen(not na(p), p, _occ)
+
+f_ph(_l, _r, _occ) =>
+    p = ta.pivothigh(high, _l, _r)
+    ta.valuewhen(not na(p), p, _occ)
+
+f_pl_dxy_inv(_l, _r, _occ) =>
+    p = ta.pivotlow(-high, _l, _r)
+    ta.valuewhen(not na(p), p, _occ)
+
+f_ph_dxy_inv(_l, _r, _occ) =>
+    p = ta.pivothigh(-low, _l, _r)
+    ta.valuewhen(not na(p), p, _occ)
+
 f_trend_flags(_c) =>
     ef = ta.ema(_c, hsTrendEmaFast)
     es = ta.ema(_c, hsTrendEmaSlow)
@@ -330,32 +352,127 @@ wyckH4 = wyckSpikeMinPointsH4 > 0 ? wyckSpikeMinPointsH4 : wyckSpikeMinPoints
 
 [raw15, p15, _, _, _, x15] = f_hs_raw("15", wyckM15)
 sig15 = hsEnableM15 ? f_confirm_sig(raw15, "15") : 0
-new15 = sig15 != 0 and x15 != x15[1]
-f_plot_sig(show and new15 and sig15 == 1, x15, p15, "Hammer M15", color.lime, true)
-f_plot_sig(show and new15 and sig15 == -1, x15, p15, "Shooting M15", color.red, false)
+xauPl0_15 = request.security(syminfo.tickerid, "15", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPl1_15 = request.security(syminfo.tickerid, "15", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh0_15 = request.security(syminfo.tickerid, "15", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh1_15 = request.security(syminfo.tickerid, "15", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl0_15 = request.security(smtXagSymbol, "15", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl1_15 = request.security(smtXagSymbol, "15", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh0_15 = request.security(smtXagSymbol, "15", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh1_15 = request.security(smtXagSymbol, "15", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl0_15 = request.security(dxySymbol, "15", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl1_15 = request.security(dxySymbol, "15", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh0_15 = request.security(dxySymbol, "15", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh1_15 = request.security(dxySymbol, "15", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+smtOk15 = true
+if smtFilterEnabled and isXau
+    if sig15 == 1
+        smtOk15 := na(xauPl0_15) or na(xauPl1_15) or na(xagPl0_15) or na(xagPl1_15) or na(dxyInvPl0_15) or na(dxyInvPl1_15) ? true : (xauPl0_15 < xauPl1_15 and xagPl0_15 >= xagPl1_15 and dxyInvPl0_15 >= dxyInvPl1_15)
+    if sig15 == -1
+        smtOk15 := na(xauPh0_15) or na(xauPh1_15) or na(xagPh0_15) or na(xagPh1_15) or na(dxyInvPh0_15) or na(dxyInvPh1_15) ? true : (xauPh0_15 > xauPh1_15 and xagPh0_15 <= xagPh1_15 and dxyInvPh0_15 <= dxyInvPh1_15)
+sig15f = smtOk15 ? sig15 : 0
+new15 = sig15f != 0 and x15 != x15[1]
+f_plot_sig(show and new15 and sig15f == 1, x15, p15, "Hammer M15 +SMT", color.lime, true)
+f_plot_sig(show and new15 and sig15f == -1, x15, p15, "Shooting M15 +SMT", color.red, false)
 
 [raw30, p30, _, _, _, x30] = f_hs_raw("30", wyckM30)
 sig30 = hsEnableM30 ? f_confirm_sig(raw30, "30") : 0
-new30 = sig30 != 0 and x30 != x30[1]
-f_plot_sig(show and new30 and sig30 == 1, x30, p30, "Hammer M30", color.lime, true)
-f_plot_sig(show and new30 and sig30 == -1, x30, p30, "Shooting M30", color.red, false)
+xauPl0_30 = request.security(syminfo.tickerid, "30", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPl1_30 = request.security(syminfo.tickerid, "30", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh0_30 = request.security(syminfo.tickerid, "30", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh1_30 = request.security(syminfo.tickerid, "30", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl0_30 = request.security(smtXagSymbol, "30", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl1_30 = request.security(smtXagSymbol, "30", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh0_30 = request.security(smtXagSymbol, "30", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh1_30 = request.security(smtXagSymbol, "30", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl0_30 = request.security(dxySymbol, "30", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl1_30 = request.security(dxySymbol, "30", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh0_30 = request.security(dxySymbol, "30", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh1_30 = request.security(dxySymbol, "30", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+smtOk30 = true
+if smtFilterEnabled and isXau
+    if sig30 == 1
+        smtOk30 := na(xauPl0_30) or na(xauPl1_30) or na(xagPl0_30) or na(xagPl1_30) or na(dxyInvPl0_30) or na(dxyInvPl1_30) ? true : (xauPl0_30 < xauPl1_30 and xagPl0_30 >= xagPl1_30 and dxyInvPl0_30 >= dxyInvPl1_30)
+    if sig30 == -1
+        smtOk30 := na(xauPh0_30) or na(xauPh1_30) or na(xagPh0_30) or na(xagPh1_30) or na(dxyInvPh0_30) or na(dxyInvPh1_30) ? true : (xauPh0_30 > xauPh1_30 and xagPh0_30 <= xagPh1_30 and dxyInvPh0_30 <= dxyInvPh1_30)
+sig30f = smtOk30 ? sig30 : 0
+new30 = sig30f != 0 and x30 != x30[1]
+f_plot_sig(show and new30 and sig30f == 1, x30, p30, "Hammer M30 +SMT", color.lime, true)
+f_plot_sig(show and new30 and sig30f == -1, x30, p30, "Shooting M30 +SMT", color.red, false)
 
 [raw60, p60, _, _, _, x60] = f_hs_raw("60", wyckH1)
 sig60 = hsEnableH1 ? f_confirm_sig(raw60, "60") : 0
-new60 = sig60 != 0 and x60 != x60[1]
-f_plot_sig(show and new60 and sig60 == 1, x60, p60, "Hammer H1", color.lime, true)
-f_plot_sig(show and new60 and sig60 == -1, x60, p60, "Shooting H1", color.red, false)
+xauPl0_60 = request.security(syminfo.tickerid, "60", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPl1_60 = request.security(syminfo.tickerid, "60", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh0_60 = request.security(syminfo.tickerid, "60", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh1_60 = request.security(syminfo.tickerid, "60", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl0_60 = request.security(smtXagSymbol, "60", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl1_60 = request.security(smtXagSymbol, "60", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh0_60 = request.security(smtXagSymbol, "60", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh1_60 = request.security(smtXagSymbol, "60", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl0_60 = request.security(dxySymbol, "60", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl1_60 = request.security(dxySymbol, "60", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh0_60 = request.security(dxySymbol, "60", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh1_60 = request.security(dxySymbol, "60", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+smtOk60 = true
+if smtFilterEnabled and isXau
+    if sig60 == 1
+        smtOk60 := na(xauPl0_60) or na(xauPl1_60) or na(xagPl0_60) or na(xagPl1_60) or na(dxyInvPl0_60) or na(dxyInvPl1_60) ? true : (xauPl0_60 < xauPl1_60 and xagPl0_60 >= xagPl1_60 and dxyInvPl0_60 >= dxyInvPl1_60)
+    if sig60 == -1
+        smtOk60 := na(xauPh0_60) or na(xauPh1_60) or na(xagPh0_60) or na(xagPh1_60) or na(dxyInvPh0_60) or na(dxyInvPh1_60) ? true : (xauPh0_60 > xauPh1_60 and xagPh0_60 <= xagPh1_60 and dxyInvPh0_60 <= dxyInvPh1_60)
+sig60f = smtOk60 ? sig60 : 0
+new60 = sig60f != 0 and x60 != x60[1]
+f_plot_sig(show and new60 and sig60f == 1, x60, p60, "Hammer H1 +SMT", color.lime, true)
+f_plot_sig(show and new60 and sig60f == -1, x60, p60, "Shooting H1 +SMT", color.red, false)
 
 [raw240, p240, _, _, _, x240] = f_hs_raw("240", wyckH4)
 sig240 = hsEnableH4 ? f_confirm_sig(raw240, "240") : 0
-new240 = sig240 != 0 and x240 != x240[1]
-f_plot_sig(show and new240 and sig240 == 1, x240, p240, "Hammer H4", color.lime, true)
-f_plot_sig(show and new240 and sig240 == -1, x240, p240, "Shooting H4", color.red, false)
+xauPl0_240 = request.security(syminfo.tickerid, "240", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPl1_240 = request.security(syminfo.tickerid, "240", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh0_240 = request.security(syminfo.tickerid, "240", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xauPh1_240 = request.security(syminfo.tickerid, "240", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl0_240 = request.security(smtXagSymbol, "240", f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl1_240 = request.security(smtXagSymbol, "240", f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh0_240 = request.security(smtXagSymbol, "240", f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh1_240 = request.security(smtXagSymbol, "240", f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl0_240 = request.security(dxySymbol, "240", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl1_240 = request.security(dxySymbol, "240", f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh0_240 = request.security(dxySymbol, "240", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh1_240 = request.security(dxySymbol, "240", f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+smtOk240 = true
+if smtFilterEnabled and isXau
+    if sig240 == 1
+        smtOk240 := na(xauPl0_240) or na(xauPl1_240) or na(xagPl0_240) or na(xagPl1_240) or na(dxyInvPl0_240) or na(dxyInvPl1_240) ? true : (xauPl0_240 < xauPl1_240 and xagPl0_240 >= xagPl1_240 and dxyInvPl0_240 >= dxyInvPl1_240)
+    if sig240 == -1
+        smtOk240 := na(xauPh0_240) or na(xauPh1_240) or na(xagPh0_240) or na(xagPh1_240) or na(dxyInvPh0_240) or na(dxyInvPh1_240) ? true : (xauPh0_240 > xauPh1_240 and xagPh0_240 <= xagPh1_240 and dxyInvPh0_240 <= dxyInvPh1_240)
+sig240f = smtOk240 ? sig240 : 0
+new240 = sig240f != 0 and x240 != x240[1]
+f_plot_sig(show and new240 and sig240f == 1, x240, p240, "Hammer H4 +SMT", color.lime, true)
+f_plot_sig(show and new240 and sig240f == -1, x240, p240, "Shooting H4 +SMT", color.red, false)
 
 [sigCur, pCurSig, pocCur, vahCur, valCur, xCur] = f_hs_calc(wyckCur)
-newCur = sigCur != 0 and xCur != xCur[1]
-f_plot_sig(show and newCur and sigCur == 1, xCur, pCurSig, "Hammer " + timeframe.period, color.lime, true)
-f_plot_sig(show and newCur and sigCur == -1, xCur, pCurSig, "Shooting " + timeframe.period, color.red, false)
+xauPl0_cur = f_pl(smtPivotLeft, smtPivotRight, 0)
+xauPl1_cur = f_pl(smtPivotLeft, smtPivotRight, 1)
+xauPh0_cur = f_ph(smtPivotLeft, smtPivotRight, 0)
+xauPh1_cur = f_ph(smtPivotLeft, smtPivotRight, 1)
+xagPl0_cur = request.security(smtXagSymbol, timeframe.period, f_pl(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPl1_cur = request.security(smtXagSymbol, timeframe.period, f_pl(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh0_cur = request.security(smtXagSymbol, timeframe.period, f_ph(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+xagPh1_cur = request.security(smtXagSymbol, timeframe.period, f_ph(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl0_cur = request.security(dxySymbol, timeframe.period, f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPl1_cur = request.security(dxySymbol, timeframe.period, f_pl_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh0_cur = request.security(dxySymbol, timeframe.period, f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 0), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvPh1_cur = request.security(dxySymbol, timeframe.period, f_ph_dxy_inv(smtPivotLeft, smtPivotRight, 1), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+smtOkCur = true
+if smtFilterEnabled and isXau
+    if sigCur == 1
+        smtOkCur := na(xauPl0_cur) or na(xauPl1_cur) or na(xagPl0_cur) or na(xagPl1_cur) or na(dxyInvPl0_cur) or na(dxyInvPl1_cur) ? true : (xauPl0_cur < xauPl1_cur and xagPl0_cur >= xagPl1_cur and dxyInvPl0_cur >= dxyInvPl1_cur)
+    if sigCur == -1
+        smtOkCur := na(xauPh0_cur) or na(xauPh1_cur) or na(xagPh0_cur) or na(xagPh1_cur) or na(dxyInvPh0_cur) or na(dxyInvPh1_cur) ? true : (xauPh0_cur > xauPh1_cur and xagPh0_cur <= xagPh1_cur and dxyInvPh0_cur <= dxyInvPh1_cur)
+sigCurF = smtOkCur ? sigCur : 0
+newCur = sigCurF != 0 and xCur != xCur[1]
+f_plot_sig(show and newCur and sigCurF == 1, xCur, pCurSig, "Hammer " + timeframe.period + " +SMT", color.lime, true)
+f_plot_sig(show and newCur and sigCurF == -1, xCur, pCurSig, "Shooting " + timeframe.period + " +SMT", color.red, false)
 
 [rawCur, _, pocCurSec, vahCurSec, valCurSec, _] = f_hs_raw(timeframe.period, wyckCur)
 pocStable = barstate.isconfirmed ? pocCurSec : pocCurSec[1]
@@ -365,13 +482,21 @@ plot(vpShowLines and vpFilterEnabled ? pocStable : na, "POC", color=color.new(co
 plot(vpShowLines and vpFilterEnabled ? vahStable : na, "VAH", color=color.new(color.purple, 0), linewidth=1)
 plot(vpShowLines and vpFilterEnabled ? valStable : na, "VAL", color=color.new(color.orange, 0), linewidth=1)
 
-alertcondition(sendAlerts and new15 and sig15 == 1, "Hammer M15", "Hammer M15 on {{ticker}}")
-alertcondition(sendAlerts and new15 and sig15 == -1, "Shooting M15", "Shooting M15 on {{ticker}}")
-alertcondition(sendAlerts and new30 and sig30 == 1, "Hammer M30", "Hammer M30 on {{ticker}}")
-alertcondition(sendAlerts and new30 and sig30 == -1, "Shooting M30", "Shooting M30 on {{ticker}}")
-alertcondition(sendAlerts and new60 and sig60 == 1, "Hammer H1", "Hammer H1 on {{ticker}}")
-alertcondition(sendAlerts and new60 and sig60 == -1, "Shooting H1", "Shooting H1 on {{ticker}}")
-alertcondition(sendAlerts and new240 and sig240 == 1, "Hammer H4", "Hammer H4 on {{ticker}}")
-alertcondition(sendAlerts and new240 and sig240 == -1, "Shooting H4", "Shooting H4 on {{ticker}}")
-alertcondition(sendAlerts and newCur and sigCur == 1, "Hammer Current TF", "Hammer on {{ticker}} {{interval}}")
-alertcondition(sendAlerts and newCur and sigCur == -1, "Shooting Current TF", "Shooting on {{ticker}} {{interval}}")
+dxyInvRaw = request.security(dxySymbol, timeframe.period, -close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dxyInvLo = ta.lowest(dxyInvRaw, smtNormLen)
+dxyInvHi = ta.highest(dxyInvRaw, smtNormLen)
+xauLoN = ta.lowest(low, smtNormLen)
+xauHiN = ta.highest(high, smtNormLen)
+dxyInvScaled = na(dxyInvLo) or na(dxyInvHi) or dxyInvHi == dxyInvLo ? na : (xauLoN + (dxyInvRaw - dxyInvLo) / (dxyInvHi - dxyInvLo) * (xauHiN - xauLoN))
+plot(smtPlotDxyInv and isXau ? dxyInvScaled : na, "DXY inverted (norm)", color=color.new(color.blue, 0), linewidth=1)
+
+alertcondition(sendAlerts and new15 and sig15f == 1, "Hammer M15", "Hammer M15 on {{ticker}}")
+alertcondition(sendAlerts and new15 and sig15f == -1, "Shooting M15", "Shooting M15 on {{ticker}}")
+alertcondition(sendAlerts and new30 and sig30f == 1, "Hammer M30", "Hammer M30 on {{ticker}}")
+alertcondition(sendAlerts and new30 and sig30f == -1, "Shooting M30", "Shooting M30 on {{ticker}}")
+alertcondition(sendAlerts and new60 and sig60f == 1, "Hammer H1", "Hammer H1 on {{ticker}}")
+alertcondition(sendAlerts and new60 and sig60f == -1, "Shooting H1", "Shooting H1 on {{ticker}}")
+alertcondition(sendAlerts and new240 and sig240f == 1, "Hammer H4", "Hammer H4 on {{ticker}}")
+alertcondition(sendAlerts and new240 and sig240f == -1, "Shooting H4", "Shooting H4 on {{ticker}}")
+alertcondition(sendAlerts and newCur and sigCurF == 1, "Hammer Current TF", "Hammer on {{ticker}} {{interval}}")
+alertcondition(sendAlerts and newCur and sigCurF == -1, "Shooting Current TF", "Shooting on {{ticker}} {{interval}}")

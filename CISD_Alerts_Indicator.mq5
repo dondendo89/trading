@@ -51,6 +51,18 @@ input int InpWyckSpikeMinPointsM30 = 0;
 input int InpWyckSpikeMinPointsH1 = 0;
 input int InpWyckSpikeMinPointsH4 = 0;
 
+input group "SMT Filter"
+input bool InpSmtFilterEnabled = true;
+input string InpSmtXagSymbol = "XAGUSD";
+input int InpSmtPivotLeft = 3;
+input int InpSmtPivotRight = 3;
+input int InpSmtMaxBars = 300;
+input bool InpSmtInvertDxy = true;
+input bool InpSmtShowOnChart = true;
+input color InpSmtColor = clrSilver;
+input int InpSmtLineWidth = 1;
+input int InpSmtYOffsetPoints = 0;
+
 input group "Volume Profile Filter"
 input bool InpVpFilterEnabled = true;
 input bool InpVpAnchorAsia = true;
@@ -676,6 +688,362 @@ int WyckMinPointsForTf(const ENUM_TIMEFRAMES tf)
    return v;
 }
 
+bool IsPivotLowRates(const int i, const MqlRates &rates[], const int left, const int right)
+{
+   int n = ArraySize(rates);
+   if(left < 1 || right < 1) return false;
+   if(i < right) return false;
+   if(i + left >= n) return false;
+   double v = rates[i].low;
+   for(int k = 1; k <= left; k++)
+      if(v >= rates[i + k].low) return false;
+   for(int k = 1; k <= right; k++)
+      if(v >= rates[i - k].low) return false;
+   return true;
+}
+
+bool IsPivotHighRates(const int i, const MqlRates &rates[], const int left, const int right)
+{
+   int n = ArraySize(rates);
+   if(left < 1 || right < 1) return false;
+   if(i < right) return false;
+   if(i + left >= n) return false;
+   double v = rates[i].high;
+   for(int k = 1; k <= left; k++)
+      if(v <= rates[i + k].high) return false;
+   for(int k = 1; k <= right; k++)
+      if(v <= rates[i - k].high) return false;
+   return true;
+}
+
+bool FindPivotLowBeforeTimeRates(const MqlRates &rates[], const int left, const int right, const datetime tMax, int &idx, datetime &tFound, double &val)
+{
+   int n = ArraySize(rates);
+   for(int i = right; i + left < n; i++)
+   {
+      if(rates[i].time > tMax) continue;
+      if(IsPivotLowRates(i, rates, left, right))
+      {
+         idx = i;
+         tFound = rates[i].time;
+         val = rates[i].low;
+         return true;
+      }
+   }
+   return false;
+}
+
+bool FindPivotHighBeforeTimeRates(const MqlRates &rates[], const int left, const int right, const datetime tMax, int &idx, datetime &tFound, double &val)
+{
+   int n = ArraySize(rates);
+   for(int i = right; i + left < n; i++)
+   {
+      if(rates[i].time > tMax) continue;
+      if(IsPivotHighRates(i, rates, left, right))
+      {
+         idx = i;
+         tFound = rates[i].time;
+         val = rates[i].high;
+         return true;
+      }
+   }
+   return false;
+}
+
+bool FindTwoPivotLowsBeforeTimeRates(const MqlRates &rates[], const int left, const int right, const datetime tMax, datetime &t1, double &v1, datetime &t2, double &v2)
+{
+   int idx = -1;
+   if(!FindPivotLowBeforeTimeRates(rates, left, right, tMax, idx, t1, v1)) return false;
+   if(!FindPivotLowBeforeTimeRates(rates, left, right, (datetime)(t1 - 1), idx, t2, v2)) return false;
+   return true;
+}
+
+bool FindTwoPivotHighsBeforeTimeRates(const MqlRates &rates[], const int left, const int right, const datetime tMax, datetime &t1, double &v1, datetime &t2, double &v2)
+{
+   int idx = -1;
+   if(!FindPivotHighBeforeTimeRates(rates, left, right, tMax, idx, t1, v1)) return false;
+   if(!FindPivotHighBeforeTimeRates(rates, left, right, (datetime)(t1 - 1), idx, t2, v2)) return false;
+   return true;
+}
+
+bool IsPivotLowArr(const int i, const datetime &time[], const double &low[], const int left, const int right)
+{
+   int n = ArraySize(time);
+   if(left < 1 || right < 1) return false;
+   if(i < right) return false;
+   if(i + left >= n) return false;
+   double v = low[i];
+   for(int k = 1; k <= left; k++)
+      if(v >= low[i + k]) return false;
+   for(int k = 1; k <= right; k++)
+      if(v >= low[i - k]) return false;
+   return true;
+}
+
+bool IsPivotHighArr(const int i, const datetime &time[], const double &high[], const int left, const int right)
+{
+   int n = ArraySize(time);
+   if(left < 1 || right < 1) return false;
+   if(i < right) return false;
+   if(i + left >= n) return false;
+   double v = high[i];
+   for(int k = 1; k <= left; k++)
+      if(v <= high[i + k]) return false;
+   for(int k = 1; k <= right; k++)
+      if(v <= high[i - k]) return false;
+   return true;
+}
+
+bool FindPivotLowBeforeTimeArr(const datetime &time[], const double &low[], const int left, const int right, const datetime tMax, int &idx, datetime &tFound, double &val)
+{
+   int n = ArraySize(time);
+   for(int i = right; i + left < n; i++)
+   {
+      if(time[i] > tMax) continue;
+      if(IsPivotLowArr(i, time, low, left, right))
+      {
+         idx = i;
+         tFound = time[i];
+         val = low[i];
+         return true;
+      }
+   }
+   return false;
+}
+
+bool FindPivotHighBeforeTimeArr(const datetime &time[], const double &high[], const int left, const int right, const datetime tMax, int &idx, datetime &tFound, double &val)
+{
+   int n = ArraySize(time);
+   for(int i = right; i + left < n; i++)
+   {
+      if(time[i] > tMax) continue;
+      if(IsPivotHighArr(i, time, high, left, right))
+      {
+         idx = i;
+         tFound = time[i];
+         val = high[i];
+         return true;
+      }
+   }
+   return false;
+}
+
+bool FindTwoPivotLowsBeforeTimeArr(const datetime &time[], const double &low[], const int left, const int right, const datetime tMax, datetime &t1, double &v1, datetime &t2, double &v2)
+{
+   int idx = -1;
+   if(!FindPivotLowBeforeTimeArr(time, low, left, right, tMax, idx, t1, v1)) return false;
+   if(!FindPivotLowBeforeTimeArr(time, low, left, right, (datetime)(t1 - 1), idx, t2, v2)) return false;
+   return true;
+}
+
+bool FindTwoPivotHighsBeforeTimeArr(const datetime &time[], const double &high[], const int left, const int right, const datetime tMax, datetime &t1, double &v1, datetime &t2, double &v2)
+{
+   int idx = -1;
+   if(!FindPivotHighBeforeTimeArr(time, high, left, right, tMax, idx, t1, v1)) return false;
+   if(!FindPivotHighBeforeTimeArr(time, high, left, right, (datetime)(t1 - 1), idx, t2, v2)) return false;
+   return true;
+}
+
+void DrawSmtMarker(const string kind, const string tfTag, const datetime t1, const double v1, const datetime t2, const double v2, const bool isHammer)
+{
+   if(!InpSmtShowOnChart) return;
+   string base = g_prefix + "SMT_" + kind + "_" + tfTag + "_" + IntegerToString((long)t1);
+   string lineName = base + "_L";
+   string textName = base + "_T";
+   if(ObjectFind(0, lineName) >= 0 || ObjectFind(0, textName) >= 0) return;
+
+   if(ObjectCreate(0, lineName, OBJ_TREND, 0, t2, v2, t1, v1))
+   {
+      ObjectSetInteger(0, lineName, OBJPROP_COLOR, InpSmtColor);
+      ObjectSetInteger(0, lineName, OBJPROP_WIDTH, InpSmtLineWidth);
+      ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, false);
+   }
+
+   double y = v1;
+   if(InpSmtYOffsetPoints != 0)
+   {
+      double off = (double)InpSmtYOffsetPoints * _Point;
+      y = isHammer ? (v1 - off) : (v1 + off);
+   }
+   if(ObjectCreate(0, textName, OBJ_TEXT, 0, t1, y))
+   {
+      ObjectSetString(0, textName, OBJPROP_TEXT, "+ SMT");
+      ObjectSetInteger(0, textName, OBJPROP_COLOR, InpSmtColor);
+      ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, textName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, textName, OBJPROP_SELECTABLE, false);
+   }
+}
+
+bool SmtOkRates(const ENUM_TIMEFRAMES tf, const MqlRates &xauRates[], const datetime tSig, const bool isHammer, const bool isShooting, datetime &outT1, double &outV1, datetime &outT2, double &outV2)
+{
+   if(!InpSmtFilterEnabled) return true;
+   if(!IsXauSymbol()) return true;
+   if(!isHammer && !isShooting) return true;
+
+   int left = InpSmtPivotLeft;
+   int right = InpSmtPivotRight;
+   if(left < 1) left = 1;
+   if(right < 1) right = 1;
+
+   datetime xT1 = 0, xT2 = 0;
+   double xV1 = 0.0, xV2 = 0.0;
+
+   string xag = InpSmtXagSymbol;
+   if(xag == "" || xag == _Symbol) return true;
+
+   MqlRates xagRates[];
+   ArraySetAsSeries(xagRates, true);
+   int copiedXag = CopyRates(xag, tf, 0, InpSmtMaxBars, xagRates);
+   if(copiedXag < 20) return true;
+
+   string dxy = InpDxySymbol;
+   if(dxy == "" || dxy == _Symbol) return true;
+
+   MqlRates dxyRates[];
+   ArraySetAsSeries(dxyRates, true);
+   int copiedDxy = CopyRates(dxy, tf, 0, InpSmtMaxBars, dxyRates);
+   if(copiedDxy < 20) return true;
+
+   if(isHammer)
+   {
+      if(!FindTwoPivotLowsBeforeTimeRates(xauRates, left, right, tSig, xT1, xV1, xT2, xV2)) return true;
+      int idx = -1;
+      datetime tA1 = 0, tA2 = 0;
+      double a1 = 0.0, a2 = 0.0;
+      if(!FindPivotLowBeforeTimeRates(xagRates, left, right, xT1, idx, tA1, a1)) return true;
+      if(!FindPivotLowBeforeTimeRates(xagRates, left, right, xT2, idx, tA2, a2)) return true;
+
+      datetime tD1 = 0, tD2 = 0;
+      double d1 = 0.0, d2 = 0.0;
+      bool okD = false;
+      if(InpSmtInvertDxy)
+         okD = FindPivotHighBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotHighBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      else
+         okD = FindPivotLowBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotLowBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      if(!okD) return true;
+
+      bool xauLL = (xV1 < xV2);
+      bool xagNoLL = (a1 >= a2);
+      bool dxyOk = InpSmtInvertDxy ? (d1 <= d2) : (d1 >= d2);
+      bool ok = (xauLL && xagNoLL && dxyOk);
+      outT1 = xT1; outV1 = xV1; outT2 = xT2; outV2 = xV2;
+      return ok;
+   }
+
+   if(isShooting)
+   {
+      if(!FindTwoPivotHighsBeforeTimeRates(xauRates, left, right, tSig, xT1, xV1, xT2, xV2)) return true;
+      int idx = -1;
+      datetime tA1 = 0, tA2 = 0;
+      double a1 = 0.0, a2 = 0.0;
+      if(!FindPivotHighBeforeTimeRates(xagRates, left, right, xT1, idx, tA1, a1)) return true;
+      if(!FindPivotHighBeforeTimeRates(xagRates, left, right, xT2, idx, tA2, a2)) return true;
+
+      datetime tD1 = 0, tD2 = 0;
+      double d1 = 0.0, d2 = 0.0;
+      bool okD = false;
+      if(InpSmtInvertDxy)
+         okD = FindPivotLowBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotLowBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      else
+         okD = FindPivotHighBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotHighBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      if(!okD) return true;
+
+      bool xauHH = (xV1 > xV2);
+      bool xagNoHH = (a1 <= a2);
+      bool dxyOk = InpSmtInvertDxy ? (d1 >= d2) : (d1 <= d2);
+      bool ok = (xauHH && xagNoHH && dxyOk);
+      outT1 = xT1; outV1 = xV1; outT2 = xT2; outV2 = xV2;
+      return ok;
+   }
+   return true;
+}
+
+bool SmtOkArr(const datetime &time[], const double &high[], const double &low[], const datetime tSig, const bool isHammer, const bool isShooting, datetime &outT1, double &outV1, datetime &outT2, double &outV2)
+{
+   if(!InpSmtFilterEnabled) return true;
+   if(!IsXauSymbol()) return true;
+   if(!isHammer && !isShooting) return true;
+
+   int left = InpSmtPivotLeft;
+   int right = InpSmtPivotRight;
+   if(left < 1) left = 1;
+   if(right < 1) right = 1;
+
+   datetime xT1 = 0, xT2 = 0;
+   double xV1 = 0.0, xV2 = 0.0;
+
+   string xag = InpSmtXagSymbol;
+   if(xag == "" || xag == _Symbol) return true;
+
+   MqlRates xagRates[];
+   ArraySetAsSeries(xagRates, true);
+   int copiedXag = CopyRates(xag, _Period, 0, InpSmtMaxBars, xagRates);
+   if(copiedXag < 20) return true;
+
+   string dxy = InpDxySymbol;
+   if(dxy == "" || dxy == _Symbol) return true;
+
+   MqlRates dxyRates[];
+   ArraySetAsSeries(dxyRates, true);
+   int copiedDxy = CopyRates(dxy, _Period, 0, InpSmtMaxBars, dxyRates);
+   if(copiedDxy < 20) return true;
+
+   if(isHammer)
+   {
+      if(!FindTwoPivotLowsBeforeTimeArr(time, low, left, right, tSig, xT1, xV1, xT2, xV2)) return true;
+      int idx = -1;
+      datetime tA1 = 0, tA2 = 0;
+      double a1 = 0.0, a2 = 0.0;
+      if(!FindPivotLowBeforeTimeRates(xagRates, left, right, xT1, idx, tA1, a1)) return true;
+      if(!FindPivotLowBeforeTimeRates(xagRates, left, right, xT2, idx, tA2, a2)) return true;
+
+      datetime tD1 = 0, tD2 = 0;
+      double d1 = 0.0, d2 = 0.0;
+      bool okD = false;
+      if(InpSmtInvertDxy)
+         okD = FindPivotHighBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotHighBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      else
+         okD = FindPivotLowBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotLowBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      if(!okD) return true;
+
+      bool xauLL = (xV1 < xV2);
+      bool xagNoLL = (a1 >= a2);
+      bool dxyOk = InpSmtInvertDxy ? (d1 <= d2) : (d1 >= d2);
+      bool ok = (xauLL && xagNoLL && dxyOk);
+      outT1 = xT1; outV1 = xV1; outT2 = xT2; outV2 = xV2;
+      return ok;
+   }
+
+   if(isShooting)
+   {
+      if(!FindTwoPivotHighsBeforeTimeArr(time, high, left, right, tSig, xT1, xV1, xT2, xV2)) return true;
+      int idx = -1;
+      datetime tA1 = 0, tA2 = 0;
+      double a1 = 0.0, a2 = 0.0;
+      if(!FindPivotHighBeforeTimeRates(xagRates, left, right, xT1, idx, tA1, a1)) return true;
+      if(!FindPivotHighBeforeTimeRates(xagRates, left, right, xT2, idx, tA2, a2)) return true;
+
+      datetime tD1 = 0, tD2 = 0;
+      double d1 = 0.0, d2 = 0.0;
+      bool okD = false;
+      if(InpSmtInvertDxy)
+         okD = FindPivotLowBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotLowBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      else
+         okD = FindPivotHighBeforeTimeRates(dxyRates, left, right, xT1, idx, tD1, d1) && FindPivotHighBeforeTimeRates(dxyRates, left, right, xT2, idx, tD2, d2);
+      if(!okD) return true;
+
+      bool xauHH = (xV1 > xV2);
+      bool xagNoHH = (a1 <= a2);
+      bool dxyOk = InpSmtInvertDxy ? (d1 >= d2) : (d1 <= d2);
+      bool ok = (xauHH && xagNoHH && dxyOk);
+      outT1 = xT1; outV1 = xV1; outT2 = xT2; outV2 = xV2;
+      return ok;
+   }
+   return true;
+}
+
 void CreateHsSignal(const string kind, datetime t, double price, color clr, int arrowCode, bool confirmed)
 {
    string base = g_prefix + kind + "_" + IntegerToString((long)t);
@@ -770,6 +1138,26 @@ void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &
       int minPts = WyckMinPointsForTf(tf);
       if(hammer && rangePts < (double)minPts) hammer = false;
       if(shoot && rangePts < (double)minPts) shoot = false;
+   }
+   if(!hammer && !shoot) return;
+
+   if(InpSmtFilterEnabled && IsXauSymbol())
+   {
+      datetime tSig = rates[signalIndex].time;
+      datetime t1 = 0, t2 = 0;
+      double v1 = 0.0, v2 = 0.0;
+      if(hammer)
+      {
+         bool ok = SmtOkRates(tf, rates, tSig, true, false, t1, v1, t2, v2);
+         if(ok) DrawSmtMarker("Hammer", TfLabelFromTf(tf), t1, v1, t2, v2, true);
+         hammer = ok;
+      }
+      if(shoot)
+      {
+         bool ok = SmtOkRates(tf, rates, tSig, false, true, t1, v1, t2, v2);
+         if(ok) DrawSmtMarker("Shooting", TfLabelFromTf(tf), t1, v1, t2, v2, false);
+         shoot = ok;
+      }
    }
    if(!hammer && !shoot) return;
 
@@ -904,6 +1292,26 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
       int minPts = WyckMinPointsForTf(_Period);
       if(hammer && rangePts < (double)minPts) hammer = false;
       if(shoot && rangePts < (double)minPts) shoot = false;
+   }
+   if(!hammer && !shoot) return;
+
+   if(InpSmtFilterEnabled && IsXauSymbol())
+   {
+      datetime tSig = time[signalIndex];
+      datetime t1 = 0, t2 = 0;
+      double v1 = 0.0, v2 = 0.0;
+      if(hammer)
+      {
+         bool ok = SmtOkArr(time, high, low, tSig, true, false, t1, v1, t2, v2);
+         if(ok) DrawSmtMarker("Hammer", TfLabel(), t1, v1, t2, v2, true);
+         hammer = ok;
+      }
+      if(shoot)
+      {
+         bool ok = SmtOkArr(time, high, low, tSig, false, true, t1, v1, t2, v2);
+         if(ok) DrawSmtMarker("Shooting", TfLabel(), t1, v1, t2, v2, false);
+         shoot = ok;
+      }
    }
    if(!hammer && !shoot) return;
 

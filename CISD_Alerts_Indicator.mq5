@@ -21,6 +21,9 @@ input bool InpSuppressAlertsOnLoad = true;
 input group "Hammer / Shooting"
 input bool InpEnableHs = true;
 input double InpFibLevel = 0.382;
+input bool InpProCandleFilterEnabled = true;
+input double InpProWickBodyMinRatio = 2.0;
+input double InpProOppWickMaxBodyRatio = 0.3;
 input bool InpConfirmByNextCandle = false;
 input bool InpConfirmWithDxy = true;
 input string InpDxySymbol = "DXY.cash";
@@ -43,6 +46,9 @@ input int InpHsTrendEmaFast = 50;
 input int InpHsTrendEmaSlow = 200;
 input int InpHsTrendAtrPeriod = 14;
 input double InpHsTrendAtrMult = 0.5;
+input group "EMA Touch Tag"
+input bool InpEmaTouchTagEnabled = true;
+input int InpEmaTouchTolerancePoints = 0;
 input bool InpWyckSpikeFilterEnabled = true;
 input int InpWyckSpikeMinPoints = 600;
 input int InpWyckSpikeMinPointsCurrent = 0;
@@ -62,6 +68,11 @@ input bool InpSmtShowOnChart = true;
 input color InpSmtColor = clrSilver;
 input int InpSmtLineWidth = 1;
 input int InpSmtYOffsetPoints = 0;
+
+input group "Volume Filter (VL)"
+input bool InpVolFilterEnabled = false;
+input int InpVolMaPeriod = 20;
+input double InpVolMult = 1.5;
 
 input group "Volume Profile Filter"
 input bool InpVpFilterEnabled = true;
@@ -376,16 +387,36 @@ bool IsHammerCandle(const int i, const double &open[], const double &high[], con
 {
    double candleSize = MathAbs(high[i] - low[i]);
    if(candleSize <= 0.0) return false;
+   double body = MathAbs(close[i] - open[i]);
    double bodyMin = MathMin(open[i], close[i]);
-   return (high[i] - InpFibLevel * candleSize) < bodyMin;
+   double bodyMax = MathMax(open[i], close[i]);
+   double lowerW = bodyMin - low[i];
+   double upperW = high[i] - bodyMax;
+   bool baseOk = (high[i] - InpFibLevel * candleSize) < bodyMin;
+   if(!baseOk) return false;
+   if(!InpProCandleFilterEnabled) return true;
+   if(body <= 0.0) return false;
+   if(lowerW < body * InpProWickBodyMinRatio) return false;
+   if(upperW > body * InpProOppWickMaxBodyRatio) return false;
+   return true;
 }
 
 bool IsShootingCandle(const int i, const double &open[], const double &high[], const double &low[], const double &close[])
 {
    double candleSize = MathAbs(high[i] - low[i]);
    if(candleSize <= 0.0) return false;
+   double body = MathAbs(close[i] - open[i]);
+   double bodyMin = MathMin(open[i], close[i]);
    double bodyMax = MathMax(open[i], close[i]);
-   return (low[i] + InpFibLevel * candleSize) > bodyMax;
+   double lowerW = bodyMin - low[i];
+   double upperW = high[i] - bodyMax;
+   bool baseOk = (low[i] + InpFibLevel * candleSize) > bodyMax;
+   if(!baseOk) return false;
+   if(!InpProCandleFilterEnabled) return true;
+   if(body <= 0.0) return false;
+   if(upperW < body * InpProWickBodyMinRatio) return false;
+   if(lowerW > body * InpProOppWickMaxBodyRatio) return false;
+   return true;
 }
 
 bool GetDxyDirection(datetime t, bool &isBullish, bool &isBearish)
@@ -619,7 +650,37 @@ bool GetTrendFlagsTf(const ENUM_TIMEFRAMES tf, const int shift, const double clo
    return true;
 }
 
-void CreateHsSignalTf(const string kind, const string tfTag, datetime t, double price, color clr, int arrowCode, bool confirmed, bool canAlert)
+bool GetEmaValuesTf(const ENUM_TIMEFRAMES tf, const int shift, double &emaFast, double &emaSlow)
+{
+   emaFast = 0.0;
+   emaSlow = 0.0;
+   int hFast = INVALID_HANDLE;
+   int hSlow = INVALID_HANDLE;
+   if(tf == _Period) { hFast = g_ema_fast_handle; hSlow = g_ema_slow_handle; }
+   if(tf == PERIOD_M15) { hFast = g_ema_fast_m15; hSlow = g_ema_slow_m15; }
+   if(tf == PERIOD_M30) { hFast = g_ema_fast_m30; hSlow = g_ema_slow_m30; }
+   if(tf == PERIOD_H1) { hFast = g_ema_fast_h1; hSlow = g_ema_slow_h1; }
+   if(tf == PERIOD_H4) { hFast = g_ema_fast_h4; hSlow = g_ema_slow_h4; }
+   if(hFast == INVALID_HANDLE || hSlow == INVALID_HANDLE) return false;
+   double ef[1], es[1];
+   if(CopyBuffer(hFast, 0, shift, 1, ef) <= 0) return false;
+   if(CopyBuffer(hSlow, 0, shift, 1, es) <= 0) return false;
+   emaFast = ef[0];
+   emaSlow = es[0];
+   return true;
+}
+
+bool BodyTouchesEma(const double bodyMin, const double bodyMax, const double emaFast, const double emaSlow)
+{
+   double tol = (double)InpEmaTouchTolerancePoints * _Point;
+   double lo = bodyMin - tol;
+   double hi = bodyMax + tol;
+   if(emaFast >= lo && emaFast <= hi) return true;
+   if(emaSlow >= lo && emaSlow <= hi) return true;
+   return false;
+}
+
+void CreateHsSignalTf(const string kind, const string tfTag, datetime t, double price, color clr, int arrowCode, bool confirmed, bool canAlert, bool volFlag, bool emaTouchFlag)
 {
    string base = g_prefix + kind + "_" + tfTag + "_" + IntegerToString((long)t);
    string arrowName = base + "_A";
@@ -634,7 +695,7 @@ void CreateHsSignalTf(const string kind, const string tfTag, datetime t, double 
       ObjectSetInteger(0, arrowName, OBJPROP_SELECTABLE, false);
    }
 
-   string label = kind + " " + tfTag;
+   string label = kind + " " + tfTag + (volFlag ? " VL" : "") + (emaTouchFlag ? " EMA" : "");
    if(confirmed) label = label + " confermato";
    if(ObjectCreate(0, textName, OBJ_TEXT, 0, t, price))
    {
@@ -649,7 +710,7 @@ void CreateHsSignalTf(const string kind, const string tfTag, datetime t, double 
    {
       if(!g_alerts_armed) return;
       if(!InpNotifyHistorical) return;
-      string msg = kind + " " + tfTag + (confirmed ? " confermato" : "") + " on " + _Symbol + " Price=" + DoubleToString(price, _Digits);
+      string msg = kind + " " + tfTag + (volFlag ? " VL" : "") + (emaTouchFlag ? " EMA" : "") + (confirmed ? " confermato" : "") + " on " + _Symbol + " Price=" + DoubleToString(price, _Digits);
       if(InpSendAlert) Alert(msg);
       if(InpSendPush) SendNotification(msg);
    }
@@ -660,8 +721,18 @@ bool IsHammerRates(const int i, const MqlRates &rates[])
    if(i < 0 || i >= ArraySize(rates)) return false;
    double candleSize = MathAbs(rates[i].high - rates[i].low);
    if(candleSize <= 0.0) return false;
+   double body = MathAbs(rates[i].close - rates[i].open);
    double bodyMin = MathMin(rates[i].open, rates[i].close);
-   return (rates[i].high - InpFibLevel * candleSize) < bodyMin;
+   double bodyMax = MathMax(rates[i].open, rates[i].close);
+   double lowerW = bodyMin - rates[i].low;
+   double upperW = rates[i].high - bodyMax;
+   bool baseOk = (rates[i].high - InpFibLevel * candleSize) < bodyMin;
+   if(!baseOk) return false;
+   if(!InpProCandleFilterEnabled) return true;
+   if(body <= 0.0) return false;
+   if(lowerW < body * InpProWickBodyMinRatio) return false;
+   if(upperW > body * InpProOppWickMaxBodyRatio) return false;
+   return true;
 }
 
 bool IsShootingRates(const int i, const MqlRates &rates[])
@@ -669,8 +740,18 @@ bool IsShootingRates(const int i, const MqlRates &rates[])
    if(i < 0 || i >= ArraySize(rates)) return false;
    double candleSize = MathAbs(rates[i].high - rates[i].low);
    if(candleSize <= 0.0) return false;
+   double body = MathAbs(rates[i].close - rates[i].open);
+   double bodyMin = MathMin(rates[i].open, rates[i].close);
    double bodyMax = MathMax(rates[i].open, rates[i].close);
-   return (rates[i].low + InpFibLevel * candleSize) > bodyMax;
+   double lowerW = bodyMin - rates[i].low;
+   double upperW = rates[i].high - bodyMax;
+   bool baseOk = (rates[i].low + InpFibLevel * candleSize) > bodyMax;
+   if(!baseOk) return false;
+   if(!InpProCandleFilterEnabled) return true;
+   if(body <= 0.0) return false;
+   if(upperW < body * InpProWickBodyMinRatio) return false;
+   if(lowerW > body * InpProOppWickMaxBodyRatio) return false;
+   return true;
 }
 
 int WyckMinPointsForTf(const ENUM_TIMEFRAMES tf)
@@ -686,6 +767,30 @@ int WyckMinPointsForTf(const ENUM_TIMEFRAMES tf)
    }
    if(v <= 0) v = InpWyckSpikeMinPoints;
    return v;
+}
+
+double AvgTickVolumeRates(const MqlRates &rates[], const int startIndex, const int period)
+{
+   int n = ArraySize(rates);
+   if(period <= 0) return 0.0;
+   if(startIndex < 0) return 0.0;
+   if(startIndex + period > n) return 0.0;
+   double sum = 0.0;
+   for(int i = startIndex; i < startIndex + period; i++)
+      sum += (double)rates[i].tick_volume;
+   return sum / (double)period;
+}
+
+double AvgTickVolumeArr(const long &tick_volume[], const int startIndex, const int period)
+{
+   int n = ArraySize(tick_volume);
+   if(period <= 0) return 0.0;
+   if(startIndex < 0) return 0.0;
+   if(startIndex + period > n) return 0.0;
+   double sum = 0.0;
+   for(int i = startIndex; i < startIndex + period; i++)
+      sum += (double)tick_volume[i];
+   return sum / (double)period;
 }
 
 bool IsPivotLowRates(const int i, const MqlRates &rates[], const int left, const int right)
@@ -1044,7 +1149,7 @@ bool SmtOkArr(const datetime &time[], const double &high[], const double &low[],
    return true;
 }
 
-void CreateHsSignal(const string kind, datetime t, double price, color clr, int arrowCode, bool confirmed)
+void CreateHsSignal(const string kind, datetime t, double price, color clr, int arrowCode, bool confirmed, bool volFlag, bool emaTouchFlag)
 {
    string base = g_prefix + kind + "_" + IntegerToString((long)t);
    string arrowName = base + "_A";
@@ -1059,7 +1164,7 @@ void CreateHsSignal(const string kind, datetime t, double price, color clr, int 
       ObjectSetInteger(0, arrowName, OBJPROP_SELECTABLE, false);
    }
 
-   string label = kind + " " + TfLabel();
+   string label = kind + " " + TfLabel() + (volFlag ? " VL" : "") + (emaTouchFlag ? " EMA" : "");
    if(confirmed) label = label + " confermato";
    if(ObjectCreate(0, textName, OBJ_TEXT, 0, t, price))
    {
@@ -1077,7 +1182,7 @@ void CreateHsSignal(const string kind, datetime t, double price, color clr, int 
       {
          if(t != iTime(_Symbol, _Period, 1)) return;
       }
-      string msg = kind + " " + TfLabel() + (confirmed ? " confermato" : "") + " on " + _Symbol + " Price=" + DoubleToString(price, _Digits);
+      string msg = kind + " " + TfLabel() + (volFlag ? " VL" : "") + (emaTouchFlag ? " EMA" : "") + (confirmed ? " confermato" : "") + " on " + _Symbol + " Price=" + DoubleToString(price, _Digits);
       if(InpSendAlert) Alert(msg);
       if(InpSendPush) SendNotification(msg);
    }
@@ -1161,6 +1266,29 @@ void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &
    }
    if(!hammer && !shoot) return;
 
+   bool hammerVl = false;
+   bool shootVl = false;
+   if(InpVolFilterEnabled)
+   {
+      int p = InpVolMaPeriod;
+      if(p < 1) p = 1;
+      double avg = AvgTickVolumeRates(rates, signalIndex + 1, p);
+      double v = (double)rates[signalIndex].tick_volume;
+      bool volOk = (avg > 0.0) && (v >= (avg * InpVolMult));
+      if(hammer)
+      {
+         hammerVl = volOk;
+         hammer = hammer && volOk;
+      }
+      if(shoot)
+      {
+         bool buyVol = (rates[signalIndex].close > rates[signalIndex].open);
+         shootVl = volOk && buyVol;
+         shoot = shoot && shootVl;
+      }
+   }
+   if(!hammer && !shoot) return;
+
    bool trendUp = false;
    bool trendDown = false;
    if(InpHsTrendFilterEnabled)
@@ -1205,8 +1333,17 @@ void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &
       }
       if(hammer && rates[signalIndex].time != lastHammerTime)
       {
+         bool emaTouchFlag = false;
+         if(InpEmaTouchTagEnabled)
+         {
+            double ef = 0.0, es = 0.0;
+            double bodyMin = MathMin(rates[signalIndex].open, rates[signalIndex].close);
+            double bodyMax = MathMax(rates[signalIndex].open, rates[signalIndex].close);
+            if(GetEmaValuesTf(tf, signalIndex, ef, es))
+               emaTouchFlag = BodyTouchesEma(bodyMin, bodyMax, ef, es);
+         }
          lastHammerTime = rates[signalIndex].time;
-         CreateHsSignalTf("Hammer", tfTag, rates[signalIndex].time, rates[signalIndex].low, InpHammerColor, InpHammerArrowCode, confirmed, armed);
+         CreateHsSignalTf("Hammer", tfTag, rates[signalIndex].time, rates[signalIndex].low, InpHammerColor, InpHammerArrowCode, confirmed, armed, hammerVl, emaTouchFlag);
       }
    }
 
@@ -1225,8 +1362,17 @@ void ProcessHsTimeframe(const ENUM_TIMEFRAMES tf, const bool enabled, datetime &
       }
       if(shoot && rates[signalIndex].time != lastShootingTime)
       {
+         bool emaTouchFlag = false;
+         if(InpEmaTouchTagEnabled)
+         {
+            double ef = 0.0, es = 0.0;
+            double bodyMin = MathMin(rates[signalIndex].open, rates[signalIndex].close);
+            double bodyMax = MathMax(rates[signalIndex].open, rates[signalIndex].close);
+            if(GetEmaValuesTf(tf, signalIndex, ef, es))
+               emaTouchFlag = BodyTouchesEma(bodyMin, bodyMax, ef, es);
+         }
          lastShootingTime = rates[signalIndex].time;
-         CreateHsSignalTf("Shooting", tfTag, rates[signalIndex].time, rates[signalIndex].high, InpShootingColor, InpShootingArrowCode, confirmed, armed);
+         CreateHsSignalTf("Shooting", tfTag, rates[signalIndex].time, rates[signalIndex].high, InpShootingColor, InpShootingArrowCode, confirmed, armed, shootVl, emaTouchFlag);
       }
    }
 }
@@ -1254,7 +1400,7 @@ void DrawHsStatusOnChart()
    ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
 }
 
-void ProcessHammerShooting(const int i, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[])
+void ProcessHammerShooting(const int i, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[], const long &tick_volume[])
 {
    if(!InpEnableHs) return;
    if(!HsTimeframeEnabled()) return;
@@ -1315,6 +1461,29 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    }
    if(!hammer && !shoot) return;
 
+   bool hammerVl = false;
+   bool shootVl = false;
+   if(InpVolFilterEnabled)
+   {
+      int p = InpVolMaPeriod;
+      if(p < 1) p = 1;
+      double avg = AvgTickVolumeArr(tick_volume, signalIndex + 1, p);
+      double v = (double)tick_volume[signalIndex];
+      bool volOk = (avg > 0.0) && (v >= (avg * InpVolMult));
+      if(hammer)
+      {
+         hammerVl = volOk;
+         hammer = hammer && volOk;
+      }
+      if(shoot)
+      {
+         bool buyVol = (close[signalIndex] > open[signalIndex]);
+         shootVl = volOk && buyVol;
+         shoot = shoot && shootVl;
+      }
+   }
+   if(!hammer && !shoot) return;
+
    if(InpHsTrendFilterEnabled)
    {
       bool trendUp = false;
@@ -1336,7 +1505,16 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    if(hammer)
    {
       bool confirmed = (haveDxy && dxyBear);
-      CreateHsSignal("Hammer", time[signalIndex], low[signalIndex], InpHammerColor, InpHammerArrowCode, confirmed);
+      bool emaTouchFlag = false;
+      if(InpEmaTouchTagEnabled)
+      {
+         double ef = 0.0, es = 0.0;
+         double bodyMin = MathMin(open[signalIndex], close[signalIndex]);
+         double bodyMax = MathMax(open[signalIndex], close[signalIndex]);
+         if(GetEmaValuesTf(_Period, signalIndex, ef, es))
+            emaTouchFlag = BodyTouchesEma(bodyMin, bodyMax, ef, es);
+      }
+      CreateHsSignal("Hammer", time[signalIndex], low[signalIndex], InpHammerColor, InpHammerArrowCode, confirmed, hammerVl, emaTouchFlag);
       if(InpHsEntryOnBreakout)
       {
          bool vpOk = true;
@@ -1367,7 +1545,16 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    if(shoot)
    {
       bool confirmed = (haveDxy && dxyBull);
-      CreateHsSignal("Shooting", time[signalIndex], high[signalIndex], InpShootingColor, InpShootingArrowCode, confirmed);
+      bool emaTouchFlag = false;
+      if(InpEmaTouchTagEnabled)
+      {
+         double ef = 0.0, es = 0.0;
+         double bodyMin = MathMin(open[signalIndex], close[signalIndex]);
+         double bodyMax = MathMax(open[signalIndex], close[signalIndex]);
+         if(GetEmaValuesTf(_Period, signalIndex, ef, es))
+            emaTouchFlag = BodyTouchesEma(bodyMin, bodyMax, ef, es);
+      }
+      CreateHsSignal("Shooting", time[signalIndex], high[signalIndex], InpShootingColor, InpShootingArrowCode, confirmed, shootVl, emaTouchFlag);
       if(InpHsEntryOnBreakout)
       {
          bool vpOk = true;
@@ -1396,9 +1583,9 @@ void ProcessHammerShooting(const int i, const datetime &time[], const double &op
    }
 }
 
-void ProcessBar(const int i, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[])
+void ProcessBar(const int i, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[], const long &tick_volume[])
 {
-   ProcessHammerShooting(i, time, open, high, low, close);
+   ProcessHammerShooting(i, time, open, high, low, close, tick_volume);
 
    bool bearish_pullback_detected = (close[i+1] > open[i+1]);
    bool bullish_pullback_detected = (close[i+1] < open[i+1]);
@@ -1759,7 +1946,7 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
 
    for(int i = limit; i >= 1; i--)
    {
-      ProcessBar(i, time, open, high, low, close);
+      ProcessBar(i, time, open, high, low, close, tick_volume);
    }
 
    datetime t2 = ExtendTime(time[1], InpExtendBars);

@@ -20,6 +20,19 @@ liveHighColor = input.color(color.new(color.aqua, 0), "High color", group="Live 
 liveLowColor = input.color(color.new(color.orange, 0), "Low color", group="Live Candle")
 liveFontSize = input.string("Tiny", "Text size", options=["Tiny", "Small", "Normal"], group="Live Candle")
 
+showDailyLevels = input.bool(true, "Show NY Open / Daily High-Low", group="Daily Levels")
+dailyTz = input.string("GMT-7", "Timezone", group="Daily Levels")
+nyOpenHour = input.int(21, "NY open hour", minval=0, maxval=23, group="Daily Levels")
+closingHour = input.int(6, "Closing hour", minval=0, maxval=23, group="Daily Levels")
+closingMinute = input.int(30, "Closing minute", minval=0, maxval=59, group="Daily Levels")
+finalHour = input.int(9, "Final hour", minval=0, maxval=23, group="Daily Levels")
+showDailyVerticalLines = input.bool(true, "Show vertical lines", group="Daily Levels")
+dailyLineColor = input.color(color.white, "Line color", group="Daily Levels")
+nyOpenLineColor = input.color(color.blue, "NY Open color", group="Daily Levels")
+dailyLabelColor = input.color(color.white, "Label color", group="Daily Levels")
+dailyAlertOnCreate = input.bool(true, "Alert on create/update", group="Daily Levels")
+dailyAlertOnTouch = input.bool(true, "Alert on touch", group="Daily Levels")
+
 enableHs = input.bool(true, "Enable Hammer/Shooting", group="Hammer/Shooting")
 fibLevel = input.float(0.382, "Fibonacci Level", options=[0.236, 0.382, 0.5], group="Hammer/Shooting")
 proCandleFilterEnabled = input.bool(true, "Pro Candle filter", group="Hammer/Shooting")
@@ -769,3 +782,80 @@ else
     if not na(liveLowLbl)
         label.delete(liveLowLbl)
         liveLowLbl := na
+
+isNyOpen = showDailyLevels and hour(time, dailyTz) == nyOpenHour and minute(time, dailyTz) == 0
+isClosing = showDailyLevels and hour(time, dailyTz) == closingHour and minute(time, dailyTz) == closingMinute
+isFinal = showDailyLevels and hour(time, dailyTz) == finalHour and minute(time, dailyTz) == 0
+isWithinRange = showDailyLevels and (hour(time, dailyTz) > nyOpenHour) or (hour(time, dailyTz) < closingHour) or (hour(time, dailyTz) == closingHour and minute(time, dailyTz) < closingMinute)
+
+var float nyOpenPrice = na
+var float dailyHigh = na
+var float dailyLow = na
+var line nyOpenLine = na
+var line dailyHighLine = na
+var line dailyLowLine = na
+var label nyOpenLbl = na
+var label dailyHighLbl = na
+var label dailyLowLbl = na
+var bool touchedNyOpen = false
+var bool touchedDHigh = false
+var bool touchedDLow = false
+
+if showDailyLevels and isNyOpen
+    nyOpenPrice := open
+    dailyHigh := high
+    dailyLow := low
+    touchedNyOpen := false
+    touchedDHigh := false
+    touchedDLow := false
+    nyOpenLine := line.new(bar_index, nyOpenPrice, bar_index, nyOpenPrice, width=1, color=nyOpenLineColor)
+    dailyHighLine := line.new(bar_index, dailyHigh, bar_index, dailyHigh, width=1, color=dailyLineColor)
+    dailyLowLine := line.new(bar_index, dailyLow, bar_index, dailyLow, width=1, color=dailyLineColor)
+    nyOpenLbl := label.new(bar_index, nyOpenPrice, "NY Open", color=color.new(color.white, 100), textcolor=dailyLabelColor, style=label.style_label_left, size=size.small)
+    dailyHighLbl := label.new(bar_index, dailyHigh, "Daily High", color=color.new(color.white, 100), textcolor=dailyLabelColor, style=label.style_label_left, size=size.small)
+    dailyLowLbl := label.new(bar_index, dailyLow, "Daily Low", color=color.new(color.white, 100), textcolor=dailyLabelColor, style=label.style_label_left, size=size.small)
+
+if showDailyLevels and showDailyVerticalLines and (isNyOpen or isClosing)
+    line.new(bar_index, low, bar_index, high, width=1, color=dailyLineColor)
+
+if showDailyLevels and barstate.isconfirmed and isWithinRange
+    if not na(dailyHigh) and high > dailyHigh
+        dailyHigh := high
+        if not na(dailyHighLine)
+            line.set_y1(dailyHighLine, dailyHigh)
+            line.set_y2(dailyHighLine, dailyHigh)
+        if not na(dailyHighLbl)
+            label.set_y(dailyHighLbl, dailyHigh)
+    if not na(dailyLow) and low < dailyLow
+        dailyLow := low
+        if not na(dailyLowLine)
+            line.set_y1(dailyLowLine, dailyLow)
+            line.set_y2(dailyLowLine, dailyLow)
+        if not na(dailyLowLbl)
+            label.set_y(dailyLowLbl, dailyLow)
+
+if showDailyLevels and isFinal
+    if not na(dailyHighLine)
+        line.set_x2(dailyHighLine, bar_index)
+    if not na(dailyLowLine)
+        line.set_x2(dailyLowLine, bar_index)
+
+if showDailyLevels and isClosing
+    if not na(nyOpenLine)
+        line.set_x2(nyOpenLine, bar_index)
+
+touchNyOpen = showDailyLevels and not touchedNyOpen and not na(nyOpenPrice) and low <= nyOpenPrice and high >= nyOpenPrice and barstate.isconfirmed
+touchDHigh = showDailyLevels and not touchedDHigh and not na(dailyHigh) and low <= dailyHigh and high >= dailyHigh and barstate.isconfirmed
+touchDLow = showDailyLevels and not touchedDLow and not na(dailyLow) and low <= dailyLow and high >= dailyLow and barstate.isconfirmed
+
+if touchNyOpen
+    touchedNyOpen := true
+if touchDHigh
+    touchedDHigh := true
+if touchDLow
+    touchedDLow := true
+
+alertcondition(dailyAlertOnCreate and isNyOpen, "NY Open created", "NY Open created on {{ticker}} {{interval}}")
+alertcondition(dailyAlertOnTouch and touchNyOpen, "NY Open touched", "NY Open touched on {{ticker}} {{interval}}")
+alertcondition(dailyAlertOnTouch and touchDHigh, "Daily High touched", "Daily High touched on {{ticker}} {{interval}}")
+alertcondition(dailyAlertOnTouch and touchDLow, "Daily Low touched", "Daily Low touched on {{ticker}} {{interval}}")

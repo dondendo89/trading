@@ -116,6 +116,20 @@ input color InpLiveLowColor = clrOrange;
 input int InpLiveHlFontSize = 9;
 input int InpLiveHlYOffsetPoints = 0;
 
+input group "Daily Levels"
+input bool InpDailyEnabled = true;
+input int InpDailyTzOffsetHours = -7;
+input int InpDailyNyOpenHour = 21;
+input int InpDailyClosingHour = 6;
+input int InpDailyClosingMinute = 30;
+input int InpDailyFinalHour = 9;
+input int InpDailyMaxBars = 2000;
+input bool InpDailyShowVerticalLines = true;
+input color InpDailyLineColor = clrWhite;
+input color InpDailyNyOpenColor = clrBlue;
+input bool InpDailyAlertOnCreate = true;
+input bool InpDailyAlertOnTouch = true;
+
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
 bool g_is_bullish = false;
@@ -200,6 +214,15 @@ datetime g_last_hammer_time_h4 = 0;
 datetime g_last_shooting_time_h4 = 0;
 
 datetime g_struct_last_time0 = 0;
+datetime g_daily_last_time0 = 0;
+datetime g_daily_start_time = 0;
+double g_daily_ny_open = 0.0;
+double g_daily_high = 0.0;
+double g_daily_low = 0.0;
+bool g_daily_has = false;
+bool g_daily_touched_open = false;
+bool g_daily_touched_high = false;
+bool g_daily_touched_low = false;
 
 void DeleteObjectSafe(const string name)
 {
@@ -264,6 +287,241 @@ void UpdateLiveHighLow(const datetime t0, const double hi, const double lo)
    ObjectSetString(0, lowName, OBJPROP_TEXT, tLow);
    ObjectSetInteger(0, lowName, OBJPROP_COLOR, InpLiveLowColor);
    ObjectSetInteger(0, lowName, OBJPROP_FONTSIZE, InpLiveHlFontSize);
+}
+
+bool LocalTimeParts(const datetime serverTime, int &hh, int &mm)
+{
+   datetime t = serverTime + (datetime)InpDailyTzOffsetHours * 3600;
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   hh = dt.hour;
+   mm = dt.min;
+   return true;
+}
+
+bool IsDailyNyOpenBar(const datetime t)
+{
+   int hh = 0, mm = 0;
+   LocalTimeParts(t, hh, mm);
+   return (hh == InpDailyNyOpenHour && mm == 0);
+}
+
+bool IsDailyClosingBar(const datetime t)
+{
+   int hh = 0, mm = 0;
+   LocalTimeParts(t, hh, mm);
+   return (hh == InpDailyClosingHour && mm == InpDailyClosingMinute);
+}
+
+bool IsDailyFinalBar(const datetime t)
+{
+   int hh = 0, mm = 0;
+   LocalTimeParts(t, hh, mm);
+   return (hh == InpDailyFinalHour && mm == 0);
+}
+
+bool IsWithinDailyRange(const datetime t)
+{
+   int hh = 0, mm = 0;
+   LocalTimeParts(t, hh, mm);
+   bool afterOpen = (hh > InpDailyNyOpenHour);
+   bool beforeClose = (hh < InpDailyClosingHour) || (hh == InpDailyClosingHour && mm < InpDailyClosingMinute);
+   return afterOpen || beforeClose;
+}
+
+void CreateOrUpdateDailyLine(const string name, const datetime t1, const double price, const datetime t2, const color clr, const int width)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_TREND, 0, t1, price, t2, price);
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   else
+   {
+      ObjectMove(0, name, 0, t1, price);
+      ObjectMove(0, name, 1, t2, price);
+   }
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+}
+
+void CreateOrUpdateDailyText(const string name, const datetime t, const double price, const string text, const color clr)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_TEXT, 0, t, price);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   else
+   {
+      ObjectMove(0, name, 0, t, price);
+   }
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+}
+
+void CreateDailyVerticalLine(const string name, const datetime t, const double y1, const double y2)
+{
+   if(ObjectFind(0, name) >= 0) return;
+   if(ObjectCreate(0, name, OBJ_TREND, 0, t, y1, t, y2))
+   {
+      ObjectSetInteger(0, name, OBJPROP_COLOR, InpDailyLineColor);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+}
+
+void ProcessDailyLevels(const datetime &time[], const double &open[], const double &high[], const double &low[])
+{
+   if(!InpDailyEnabled)
+      return;
+
+   datetime t0 = time[0];
+   bool newBar = (g_daily_last_time0 == 0 || t0 != g_daily_last_time0);
+   g_daily_last_time0 = t0;
+
+   if(!g_daily_has)
+   {
+      int total = ArraySize(time);
+      int maxBars = InpDailyMaxBars;
+      if(maxBars < 100) maxBars = 100;
+      if(maxBars > total - 1) maxBars = total - 1;
+      int start = -1;
+      for(int i = 0; i <= maxBars; i++)
+      {
+         if(IsDailyNyOpenBar(time[i]))
+         {
+            start = i;
+            break;
+         }
+      }
+      if(start >= 0)
+      {
+         g_daily_start_time = time[start];
+         g_daily_ny_open = open[start];
+         g_daily_high = high[start];
+         g_daily_low = low[start];
+         for(int i = start - 1; i >= 0; i--)
+         {
+            if(high[i] > g_daily_high) g_daily_high = high[i];
+            if(low[i] < g_daily_low) g_daily_low = low[i];
+         }
+         g_daily_has = true;
+         g_daily_touched_open = false;
+         g_daily_touched_high = false;
+         g_daily_touched_low = false;
+      }
+   }
+
+   if(IsDailyNyOpenBar(t0))
+   {
+      g_daily_ny_open = open[0];
+      g_daily_high = high[0];
+      g_daily_low = low[0];
+      g_daily_has = true;
+      g_daily_start_time = t0;
+      g_daily_touched_open = false;
+      g_daily_touched_high = false;
+      g_daily_touched_low = false;
+
+      string lnOpen = g_prefix + "D_NY_OPEN";
+      string lnHigh = g_prefix + "D_HIGH";
+      string lnLow = g_prefix + "D_LOW";
+      string lbOpen = g_prefix + "D_NY_OPEN_LBL";
+      string lbHigh = g_prefix + "D_HIGH_LBL";
+      string lbLow = g_prefix + "D_LOW_LBL";
+      datetime t2 = ExtendTime(t0, InpExtendBars);
+      CreateOrUpdateDailyLine(lnOpen, g_daily_start_time, g_daily_ny_open, t2, InpDailyNyOpenColor, 1);
+      CreateOrUpdateDailyLine(lnHigh, g_daily_start_time, g_daily_high, t2, InpDailyLineColor, 1);
+      CreateOrUpdateDailyLine(lnLow, g_daily_start_time, g_daily_low, t2, InpDailyLineColor, 1);
+      CreateOrUpdateDailyText(lbOpen, t0, g_daily_ny_open, "NY Open", InpDailyNyOpenColor);
+      CreateOrUpdateDailyText(lbHigh, t0, g_daily_high, "Daily High", InpDailyLineColor);
+      CreateOrUpdateDailyText(lbLow, t0, g_daily_low, "Daily Low", InpDailyLineColor);
+
+      if(g_alerts_armed && InpDailyAlertOnCreate)
+      {
+         string msg = "NY Open created on " + _Symbol + " TF=" + EnumToString(_Period);
+         if(InpSendAlert) Alert(msg);
+         if(InpSendPush) SendNotification(msg);
+      }
+   }
+
+   if(!g_daily_has) return;
+
+   if(InpDailyShowVerticalLines && (IsDailyNyOpenBar(t0) || IsDailyClosingBar(t0)))
+   {
+      string vname = g_prefix + "D_V_" + IntegerToString((long)t0);
+      CreateDailyVerticalLine(vname, t0, low[0], high[0]);
+   }
+
+   if(newBar && IsWithinDailyRange(t0))
+   {
+      if(high[0] > g_daily_high)
+      {
+         g_daily_high = high[0];
+         if(g_alerts_armed && InpDailyAlertOnCreate)
+         {
+            string msg = "Daily High updated on " + _Symbol + " TF=" + EnumToString(_Period);
+            if(InpSendAlert) Alert(msg);
+            if(InpSendPush) SendNotification(msg);
+         }
+      }
+      if(low[0] < g_daily_low)
+      {
+         g_daily_low = low[0];
+         if(g_alerts_armed && InpDailyAlertOnCreate)
+         {
+            string msg = "Daily Low updated on " + _Symbol + " TF=" + EnumToString(_Period);
+            if(InpSendAlert) Alert(msg);
+            if(InpSendPush) SendNotification(msg);
+         }
+      }
+   }
+
+   string lnOpen = g_prefix + "D_NY_OPEN";
+   string lnHigh = g_prefix + "D_HIGH";
+   string lnLow = g_prefix + "D_LOW";
+   string lbOpen = g_prefix + "D_NY_OPEN_LBL";
+   string lbHigh = g_prefix + "D_HIGH_LBL";
+   string lbLow = g_prefix + "D_LOW_LBL";
+
+   datetime t2 = ExtendTime(t0, InpExtendBars);
+   if(g_daily_start_time == 0) g_daily_start_time = t0;
+   CreateOrUpdateDailyLine(lnOpen, g_daily_start_time, g_daily_ny_open, t2, InpDailyNyOpenColor, 1);
+   CreateOrUpdateDailyLine(lnHigh, g_daily_start_time, g_daily_high, t2, InpDailyLineColor, 1);
+   CreateOrUpdateDailyLine(lnLow, g_daily_start_time, g_daily_low, t2, InpDailyLineColor, 1);
+   CreateOrUpdateDailyText(lbOpen, t2, g_daily_ny_open, "NY Open", InpDailyNyOpenColor);
+   CreateOrUpdateDailyText(lbHigh, t2, g_daily_high, "Daily High", InpDailyLineColor);
+   CreateOrUpdateDailyText(lbLow, t2, g_daily_low, "Daily Low", InpDailyLineColor);
+
+   if(g_alerts_armed && InpDailyAlertOnTouch)
+   {
+      if(!g_daily_touched_open && low[0] <= g_daily_ny_open && high[0] >= g_daily_ny_open)
+      {
+         g_daily_touched_open = true;
+         string msg = "NY Open touched on " + _Symbol + " TF=" + EnumToString(_Period);
+         if(InpSendAlert) Alert(msg);
+         if(InpSendPush) SendNotification(msg);
+      }
+      if(!g_daily_touched_high && low[0] <= g_daily_high && high[0] >= g_daily_high)
+      {
+         g_daily_touched_high = true;
+         string msg = "Daily High touched on " + _Symbol + " TF=" + EnumToString(_Period);
+         if(InpSendAlert) Alert(msg);
+         if(InpSendPush) SendNotification(msg);
+      }
+      if(!g_daily_touched_low && low[0] <= g_daily_low && high[0] >= g_daily_low)
+      {
+         g_daily_touched_low = true;
+         string msg = "Daily Low touched on " + _Symbol + " TF=" + EnumToString(_Period);
+         if(InpSendAlert) Alert(msg);
+         if(InpSendPush) SendNotification(msg);
+      }
+   }
 }
 
 bool IsPivotHighAt(const int p, const int leftBars, const int rightBars, const double &high[])
@@ -2121,6 +2379,7 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    ArraySetAsSeries(close, true);
 
    UpdateLiveHighLow(time[0], high[0], low[0]);
+   ProcessDailyLevels(time, open, high, low);
 
    DrawHsStatusOnChart();
    ProcessHsTimeframe(PERIOD_M15, InpHsEnableM15, g_tf_last_time0_m15, g_tf_armed_m15, g_last_hammer_time_m15, g_last_shooting_time_m15);
@@ -2145,6 +2404,12 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    {
       ObjectsDeleteAll(0, g_prefix);
       g_struct_last_time0 = 0;
+      g_daily_last_time0 = 0;
+      g_daily_start_time = 0;
+      g_daily_has = false;
+      g_daily_touched_open = false;
+      g_daily_touched_high = false;
+      g_daily_touched_low = false;
       int oldest = rates_total - 1;
       g_top_price = high[oldest];
       g_bottom_price = low[oldest];

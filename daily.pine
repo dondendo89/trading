@@ -1,0 +1,64 @@
+//@version=5
+indicator("Swing High-Low Marker", shorttitle="SHLM", overlay=true)
+
+newYorkOpenHour = 21
+closingHour = 6
+closingMinute = 30
+finalHour = 9
+
+// Check if the current bar is session opening bar
+isNewYorkOpen = (hour(time, "GMT-7") == newYorkOpenHour) and (minute(time, "GMT-7") == 0)
+isClosing = (hour(time, "GMT-7") == closingHour) and (minute(time, "GMT-7") == closingMinute)
+isFinalHour = (hour(time, "GMT-7") == finalHour) and (minute(time, "GMT-7") == 0)
+isWithinRange = (hour(time, "GMT-7") > newYorkOpenHour) or (hour(time, "GMT-7") < closingHour) or (hour(time, "GMT-7") == closingHour and minute(time, "GMT-7") < closingMinute)
+
+// Opening Price Line
+var float openingPriceLine = na
+var line openingLine = na
+var label openLabel = na
+if isNewYorkOpen
+    openingPriceLine := open
+    openingLine := line.new(x1 = bar_index, y1 = openingPriceLine, x2 = bar_index, y2 = openingPriceLine, width = 1, color = color.blue)
+    openLabel := label.new(x = bar_index, y = openingPriceLine, text = "NY Open", color = color.white, style = label.style_label_left, size = size.small)
+
+// Vertical Lines
+if isNewYorkOpen or isClosing
+    line.new(x1 = bar_index, y1 = low, x2 = bar_index, y2 = high, width = 1, color = color.white)
+
+// Swing High-Low marker
+var float dailyHigh = na
+var float dailyLow = na
+var line highLine = na
+var line lowLine = na
+var label highLabel = na
+var label lowLabel = na
+
+if isNewYorkOpen
+    dailyHigh := high
+    dailyLow := low
+    highLine := line.new(x1 = bar_index, y1 = dailyHigh, x2 = bar_index, y2 = dailyHigh, width = 1, color = color.white)
+    lowLine := line.new(x1 = bar_index, y1 = dailyLow, x2 = bar_index, y2 = dailyLow, width = 1, color = color.white)
+    highLabel := label.new(x = bar_index, y = dailyHigh, text = "Daily High", color = color.white, style = label.style_label_left, size = size.small)
+    lowLabel := label.new(x = bar_index, y = dailyLow, text = "Daily Low", color = color.white, style = label.style_label_left, size = size.small)
+
+else if isWithinRange
+    if high > dailyHigh
+        dailyHigh := high
+        line.set_y1(highLine, dailyHigh)
+        line.set_y2(highLine, dailyHigh)
+        label.set_y(highLabel, dailyHigh)
+
+    if low < dailyLow
+        dailyLow := low
+        line.set_y1(lowLine, dailyLow)
+        line.set_y2(lowLine, dailyLow)
+        label.set_y(lowLabel, dailyLow)
+
+if isFinalHour
+    line.set_x2(highLine, bar_index)
+    line.set_x2(lowLine, bar_index)
+if isClosing
+    line.set_x2(openingLine, bar_index)
+    label.set_x(openLabel, (bar_index + line.get_x1(openingLine)) / 2)
+    label.set_x(highLabel, (bar_index + line.get_x1(highLine)) / 2)
+    label.set_x(lowLabel, (bar_index + line.get_x1(lowLine)) / 2)

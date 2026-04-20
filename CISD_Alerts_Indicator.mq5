@@ -89,6 +89,33 @@ input color InpVpVahColor = clrMediumPurple;
 input color InpVpValColor = clrOrange;
 input bool InpVpBodyZoneFilter = true;
 
+input group "Structure"
+input bool InpShowStructure = true;
+input int InpStLeftBars = 5;
+input int InpStRightBars = 5;
+input int InpStPivotLegs = 0;
+input int InpStMaxBars = 1000;
+input bool InpStShowHH = true;
+input bool InpStShowHL = true;
+input bool InpStShowLH = true;
+input bool InpStShowLL = true;
+input color InpStUpColor = clrLimeGreen;
+input color InpStDownColor = clrRed;
+input bool InpStShowLine = true;
+input color InpStLineColor = clrGray;
+input int InpStLineWidth = 2;
+input double InpStDeviationPercent = 5.0;
+input int InpStFontSize = 8;
+input int InpStYOffsetPoints = 0;
+
+input group "Live Candle"
+input bool InpLiveHlEnabled = true;
+input bool InpLiveHlShowPrice = true;
+input color InpLiveHighColor = clrDeepSkyBlue;
+input color InpLiveLowColor = clrOrange;
+input int InpLiveHlFontSize = 9;
+input int InpLiveHlYOffsetPoints = 0;
+
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
 bool g_is_bullish = false;
@@ -172,10 +199,240 @@ datetime g_last_shooting_time_h1 = 0;
 datetime g_last_hammer_time_h4 = 0;
 datetime g_last_shooting_time_h4 = 0;
 
+datetime g_struct_last_time0 = 0;
+
 void DeleteObjectSafe(const string name)
 {
    if(name == "") return;
    if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
+}
+
+void DeleteObjectsByPrefix(const string prefix)
+{
+   int total = ObjectsTotal(0, -1, -1);
+   for(int i = total - 1; i >= 0; i--)
+   {
+      string n = ObjectName(0, i);
+      if(StringFind(n, prefix) == 0)
+         ObjectDelete(0, n);
+   }
+}
+
+void UpdateLiveHighLow(const datetime t0, const double hi, const double lo)
+{
+   string highName = g_prefix + "LIVE_HIGH";
+   string lowName = g_prefix + "LIVE_LOW";
+
+   if(!InpLiveHlEnabled)
+   {
+      DeleteObjectSafe(highName);
+      DeleteObjectSafe(lowName);
+      return;
+   }
+
+   double off = (double)InpLiveHlYOffsetPoints * _Point;
+   double yHigh = hi + off;
+   double yLow = lo - off;
+
+   string tHigh = InpLiveHlShowPrice ? ("High " + DoubleToString(hi, _Digits)) : "High";
+   string tLow = InpLiveHlShowPrice ? ("Low " + DoubleToString(lo, _Digits)) : "Low";
+
+   if(ObjectFind(0, highName) < 0)
+   {
+      ObjectCreate(0, highName, OBJ_TEXT, 0, t0, yHigh);
+      ObjectSetInteger(0, highName, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, highName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+   }
+   else
+   {
+      ObjectMove(0, highName, 0, t0, yHigh);
+   }
+   ObjectSetString(0, highName, OBJPROP_TEXT, tHigh);
+   ObjectSetInteger(0, highName, OBJPROP_COLOR, InpLiveHighColor);
+   ObjectSetInteger(0, highName, OBJPROP_FONTSIZE, InpLiveHlFontSize);
+
+   if(ObjectFind(0, lowName) < 0)
+   {
+      ObjectCreate(0, lowName, OBJ_TEXT, 0, t0, yLow);
+      ObjectSetInteger(0, lowName, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, lowName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+   }
+   else
+   {
+      ObjectMove(0, lowName, 0, t0, yLow);
+   }
+   ObjectSetString(0, lowName, OBJPROP_TEXT, tLow);
+   ObjectSetInteger(0, lowName, OBJPROP_COLOR, InpLiveLowColor);
+   ObjectSetInteger(0, lowName, OBJPROP_FONTSIZE, InpLiveHlFontSize);
+}
+
+bool IsPivotHighAt(const int p, const int leftBars, const int rightBars, const double &high[])
+{
+   int n = ArraySize(high);
+   if(leftBars < 1 || rightBars < 1) return false;
+   if(p < rightBars) return false;
+   if(p + leftBars >= n) return false;
+   double v = high[p];
+   for(int k = 1; k <= rightBars; k++)
+      if(v <= high[p - k]) return false;
+   for(int k = 1; k <= leftBars; k++)
+      if(v <= high[p + k]) return false;
+   return true;
+}
+
+bool IsPivotLowAt(const int p, const int leftBars, const int rightBars, const double &low[])
+{
+   int n = ArraySize(low);
+   if(leftBars < 1 || rightBars < 1) return false;
+   if(p < rightBars) return false;
+   if(p + leftBars >= n) return false;
+   double v = low[p];
+   for(int k = 1; k <= rightBars; k++)
+      if(v >= low[p - k]) return false;
+   for(int k = 1; k <= leftBars; k++)
+      if(v >= low[p + k]) return false;
+   return true;
+}
+
+string CreateStructureLabel(const string kind, const datetime t, const double price, const bool isHigh)
+{
+   string name = g_prefix + "ST_" + kind + "_" + IntegerToString((long)t);
+   if(ObjectFind(0, name) >= 0) return name;
+
+   double y = price;
+   if(InpStYOffsetPoints != 0)
+   {
+      double off = (double)InpStYOffsetPoints * _Point;
+      y = isHigh ? (price + off) : (price - off);
+   }
+
+   if(ObjectCreate(0, name, OBJ_TEXT, 0, t, y))
+   {
+      color clr = (kind == "HH" || kind == "HL") ? InpStUpColor : InpStDownColor;
+      ObjectSetString(0, name, OBJPROP_TEXT, kind);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, InpStFontSize);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   return name;
+}
+
+void DrawStructure(const int rates_total, const datetime &time[], const double &high[], const double &low[])
+{
+   if(!InpShowStructure) return;
+
+   int lb = InpStLeftBars;
+   int rb = InpStRightBars;
+   if(InpStPivotLegs > 0) { lb = InpStPivotLegs; rb = InpStPivotLegs; }
+   if(lb < 1) lb = 1;
+   if(rb < 1) rb = 1;
+
+   int maxBars = InpStMaxBars;
+   if(maxBars < (lb + rb + 5)) maxBars = lb + rb + 5;
+   int scanEnd = maxBars - 1;
+   if(scanEnd > rates_total - 1) scanEnd = rates_total - 1;
+   if(scanEnd <= (lb + rb)) return;
+
+   DeleteObjectsByPrefix(g_prefix + "ST_");
+   DeleteObjectsByPrefix(g_prefix + "STL_");
+
+   datetime pivTime[];
+   double pivPrice[];
+   int pivType[];
+   int pivCount = 0;
+
+   for(int p = scanEnd - lb; p >= rb; p--)
+   {
+      bool ph = IsPivotHighAt(p, lb, rb, high);
+      bool pl = IsPivotLowAt(p, lb, rb, low);
+      if(!ph && !pl) continue;
+
+      int t = ph ? 1 : -1;
+      double pr = ph ? high[p] : low[p];
+      datetime tm = time[p];
+
+      if(pivCount == 0)
+      {
+         ArrayResize(pivTime, 1);
+         ArrayResize(pivPrice, 1);
+         ArrayResize(pivType, 1);
+         pivTime[0] = tm;
+         pivPrice[0] = pr;
+         pivType[0] = t;
+         pivCount = 1;
+         continue;
+      }
+
+      int last = pivCount - 1;
+      if(pivType[last] == t)
+      {
+         bool stronger = (t == 1) ? (pr > pivPrice[last]) : (pr < pivPrice[last]);
+         if(stronger)
+         {
+            pivTime[last] = tm;
+            pivPrice[last] = pr;
+         }
+      }
+      else
+      {
+         if(InpStDeviationPercent > 0.0 && pivPrice[last] != 0.0)
+         {
+            double pct = (MathAbs(pr - pivPrice[last]) / MathAbs(pivPrice[last])) * 100.0;
+            if(pct < InpStDeviationPercent)
+               continue;
+         }
+         ArrayResize(pivTime, pivCount + 1);
+         ArrayResize(pivPrice, pivCount + 1);
+         ArrayResize(pivType, pivCount + 1);
+         pivTime[pivCount] = tm;
+         pivPrice[pivCount] = pr;
+         pivType[pivCount] = t;
+         pivCount++;
+      }
+   }
+
+   if(InpStShowLine && pivCount >= 2)
+   {
+      for(int i = 1; i < pivCount; i++)
+      {
+         string ln = g_prefix + "STL_" + IntegerToString(i);
+         if(ObjectCreate(0, ln, OBJ_TREND, 0, pivTime[i - 1], pivPrice[i - 1], pivTime[i], pivPrice[i]))
+         {
+            ObjectSetInteger(0, ln, OBJPROP_COLOR, InpStLineColor);
+            ObjectSetInteger(0, ln, OBJPROP_WIDTH, InpStLineWidth);
+            ObjectSetInteger(0, ln, OBJPROP_RAY_RIGHT, false);
+            ObjectSetInteger(0, ln, OBJPROP_SELECTABLE, false);
+         }
+      }
+   }
+
+   bool hasHigh = false;
+   bool hasLow = false;
+   double lastHigh = 0.0, lastLow = 0.0;
+   for(int i = 0; i < pivCount; i++)
+   {
+      if(pivType[i] == 1)
+      {
+         if(hasHigh)
+         {
+            if(pivPrice[i] > lastHigh && InpStShowHH) CreateStructureLabel("HH", pivTime[i], pivPrice[i], true);
+            else if(pivPrice[i] < lastHigh && InpStShowLH) CreateStructureLabel("LH", pivTime[i], pivPrice[i], true);
+         }
+         lastHigh = pivPrice[i];
+         hasHigh = true;
+      }
+      else
+      {
+         if(hasLow)
+         {
+            if(pivPrice[i] > lastLow && InpStShowHL) CreateStructureLabel("HL", pivTime[i], pivPrice[i], false);
+            else if(pivPrice[i] < lastLow && InpStShowLL) CreateStructureLabel("LL", pivTime[i], pivPrice[i], false);
+         }
+         lastLow = pivPrice[i];
+         hasLow = true;
+      }
+   }
 }
 
 datetime ExtendTime(datetime t, int bars)
@@ -1863,6 +2120,8 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    ArraySetAsSeries(low, true);
    ArraySetAsSeries(close, true);
 
+   UpdateLiveHighLow(time[0], high[0], low[0]);
+
    DrawHsStatusOnChart();
    ProcessHsTimeframe(PERIOD_M15, InpHsEnableM15, g_tf_last_time0_m15, g_tf_armed_m15, g_last_hammer_time_m15, g_last_shooting_time_m15);
    ProcessHsTimeframe(PERIOD_M30, InpHsEnableM30, g_tf_last_time0_m30, g_tf_armed_m30, g_last_hammer_time_m30, g_last_shooting_time_m30);
@@ -1885,6 +2144,7 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    if(prev_calculated == 0)
    {
       ObjectsDeleteAll(0, g_prefix);
+      g_struct_last_time0 = 0;
       int oldest = rates_total - 1;
       g_top_price = high[oldest];
       g_bottom_price = low[oldest];
@@ -1938,6 +2198,23 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
             CreateOrUpdateHLine(g_vp_vah_line, g_vp_vah, InpVpVahColor, STYLE_DOT);
             CreateOrUpdateHLine(g_vp_val_line, g_vp_val, InpVpValColor, STYLE_DOT);
          }
+      }
+   }
+
+   if(!InpShowStructure)
+   {
+      if(g_struct_last_time0 != 0)
+      {
+         DeleteObjectsByPrefix(g_prefix + "ST_");
+         g_struct_last_time0 = 0;
+      }
+   }
+   else
+   {
+      if(time[0] != g_struct_last_time0)
+      {
+         DrawStructure(rates_total, time, high, low);
+         g_struct_last_time0 = time[0];
       }
    }
 

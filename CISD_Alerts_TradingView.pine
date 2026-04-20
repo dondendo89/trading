@@ -1,5 +1,6 @@
 //@version=6
 indicator("CISD + Hammer/Shooting + VP Filters (MT5 parity)", "CISD+HS+VP", overlay=true, max_lines_count=500, max_labels_count=500)
+import TradingView/ZigZag/7 as ZigZagLib
 
 bullishBreakColor = input.color(color.rgb(50, 205, 50), "Bull CISD", inline="bup")
 bearishBreakColor = input.color(color.rgb(255, 0, 0), "Bear CISD", inline="bep")
@@ -13,6 +14,12 @@ keepLevels = input.bool(false, "Keep old CISD levels")
 sendAlerts = input.bool(true, "Enable alerts", group="Alerts")
 plotHistory = input.bool(true, "Plot history", group="Alerts")
 
+showLiveBarHighLow = input.bool(true, "Show live bar High/Low", group="Live Candle")
+liveBarShowPrice = input.bool(true, "Show price", group="Live Candle")
+liveHighColor = input.color(color.new(color.aqua, 0), "High color", group="Live Candle")
+liveLowColor = input.color(color.new(color.orange, 0), "Low color", group="Live Candle")
+liveFontSize = input.string("Tiny", "Text size", options=["Tiny", "Small", "Normal"], group="Live Candle")
+
 enableHs = input.bool(true, "Enable Hammer/Shooting", group="Hammer/Shooting")
 fibLevel = input.float(0.382, "Fibonacci Level", options=[0.236, 0.382, 0.5], group="Hammer/Shooting")
 proCandleFilterEnabled = input.bool(true, "Pro Candle filter", group="Hammer/Shooting")
@@ -21,6 +28,12 @@ proOppWickMaxBodyRatio = input.float(0.3, "Max opposite wick/body ratio", minval
 confirmByNext = input.bool(true, "Confirm by next candle", group="Hammer/Shooting")
 confirmWithDxy = input.bool(false, "Confirm with DXY", group="Hammer/Shooting")
 dxySymbol = input.string("DXY.cash", "DXY Symbol", group="Hammer/Shooting")
+hsEntryOnBreakout = input.bool(true, "Entry on breakout", group="Breakout")
+hsBreakoutBufferTicks = input.int(0, "Breakout buffer (ticks)", minval=0, group="Breakout")
+hsAlertOnBreakout = input.bool(true, "Alert on breakout", group="Breakout")
+hsShowBreakoutLine = input.bool(true, "Show breakout line", group="Breakout")
+hsBreakoutLineColor = input.color(color.rgb(254, 144, 26), "Breakout line color", group="Breakout")
+hsBreakoutExtendBars = input.int(5, "Extend bars", minval=1, maxval=50, group="Breakout")
 wyckSpikeFilterEnabled = input.bool(false, "Wyck spike filter", group="Hammer/Shooting")
 wyckSpikeMinPoints = input.int(600, "Wyck min points (default)", minval=1, group="Hammer/Shooting")
 wyckSpikeMinPointsCur = input.int(0, "Wyck min points (Current TF, 0=default)", minval=0, group="Hammer/Shooting")
@@ -65,6 +78,20 @@ vpTz = input.string("Etc/UTC", "Timezone", group="Volume Profile")
 vpMaxBars = input.int(600, "Max bars since Asia", minval=50, maxval=2000, group="Volume Profile")
 vpFixedLookback = input.int(100, "Fixed lookback (if not Asia)", minval=10, maxval=2000, group="Volume Profile")
 vpShowLines = input.bool(false, "Show POC/VAH/VAL", group="Volume Profile")
+
+showStructure = input.bool(true, "Show HH/HL/LH/LL", group="Structure")
+stUsePivotLegs = input.bool(true, "Use Pivot legs", group="Structure")
+stPivotLegs = input.int(10, "Pivot legs", minval=2, group="Structure")
+stLb = input.int(5, "Left Bars", minval=1, group="Structure")
+stRb = input.int(5, "Right Bars", minval=1, group="Structure")
+showHH = input.bool(true, "Higher High", group="Structure")
+showHL = input.bool(true, "Higher Low", group="Structure")
+showLH = input.bool(true, "Lower High", group="Structure")
+showLL = input.bool(true, "Lower Low", group="Structure")
+showStructureLine = input.bool(true, "Show structure line", group="Structure")
+structureLineColor = input.color(color.gray, "Structure line color", group="Structure")
+structureLineWidth = input.int(2, "Structure line width", minval=1, maxval=4, group="Structure")
+stZigzagDeviation = input.float(5.0, "Price deviation for reversals (%)", minval=0.00001, maxval=100.0, step=0.5, group="Structure")
 
 lineStyle = styleOption == "Dotted" ? line.style_dotted : styleOption == "Dashed" ? line.style_dashed : line.style_solid
 
@@ -523,6 +550,92 @@ plotshape(show and newCur and sigCurF == 1 and not emaTouchCur, title="Hammer Cu
 plotshape(show and newCur and sigCurF == -1 and emaTouchCur, title="Shooting Current TF EMA", style=shape.arrowdown, location=location.abovebar, color=color.red, size=size.small, text="Shooting EMA")
 plotshape(show and newCur and sigCurF == -1 and not emaTouchCur, title="Shooting Current TF", style=shape.arrowdown, location=location.abovebar, color=color.red, size=size.small, text="Shooting")
 
+sigIdxCur = confirmByNext ? 1 : 0
+buf = hsBreakoutBufferTicks * syminfo.mintick
+var float brkLongLevel = na
+var float brkShortLevel = na
+var bool brkLongActive = false
+var bool brkShortActive = false
+var bool brkLongFired = false
+var bool brkShortFired = false
+var line brkLongLine = na
+var line brkShortLine = na
+var label brkLongLbl = na
+var label brkShortLbl = na
+
+f_del_line_label(_ln, _lb) =>
+    if not na(_ln)
+        line.delete(_ln)
+    if not na(_lb)
+        label.delete(_lb)
+
+if enableHs and hsEntryOnBreakout and newCur and sigCurF == 1
+    brkLongLevel := high[sigIdxCur]
+    brkLongActive := true
+    brkLongFired := false
+    brkShortActive := false
+    brkShortFired := false
+    f_del_line_label(brkShortLine, brkShortLbl)
+    brkShortLine := na
+    brkShortLbl := na
+
+if enableHs and hsEntryOnBreakout and newCur and sigCurF == -1
+    brkShortLevel := low[sigIdxCur]
+    brkShortActive := true
+    brkShortFired := false
+    brkLongActive := false
+    brkLongFired := false
+    f_del_line_label(brkLongLine, brkLongLbl)
+    brkLongLine := na
+    brkLongLbl := na
+
+brkLongFire = enableHs and hsEntryOnBreakout and brkLongActive and not brkLongFired and not na(brkLongLevel) and high >= brkLongLevel + buf
+brkShortFire = enableHs and hsEntryOnBreakout and brkShortActive and not brkShortFired and not na(brkShortLevel) and low <= brkShortLevel - buf
+if brkLongFire
+    brkLongFired := true
+if brkShortFire
+    brkShortFired := true
+
+if hsShowBreakoutLine
+    if brkLongActive and not na(brkLongLevel)
+        x1 = bar_index - sigIdxCur
+        x2 = bar_index + hsBreakoutExtendBars
+        if na(brkLongLine)
+            brkLongLine := line.new(x1, brkLongLevel, x2, brkLongLevel, color=hsBreakoutLineColor, width=1)
+            brkLongLbl := label.new(x2, brkLongLevel, "BUY break", style=label.style_label_left, textcolor=hsBreakoutLineColor, color=color.new(color.white, 100), size=size.tiny)
+        else
+            line.set_xy1(brkLongLine, x1, brkLongLevel)
+            line.set_xy2(brkLongLine, x2, brkLongLevel)
+            label.set_xy(brkLongLbl, x2, brkLongLevel)
+            label.set_text(brkLongLbl, "BUY break")
+            label.set_textcolor(brkLongLbl, hsBreakoutLineColor)
+    else
+        if not na(brkLongLine) or not na(brkLongLbl)
+            f_del_line_label(brkLongLine, brkLongLbl)
+            brkLongLine := na
+            brkLongLbl := na
+
+    if brkShortActive and not na(brkShortLevel)
+        x1 = bar_index - sigIdxCur
+        x2 = bar_index + hsBreakoutExtendBars
+        if na(brkShortLine)
+            brkShortLine := line.new(x1, brkShortLevel, x2, brkShortLevel, color=hsBreakoutLineColor, width=1)
+            brkShortLbl := label.new(x2, brkShortLevel, "SELL break", style=label.style_label_left, textcolor=hsBreakoutLineColor, color=color.new(color.white, 100), size=size.tiny)
+        else
+            line.set_xy1(brkShortLine, x1, brkShortLevel)
+            line.set_xy2(brkShortLine, x2, brkShortLevel)
+            label.set_xy(brkShortLbl, x2, brkShortLevel)
+            label.set_text(brkShortLbl, "SELL break")
+            label.set_textcolor(brkShortLbl, hsBreakoutLineColor)
+    else
+        if not na(brkShortLine) or not na(brkShortLbl)
+            f_del_line_label(brkShortLine, brkShortLbl)
+            brkShortLine := na
+            brkShortLbl := na
+
+alertcondition(hsAlertOnBreakout and brkLongFire, "Hammer breakout BUY", "Hammer breakout BUY on {{ticker}} {{interval}}")
+alertcondition(hsAlertOnBreakout and brkShortFire, "Shooting breakout SELL", "Shooting breakout SELL on {{ticker}} {{interval}}")
+
 pocStable = barstate.isconfirmed ? pocCur : pocCur[1]
 vahStable = barstate.isconfirmed ? vahCur : vahCur[1]
 valStable = barstate.isconfirmed ? valCur : valCur[1]
@@ -550,3 +663,109 @@ alertcondition(sendAlerts and hsMultiTimeframe and new240 and sig240 > 0, "Hamme
 alertcondition(sendAlerts and hsMultiTimeframe and new240 and sig240 < 0, "Shooting H4", "Shooting H4 on {{ticker}}")
 alertcondition(sendAlerts and newCur and sigCurF == 1, "Hammer Current TF", "Hammer on {{ticker}} {{interval}}")
 alertcondition(sendAlerts and newCur and sigCurF == -1, "Shooting Current TF", "Shooting on {{ticker}} {{interval}}")
+
+lbS = stUsePivotLegs ? stPivotLegs : stLb
+rbS = stUsePivotLegs ? stPivotLegs : stRb
+stPh = ta.pivothigh(high, lbS, rbS)
+stPl = ta.pivotlow(low, lbS, rbS)
+stDir = not na(stPh) ? 1 : (not na(stPl) ? -1 : na)
+stZz = not na(stPh) ? stPh : (not na(stPl) ? stPl : na)
+stZz := not na(stPl) and stDir == -1 and ta.valuewhen(not na(stDir), stDir, 1) == -1 and stPh > ta.valuewhen(not na(stZz), stZz, 1) ? na : stZz
+stZz := not na(stPh) and stDir == 1 and ta.valuewhen(not na(stDir), stDir, 1) == 1 and stPl < ta.valuewhen(not na(stZz), stZz, 1) ? na : stZz
+stDir := stDir == 1 and ta.valuewhen(not na(stDir), stDir, 1) == -1 and stZz < ta.valuewhen(not na(stZz), stZz, 1) ? na : stDir
+stDir := stDir == -1 and ta.valuewhen(not na(stDir), stDir, 1) == 1 and stZz > ta.valuewhen(not na(stZz), stZz, 1) ? na : stDir
+stZz := na(stDir) ? na : stZz
+
+var zigZag = ZigZagLib.newInstance(
+  ZigZagLib.Settings.new(
+      stZigzagDeviation,
+      stPivotLegs,
+      structureLineColor,
+      true,
+      false,
+      false,
+      false,
+      "Absolute",
+      true)
+ )
+if showStructure and showStructureLine
+    zigZag.update()
+
+findPrevious() =>
+    eDir = stDir == 1 ? -1 : 1
+    loc1 = 0.0
+    loc2 = 0.0
+    loc3 = 0.0
+    loc4 = 0.0
+    xx = 0
+    for x = 1 to 1000
+        if stDir[x] == eDir and not na(stZz[x])
+            loc1 := stZz[x]
+            xx := x + 1
+            break
+    eDir := stDir
+    for x = xx to 1000
+        if stDir[x] == eDir and not na(stZz[x])
+            loc2 := stZz[x]
+            xx := x + 1
+            break
+    eDir := stDir == 1 ? -1 : 1
+    for x = xx to 1000
+        if stDir[x] == eDir and not na(stZz[x])
+            loc3 := stZz[x]
+            xx := x + 1
+            break
+    eDir := stDir
+    for x = xx to 1000
+        if stDir[x] == eDir and not na(stZz[x])
+            loc4 := stZz[x]
+            break
+    [loc1, loc2, loc3, loc4]
+
+[loc1, loc2, loc3, loc4] = findPrevious()
+float a = na
+float b = na
+float c = na
+float d = na
+float e = na
+a := stZz
+b := loc1
+c := loc2
+d := loc3
+e := loc4
+
+isHH = not na(stZz) and (a > b and a > c and c > b and c > d) and not na(stDir)
+isLL = not na(stZz) and (a < b and a < c and c < b and c < d) and not na(stDir)
+isHL = not na(stZz) and ((a >= c and (b > c and b > d and d > c and d > e)) or (a < b and a > c and b < d)) and not na(stDir)
+isLH = not na(stZz) and ((a <= c and (b < c and b < d and d < c and d < e)) or (a > b and a < c and b > d)) and not na(stDir)
+
+plotshape(showStructure and showHL and isHL, text="HL", title="Higher Low", style=shape.labelup, color=color.lime, textcolor=color.black, location=location.belowbar, offset=-rbS)
+plotshape(showStructure and showHH and isHH, text="HH", title="Higher High", style=shape.labeldown, color=color.lime, textcolor=color.black, location=location.abovebar, offset=-rbS)
+plotshape(showStructure and showLL and isLL, text="LL", title="Lower Low", style=shape.labelup, color=color.red, textcolor=color.white, location=location.belowbar, offset=-rbS)
+plotshape(showStructure and showLH and isLH, text="LH", title="Lower High", style=shape.labeldown, color=color.red, textcolor=color.white, location=location.abovebar, offset=-rbS)
+
+liveSz = liveFontSize == "Small" ? size.small : liveFontSize == "Normal" ? size.normal : size.tiny
+var label liveHighLbl = na
+var label liveLowLbl = na
+if showLiveBarHighLow and barstate.islast
+    tHigh = liveBarShowPrice ? ("High " + str.tostring(high, format.mintick)) : "High"
+    tLow = liveBarShowPrice ? ("Low " + str.tostring(low, format.mintick)) : "Low"
+    if na(liveHighLbl)
+        liveHighLbl := label.new(bar_index, high, tHigh, style=label.style_label_down, textcolor=liveHighColor, color=color.new(color.white, 100), size=liveSz)
+    else
+        label.set_xy(liveHighLbl, bar_index, high)
+        label.set_text(liveHighLbl, tHigh)
+        label.set_textcolor(liveHighLbl, liveHighColor)
+    if na(liveLowLbl)
+        liveLowLbl := label.new(bar_index, low, tLow, style=label.style_label_up, textcolor=liveLowColor, color=color.new(color.white, 100), size=liveSz)
+    else
+        label.set_xy(liveLowLbl, bar_index, low)
+        label.set_text(liveLowLbl, tLow)
+        label.set_textcolor(liveLowLbl, liveLowColor)
+else
+    if not na(liveHighLbl)
+        label.delete(liveHighLbl)
+        liveHighLbl := na
+    if not na(liveLowLbl)
+        label.delete(liveLowLbl)
+        liveLowLbl := na

@@ -66,6 +66,22 @@ ohclNeutralColor = input.color(color.new(color.gray, 0), "Neutral color", group=
 ohclLineWidth = input.int(2, "Line width", minval=1, maxval=5, group="OHCL HTF Trend Levels")
 ohclLineStyleOpt = input.string("Solid", "Line style", options=["Solid", "Dotted", "Dashed"], group="OHCL HTF Trend Levels")
 
+showCapitalSignals = input.bool(true, "Mostra Segnali Capital", group="Configurazione Capital")
+capitalTzInput = input.string("Europe/Rome", "Timezone", group="Configurazione Capital")
+capitalIbHour = input.int(9, "IB hour (H1)", minval=0, maxval=23, group="Configurazione Capital")
+capitalSignalTf = input.timeframe("15", "Signal TF", group="Configurazione Capital")
+capitalConfirmOnClose = input.bool(true, "Confirm on candle close", group="Configurazione Capital")
+capitalNyStartHour = input.int(15, "NY start hour", minval=0, maxval=23, group="Configurazione Capital")
+capitalNyStartMinute = input.int(0, "NY start minute", minval=0, maxval=59, group="Configurazione Capital")
+capitalNyEndHour = input.int(16, "NY end hour", minval=0, maxval=23, group="Configurazione Capital")
+capitalNyEndMinute = input.int(30, "NY end minute", minval=0, maxval=59, group="Configurazione Capital")
+capitalShowFibExt = input.bool(true, "Mostra estensioni Fib", group="Configurazione Capital")
+capitalShowMidLine = input.bool(true, "Mostra linea 50% (Midpoint)", group="Configurazione Capital")
+capitalMaxLevels = input.int(6, "Max linee (giorno)", minval=1, maxval=20, group="Configurazione Capital")
+capitalVolFilterEnabled = input.bool(true, "Filtro volumi (anti-sera)", group="Configurazione Capital")
+capitalVolMaLen = input.int(20, "Volume MA len", minval=1, group="Configurazione Capital")
+capitalVolMinMult = input.float(0.7, "Volume min mult", minval=0.0, step=0.1, group="Configurazione Capital")
+
 enableHs = input.bool(true, "Enable Hammer/Shooting", group="Hammer/Shooting")
 fibLevel = input.float(0.382, "Fibonacci Level", options=[0.236, 0.382, 0.5], group="Hammer/Shooting")
 proCandleFilterEnabled = input.bool(true, "Pro Candle filter", group="Hammer/Shooting")
@@ -239,6 +255,93 @@ plotshape(ohclShowSignals and ohclPlotHistorySignals and ohclBullEvent, title="O
 plotshape(ohclShowSignals and ohclPlotHistorySignals and ohclBearEvent, title="OHCL SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=ohclBearColor, textcolor=color.white, size=size.tiny)
 if ohclShowTp and ohclPlotHistorySignals and ohclTpEvent
     label.new(x=bar_index, y=close, text="TP", style=label.style_label_left, textcolor=ohclNeutralColor, color=color.new(color.white, 100), size=size.tiny)
+
+capTz = capitalTzInput
+capDayKey = year(time, capTz) * 10000 + month(time, capTz) * 100 + dayofmonth(time, capTz)
+
+f_cap_ib_pack() =>
+    isIbH1 = hour(time, capTz) == capitalIbHour and minute(time, capTz) == 0
+    [isIbH1 ? high : na, isIbH1 ? low : na, isIbH1 ? time_close : na]
+
+[capIbH_raw, capIbL_raw, capIbT_raw] = request.security(syminfo.tickerid, "60", f_cap_ib_pack(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+capIbH = ta.valuewhen(not na(capIbH_raw), capIbH_raw, 0)
+capIbL = ta.valuewhen(not na(capIbL_raw), capIbL_raw, 0)
+capIbT = ta.valuewhen(not na(capIbT_raw), capIbT_raw, 0)
+capIbDayKey = not na(capIbT) ? (year(capIbT, capTz) * 10000 + month(capIbT, capTz) * 100 + dayofmonth(capIbT, capTz)) : na
+capIbReady = showCapitalSignals and not na(capIbH) and not na(capIbL) and capIbDayKey == capDayKey
+capRange = capIbReady ? (capIbH - capIbL) : na
+capMid = capIbReady ? ((capIbH + capIbL) / 2.0) : na
+
+var int capPrevDayKey = na
+var line capMidLine = na
+var line[] capLevelLines = array.new_line()
+
+if na(capPrevDayKey) or capDayKey != capPrevDayKey
+    if not na(capMidLine)
+        line.delete(capMidLine)
+        capMidLine := na
+    while array.size(capLevelLines) > 0
+        ln = array.pop(capLevelLines)
+        line.delete(ln)
+capPrevDayKey := capDayKey
+
+if capIbReady
+    if capitalShowMidLine and not na(capMid)
+        if na(capMidLine)
+            capMidLine := line.new(bar_index, capMid, bar_index + 1, capMid, color=color.blue, style=line.style_dashed, width=1, extend=extend.right)
+        else
+            line.set_xy1(capMidLine, bar_index, capMid)
+            line.set_xy2(capMidLine, bar_index + 1, capMid)
+
+    if capitalShowFibExt and not na(capRange) and capRange > 0
+        lvlM05 = capIbL - 0.5 * capRange
+        lvlM10 = capIbL - 1.0 * capRange
+        lvlP05 = capIbH + 0.5 * capRange
+        lvlP10 = capIbH + 1.0 * capRange
+        levels = array.from(lvlM10, lvlM05, lvlP05, lvlP10)
+        needed = math.min(array.size(levels), capitalMaxLevels)
+        for i = 0 to needed - 1
+            lvl = array.get(levels, i)
+            if array.size(capLevelLines) <= i
+                ln = line.new(bar_index, lvl, bar_index + 1, lvl, color=color.new(color.gray, 50), style=line.style_dotted, width=1, extend=extend.right)
+                array.push(capLevelLines, ln)
+            else
+                ln = array.get(capLevelLines, i)
+                line.set_xy1(ln, bar_index, lvl)
+                line.set_xy2(ln, bar_index + 1, lvl)
+
+f_cap_sig() =>
+    if not capIbReady
+        0
+    else
+        confOk = not capitalConfirmOnClose or barstate.isconfirmed
+        volMa = ta.sma(volume, capitalVolMaLen)
+        volOk = not capitalVolFilterEnabled or (not na(volMa) and volume >= volMa * capitalVolMinMult)
+        priceAboveMid = close > capMid
+        priceBelowMid = close < capMid
+        bodyMin = math.min(open, close)
+        bodyMax = math.max(open, close)
+        prevBodyMin = math.min(open[1], close[1])
+        prevBodyMax = math.max(open[1], close[1])
+        breakUp = bodyMin > capIbH and prevBodyMin <= capIbH
+        breakDn = bodyMax < capIbL and prevBodyMax >= capIbL
+        sweepIbl = low < capIbL and close > capIbL
+        sweepIbh = high > capIbH and close < capIbH
+        buy = confOk and volOk and priceAboveMid and (breakUp or sweepIbl)
+        sell = confOk and volOk and priceBelowMid and (breakDn or sweepIbh)
+        nyWin = str.format("{0,number,00}{1,number,00}-{2,number,00}{3,number,00}", capitalNyStartHour, capitalNyStartMinute, capitalNyEndHour, capitalNyEndMinute)
+        inGoldenNy = not na(time(timeframe.period, nyWin, capTz))
+        buyNy = buy and inGoldenNy and breakUp
+        sellNy = sell and inGoldenNy and breakDn
+        buyNy ? 2 : buy ? 1 : sellNy ? -2 : sell ? -1 : 0
+
+capSig = request.security(syminfo.tickerid, capitalSignalTf, f_cap_sig(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+capSigNew = showCapitalSignals and capSig != 0 and capSig != capSig[1]
+
+plotshape(capSigNew and capSig == 2, title="BUY Capital NY", style=shape.labelup, location=location.belowbar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="BUY Capital NY")
+plotshape(capSigNew and capSig == 1, title="BUY Capital", style=shape.labelup, location=location.belowbar, color=color.lime, textcolor=color.white, size=size.tiny, text="BUY Capital")
+plotshape(capSigNew and capSig == -2, title="SELL Capital NY", style=shape.labeldown, location=location.abovebar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="SELL Capital NY")
+plotshape(capSigNew and capSig == -1, title="SELL Capital", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny, text="SELL Capital")
 
 f_body_touches_ema(_o, _c, _ema1, _ema2) =>
     tol = emaTouchTolTicks * syminfo.mintick

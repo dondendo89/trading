@@ -163,12 +163,36 @@ input bool InpOhclSendNotifications = true;
 input bool InpOhclPlotHistorySignals = true;
 input bool InpOhclPlotHistoryLevels = true;
 input int InpOhclMaxHistoryLevels = 50;
+input int InpOhclHistoryBars = 500;
 input int InpOhclEmaLen = 50;
 input bool InpOhclShowEma = false;
 input bool InpOhclShowLines = false;
 input color InpOhclBullColor = clrLimeGreen;
 input color InpOhclBearColor = clrRed;
 input color InpOhclNeutralColor = clrGray;
+
+input group "Matteo Capital"
+input bool InpCapEnabled = true;
+input int InpCapTzOffsetHours = 1;
+input int InpCapIbHour = 9;
+input ENUM_TIMEFRAMES InpCapSignalTf = PERIOD_M15;
+input bool InpCapConfirmOnClose = true;
+input int InpCapNyStartHour = 15;
+input int InpCapNyStartMinute = 0;
+input int InpCapNyEndHour = 16;
+input int InpCapNyEndMinute = 30;
+input bool InpCapVolFilterEnabled = true;
+input int InpCapVolMaLen = 20;
+input double InpCapVolMinMult = 0.7;
+input bool InpCapShowMidLine = true;
+input bool InpCapShowFibExt = true;
+input bool InpCapSendNotifications = true;
+input int InpCapHistoryBars = 2000;
+input color InpCapMidColor = clrDodgerBlue;
+input color InpCapFibColor = clrSilver;
+input color InpCapBuyColor = clrLimeGreen;
+input color InpCapSellColor = clrRed;
+input color InpCapNyColor = clrMagenta;
 
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
@@ -273,6 +297,9 @@ datetime g_ohcl_last_calc_time0 = 0;
 datetime g_ohcl_last_signal_time = 0;
 int g_ohcl_ema_handle = INVALID_HANDLE;
 datetime g_ohcl_hist_times[];
+
+datetime g_cap_last_signal_time = 0;
+int g_cap_last_day_key = 0;
 
 void DeleteObjectSafe(const string name)
 {
@@ -954,6 +981,324 @@ datetime ExtendTime(datetime t, int bars)
    return (datetime)(t + (long)bars * sec);
 }
 
+int DayKeyLocalFromServer(const datetime tServer, const int offsetHours)
+{
+   datetime tLocal = tServer + (datetime)offsetHours * 3600;
+   MqlDateTime dt;
+   TimeToStruct(tLocal, dt);
+   return dt.year * 10000 + dt.mon * 100 + dt.day;
+}
+
+bool InLocalWindow(const datetime tServer, const int offsetHours, const int h1, const int m1, const int h2, const int m2)
+{
+   datetime tLocal = tServer + (datetime)offsetHours * 3600;
+   MqlDateTime dt;
+   TimeToStruct(tLocal, dt);
+   int cur = dt.hour * 60 + dt.min;
+   int a = h1 * 60 + m1;
+   int b = h2 * 60 + m2;
+   return (cur >= a && cur < b);
+}
+
+void CreateOrUpdateCapHLine(const string name, const double price, const color clr, const ENUM_LINE_STYLE style, const int width)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      if(!ObjectCreate(0, name, OBJ_HLINE, 0, 0, price)) return;
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+}
+
+void CreateCapitalSignal(const datetime tBar, const double y, const string text, const color clr)
+{
+   string safe = text;
+   StringReplace(safe, " ", "_");
+   string name = g_prefix + "CAP_SIG_" + safe + "_" + IntegerToString((long)tBar);
+   if(ObjectFind(0, name) >= 0) return;
+   if(ObjectCreate(0, name, OBJ_TEXT, 0, tBar, y))
+   {
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   }
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+}
+
+void NotifyCapital(const string kind, const datetime t, const double levelPrice)
+{
+   if(!InpCapEnabled) return;
+   if(!InpCapSendNotifications) return;
+   if(!g_alerts_armed) return;
+   if(!InpNotifyHistorical)
+   {
+      datetime ref = 0;
+      if(InpCapConfirmOnClose)
+         ref = iTime(_Symbol, InpCapSignalTf, 1);
+      else
+         ref = iTime(_Symbol, InpCapSignalTf, 0);
+      if(t != ref) return;
+   }
+   string msg = kind + " on " + _Symbol + " TF=" + EnumToString(InpCapSignalTf) + " Level=" + DoubleToString(levelPrice, _Digits);
+   if(InpSendAlert) Alert(msg);
+   if(InpSendPush) SendNotification(msg);
+}
+
+bool FindH1BarShiftAtLocalHour(const datetime nowServer, const int offsetHours, const int targetHour, int &outShift, datetime &outOpenServer)
+{
+   outShift = -1;
+   outOpenServer = 0;
+   int dayKey = DayKeyLocalFromServer(nowServer, offsetHours);
+   for(int s = 0; s < 72; s++)
+   {
+      datetime t = iTime(_Symbol, PERIOD_H1, s);
+      if(t == 0) break;
+      if(DayKeyLocalFromServer(t, offsetHours) != dayKey) continue;
+      datetime tLocal = t + (datetime)offsetHours * 3600;
+      MqlDateTime dt;
+      TimeToStruct(tLocal, dt);
+      if(dt.hour == targetHour && dt.min == 0)
+      {
+         outShift = s;
+         outOpenServer = t;
+         return true;
+      }
+   }
+   return false;
+}
+
+bool GetIbFromH1(const datetime nowServer, double &ibh, double &ibl, datetime &ibOpenServer, int &usedOffsetHours)
+{
+   ibh = 0.0;
+   ibl = 0.0;
+   ibOpenServer = 0;
+   int offsets[4];
+   offsets[0] = InpCapTzOffsetHours;
+   offsets[1] = InpSessionsTzOffsetHours;
+   offsets[2] = InpDailyTzOffsetHours;
+   offsets[3] = 0;
+
+   for(int k = 0; k < 4; k++)
+   {
+      int off = offsets[k];
+      bool dup = false;
+      for(int j = 0; j < k; j++) if(offsets[j] == off) { dup = true; break; }
+      if(dup) continue;
+
+      int shift = -1;
+      datetime tOpen = 0;
+      if(!FindH1BarShiftAtLocalHour(nowServer, off, InpCapIbHour, shift, tOpen)) continue;
+      double hi = iHigh(_Symbol, PERIOD_H1, shift);
+      double lo = iLow(_Symbol, PERIOD_H1, shift);
+      if(hi == 0.0 && lo == 0.0) continue;
+      ibh = hi;
+      ibl = lo;
+      ibOpenServer = tOpen;
+      usedOffsetHours = off;
+      return true;
+   }
+
+   return false;
+}
+
+double AvgTickVolTf(const ENUM_TIMEFRAMES tf, const int startShift, const int len)
+{
+   if(len <= 0) return 0.0;
+   long vols[];
+   ArrayResize(vols, len);
+   ArraySetAsSeries(vols, true);
+   int copied = CopyTickVolume(_Symbol, tf, startShift, len, vols);
+   if(copied <= 0) return 0.0;
+   double sum = 0.0;
+   for(int i = 0; i < copied; i++) sum += (double)vols[i];
+   return (copied > 0) ? (sum / (double)copied) : 0.0;
+}
+
+void ProcessCapital(const datetime nowServer)
+{
+   if(!InpCapEnabled) { DeleteObjectsByPrefix(g_prefix + "CAP_"); return; }
+
+   double ibh = 0.0, ibl = 0.0;
+   datetime ibOpen = 0;
+   int tzOff = InpCapTzOffsetHours;
+   if(!GetIbFromH1(nowServer, ibh, ibl, ibOpen, tzOff)) return;
+   if(ibh <= ibl) return;
+   int dayKey = DayKeyLocalFromServer(nowServer, tzOff);
+   if(g_cap_last_day_key == 0) g_cap_last_day_key = dayKey;
+   if(dayKey != g_cap_last_day_key)
+   {
+      DeleteObjectsByPrefix(g_prefix + "CAP_");
+      g_cap_last_signal_time = 0;
+      g_cap_last_day_key = dayKey;
+   }
+   double mid = (ibh + ibl) / 2.0;
+   double rng = ibh - ibl;
+
+   if(InpCapShowMidLine)
+      CreateOrUpdateCapHLine(g_prefix + "CAP_MID", mid, InpCapMidColor, STYLE_DASH, 1);
+   CreateOrUpdateCapHLine(g_prefix + "CAP_IBH", ibh, InpCapFibColor, STYLE_DOT, 1);
+   CreateOrUpdateCapHLine(g_prefix + "CAP_IBL", ibl, InpCapFibColor, STYLE_DOT, 1);
+
+   if(InpCapShowFibExt)
+   {
+      CreateOrUpdateCapHLine(g_prefix + "CAP_TP1_UP", ibh + 0.5 * rng, InpCapFibColor, STYLE_DOT, 1);
+      CreateOrUpdateCapHLine(g_prefix + "CAP_TP2_UP", ibh + 1.0 * rng, InpCapFibColor, STYLE_DOT, 1);
+      CreateOrUpdateCapHLine(g_prefix + "CAP_TP1_DN", ibl - 0.5 * rng, InpCapFibColor, STYLE_DOT, 1);
+      CreateOrUpdateCapHLine(g_prefix + "CAP_TP2_DN", ibl - 1.0 * rng, InpCapFibColor, STYLE_DOT, 1);
+   }
+
+   MqlRates rates[];
+   ArrayResize(rates, 3);
+   ArraySetAsSeries(rates, true);
+   if(CopyRates(_Symbol, InpCapSignalTf, 0, 3, rates) < 3) return;
+
+   int idx = InpCapConfirmOnClose ? 1 : 0;
+   int prev = idx + 1;
+   if(prev >= 3) return;
+
+   datetime tBar = rates[idx].time;
+   datetime tClose = tBar + (datetime)PeriodSeconds(InpCapSignalTf);
+
+   int sigDayKey = DayKeyLocalFromServer(tClose, tzOff);
+   if(sigDayKey != dayKey) return;
+   if(tClose < (ibOpen + 3600)) return;
+
+   if(InpCapConfirmOnClose && tBar == g_cap_last_signal_time) return;
+
+   double volMa = AvgTickVolTf(InpCapSignalTf, idx, InpCapVolMaLen);
+   bool volOk = true;
+   if(InpCapVolFilterEnabled)
+   {
+      if(volMa > 0.0)
+         volOk = ((double)rates[idx].tick_volume) >= (volMa * InpCapVolMinMult);
+   }
+
+   double bodyMin = MathMin(rates[idx].open, rates[idx].close);
+   double bodyMax = MathMax(rates[idx].open, rates[idx].close);
+   double prevBodyMin = MathMin(rates[prev].open, rates[prev].close);
+   double prevBodyMax = MathMax(rates[prev].open, rates[prev].close);
+
+   bool breakUp = (bodyMin > ibh && prevBodyMin <= ibh);
+   bool breakDn = (bodyMax < ibl && prevBodyMax >= ibl);
+   bool sweepIbl = (rates[idx].low < ibl && rates[idx].close > ibl);
+   bool sweepIbh = (rates[idx].high > ibh && rates[idx].close < ibh);
+
+   bool aboveMid = (rates[idx].close > mid);
+   bool belowMid = (rates[idx].close < mid);
+
+   bool buy = volOk && aboveMid && (breakUp || sweepIbl);
+   bool sell = volOk && belowMid && (breakDn || sweepIbh);
+
+   bool inNy = InLocalWindow(tClose, tzOff, InpCapNyStartHour, InpCapNyStartMinute, InpCapNyEndHour, InpCapNyEndMinute);
+   bool buyNy = buy && inNy && breakUp;
+   bool sellNy = sell && inNy && breakDn;
+
+   if((buy || sell) && tBar != g_cap_last_signal_time)
+   {
+      string txt = buy ? (buyNy ? "BUY Capital NY" : "BUY Capital") : (sellNy ? "SELL Capital NY" : "SELL Capital");
+      color clr = buy ? (buyNy ? InpCapNyColor : InpCapBuyColor) : (sellNy ? InpCapNyColor : InpCapSellColor);
+      double y = buy ? (rates[idx].low - 10 * _Point) : (rates[idx].high + 10 * _Point);
+      CreateCapitalSignal(tBar, y, txt, clr);
+      NotifyCapital(txt, tBar, buy ? ibh : ibl);
+      g_cap_last_signal_time = tBar;
+   }
+}
+
+void BackfillCapital()
+{
+   if(!InpCapEnabled) return;
+   int bars = InpCapHistoryBars;
+   if(bars < 50) bars = 50;
+
+   MqlRates rates[];
+   ArrayResize(rates, bars + InpCapVolMaLen + 5);
+   ArraySetAsSeries(rates, true);
+   int copied = CopyRates(_Symbol, InpCapSignalTf, 0, ArraySize(rates), rates);
+   if(copied < (InpCapVolMaLen + 5)) return;
+
+   int maxIdx = copied - 2;
+   if(maxIdx < 2) return;
+
+   int cacheDayKey = 0;
+   double cacheIbh = 0.0;
+   double cacheIbl = 0.0;
+   double cacheMid = 0.0;
+   datetime cacheIbOpen = 0;
+   int cacheOff = InpCapTzOffsetHours;
+
+   for(int i = maxIdx; i >= 1; i--)
+   {
+      datetime tBar = rates[i].time;
+      datetime tClose = tBar + (datetime)PeriodSeconds(InpCapSignalTf);
+
+      double ibh = 0.0, ibl = 0.0;
+      datetime ibOpen = 0;
+      int off = InpCapTzOffsetHours;
+      if(!GetIbFromH1(tClose, ibh, ibl, ibOpen, off)) continue;
+      if(ibh <= ibl) continue;
+
+      int dayKey = DayKeyLocalFromServer(tClose, off);
+      if(cacheDayKey != dayKey)
+      {
+         cacheDayKey = dayKey;
+         cacheIbh = ibh;
+         cacheIbl = ibl;
+         cacheMid = (ibh + ibl) / 2.0;
+         cacheIbOpen = ibOpen;
+         cacheOff = off;
+      }
+
+      if(tClose < (cacheIbOpen + 3600)) continue;
+      if(DayKeyLocalFromServer(tClose, cacheOff) != cacheDayKey) continue;
+
+      double volMa = 0.0;
+      if(InpCapVolMaLen > 0)
+      {
+         double sum = 0.0;
+         int cnt = 0;
+         for(int k = i; k < i + InpCapVolMaLen && k < copied; k++)
+         {
+            sum += (double)rates[k].tick_volume;
+            cnt++;
+         }
+         if(cnt > 0) volMa = sum / (double)cnt;
+      }
+      bool volOk = true;
+      if(InpCapVolFilterEnabled && volMa > 0.0)
+         volOk = ((double)rates[i].tick_volume) >= (volMa * InpCapVolMinMult);
+
+      double bodyMin = MathMin(rates[i].open, rates[i].close);
+      double bodyMax = MathMax(rates[i].open, rates[i].close);
+      double prevBodyMin = MathMin(rates[i + 1].open, rates[i + 1].close);
+      double prevBodyMax = MathMax(rates[i + 1].open, rates[i + 1].close);
+
+      bool breakUp = (bodyMin > cacheIbh && prevBodyMin <= cacheIbh);
+      bool breakDn = (bodyMax < cacheIbl && prevBodyMax >= cacheIbl);
+      bool sweepIbl = (rates[i].low < cacheIbl && rates[i].close > cacheIbl);
+      bool sweepIbh = (rates[i].high > cacheIbh && rates[i].close < cacheIbh);
+
+      bool aboveMid = (rates[i].close > cacheMid);
+      bool belowMid = (rates[i].close < cacheMid);
+
+      bool buy = volOk && aboveMid && (breakUp || sweepIbl);
+      bool sell = volOk && belowMid && (breakDn || sweepIbh);
+      if(!buy && !sell) continue;
+
+      bool inNy = InLocalWindow(tClose, cacheOff, InpCapNyStartHour, InpCapNyStartMinute, InpCapNyEndHour, InpCapNyEndMinute);
+      bool buyNy = buy && inNy && breakUp;
+      bool sellNy = sell && inNy && breakDn;
+
+      string txt = buy ? (buyNy ? "BUY Capital NY" : "BUY Capital") : (sellNy ? "SELL Capital NY" : "SELL Capital");
+      color clr = buy ? (buyNy ? InpCapNyColor : InpCapBuyColor) : (sellNy ? InpCapNyColor : InpCapSellColor);
+      double y = buy ? (rates[i].low - 10 * _Point) : (rates[i].high + 10 * _Point);
+      CreateCapitalSignal(tBar, y, txt, clr);
+   }
+}
+
 bool GetOhclEmaValue(const int shift, double &emaValue)
 {
    emaValue = 0.0;
@@ -963,6 +1308,97 @@ bool GetOhclEmaValue(const int shift, double &emaValue)
    if(CopyBuffer(g_ohcl_ema_handle, 0, shift, 1, buf) <= 0) return false;
    emaValue = buf[0];
    return true;
+}
+
+bool GetOhclPrevLevelsAtTime(const datetime tServer, double &prevH, double &prevL, datetime &htfBarTime)
+{
+   prevH = 0.0;
+   prevL = 0.0;
+   htfBarTime = 0;
+   int shift = iBarShift(_Symbol, InpOhclHtf, tServer, true);
+   if(shift < 0) return false;
+   htfBarTime = iTime(_Symbol, InpOhclHtf, shift);
+   int prevShift = shift + 1;
+   double h = iHigh(_Symbol, InpOhclHtf, prevShift);
+   double l = iLow(_Symbol, InpOhclHtf, prevShift);
+   if(h == 0.0 && l == 0.0) return false;
+   prevH = h;
+   prevL = l;
+   return true;
+}
+
+void BackfillOhcl(const int rates_total, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[])
+{
+   if(!InpOhclEnabled) return;
+   if(!InpOhclPlotHistorySignals && !InpOhclPlotHistoryLevels) return;
+
+   int maxBars = InpOhclHistoryBars;
+   if(maxBars < 10) maxBars = 10;
+   int start = rates_total - 2;
+   if(start > maxBars) start = maxBars;
+   if(start < 2) return;
+
+   int trend = 0;
+   double base = 0.0;
+   datetime lastHtf = 0;
+   datetime lastSig = 0;
+   double buf = (double)InpOhclBreakoutBufferPoints * _Point;
+
+   for(int i = start; i >= 1; i--)
+   {
+      datetime tBar = time[i];
+      double prevH = 0.0, prevL = 0.0;
+      datetime htfT = 0;
+      if(!GetOhclPrevLevelsAtTime(tBar, prevH, prevL, htfT)) continue;
+
+      if(lastHtf != 0 && htfT != lastHtf && InpOhclResetOnNewHtf)
+      {
+         trend = 0;
+         base = 0.0;
+      }
+      lastHtf = htfT;
+
+      double emaVal = 0.0;
+      if(!GetOhclEmaValue(i, emaVal)) emaVal = close[i];
+
+      bool bullConfirm = close[i] > (prevH + buf) && close[i] > open[i] && close[i] > emaVal;
+      bool bearConfirm = close[i] < (prevL - buf) && close[i] < open[i] && close[i] < emaVal;
+
+      bool bullEvent = bullConfirm && trend != 1;
+      bool bearEvent = bearConfirm && trend != -1;
+
+      if(bullEvent && tBar != lastSig)
+      {
+         trend = 1;
+         base = prevH;
+         lastSig = tBar;
+         CreateOhclSignalText("BUY", tBar, low[i] - 10 * _Point, InpOhclBullColor);
+         if(InpOhclPlotHistoryLevels)
+            CreateOrUpdateOhclLine(tBar, ExtendTime(tBar, InpOhclExtendBars), base, InpOhclBullColor, true);
+      }
+      else if(bearEvent && tBar != lastSig)
+      {
+         trend = -1;
+         base = prevL;
+         lastSig = tBar;
+         CreateOhclSignalText("SELL", tBar, high[i] + 10 * _Point, InpOhclBearColor);
+         if(InpOhclPlotHistoryLevels)
+            CreateOrUpdateOhclLine(tBar, ExtendTime(tBar, InpOhclExtendBars), base, InpOhclBearColor, true);
+      }
+
+      bool neutralizeLong = (trend == 1 && base != 0.0 && close[i] < (base - buf));
+      bool neutralizeShort = (trend == -1 && base != 0.0 && close[i] > (base + buf));
+      if(neutralizeLong || neutralizeShort)
+      {
+         CreateOhclSignalText("TP", tBar, close[i], InpOhclNeutralColor);
+         trend = 0;
+         base = 0.0;
+      }
+   }
+
+   g_ohcl_trend = trend;
+   g_ohcl_base = base;
+   g_ohcl_last_signal_time = lastSig;
 }
 
 void SendOhclSignalNotification(const string kind, const datetime t, const double levelPrice)
@@ -2918,9 +3354,17 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
       g_ohcl_last_calc_time0 = 0;
       g_ohcl_last_signal_time = 0;
       ArrayResize(g_ohcl_hist_times, 0);
+      g_cap_last_signal_time = 0;
+      g_cap_last_day_key = 0;
    }
 
+   if(prev_calculated == 0)
+      BackfillOhcl(rates_total, time, open, high, low, close);
+   if(prev_calculated == 0)
+      BackfillCapital();
+
    ProcessOhcl(time, open, high, low, close);
+   ProcessCapital(time[0]);
 
    if(InpVpShowLines || InpVpFilterEnabled)
    {

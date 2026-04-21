@@ -21,17 +21,29 @@ liveLowColor = input.color(color.new(color.orange, 0), "Low color", group="Live 
 liveFontSize = input.string("Tiny", "Text size", options=["Tiny", "Small", "Normal"], group="Live Candle")
 
 showDailyLevels = input.bool(true, "Show NY Open / Daily High-Low", group="Daily Levels")
-dailyTz = input.string("GMT-7", "Timezone", group="Daily Levels")
-nyOpenHour = input.int(21, "NY open hour", minval=0, maxval=23, group="Daily Levels")
-closingHour = input.int(6, "Closing hour", minval=0, maxval=23, group="Daily Levels")
+dailyTz = input.string("Europe/Rome", "Timezone", group="Daily Levels")
+nyOpenHour = input.int(5, "NY open hour", minval=0, maxval=23, group="Daily Levels")
+closingHour = input.int(14, "Closing hour", minval=0, maxval=23, group="Daily Levels")
 closingMinute = input.int(30, "Closing minute", minval=0, maxval=59, group="Daily Levels")
-finalHour = input.int(9, "Final hour", minval=0, maxval=23, group="Daily Levels")
+finalHour = input.int(17, "Final hour", minval=0, maxval=23, group="Daily Levels")
 showDailyVerticalLines = input.bool(true, "Show vertical lines", group="Daily Levels")
 dailyLineColor = input.color(color.white, "Line color", group="Daily Levels")
 nyOpenLineColor = input.color(color.blue, "NY Open color", group="Daily Levels")
 dailyLabelColor = input.color(color.white, "Label color", group="Daily Levels")
 dailyAlertOnCreate = input.bool(true, "Alert on create/update", group="Daily Levels")
 dailyAlertOnTouch = input.bool(true, "Alert on touch", group="Daily Levels")
+
+showSessionBoxes = input.bool(true, "Show sessions (Asia/London/NY)", group="Sessions")
+sessionTz = input.string("Europe/Rome", "Timezone", group="Sessions")
+asiaStartHour = input.int(1, "Asia start hour", minval=0, maxval=23, group="Sessions")
+asiaEndHour = input.int(10, "Asia end hour", minval=0, maxval=23, group="Sessions")
+londonStartHour = input.int(9, "London start hour", minval=0, maxval=23, group="Sessions")
+londonEndHour = input.int(18, "London end hour", minval=0, maxval=23, group="Sessions")
+nyStartHour = input.int(14, "NY start hour", minval=0, maxval=23, group="Sessions")
+nyEndHour = input.int(23, "NY end hour", minval=0, maxval=23, group="Sessions")
+asiaColor = input.color(color.new(color.rgb(126, 170, 170), 92), "Asia color", group="Sessions")
+londonColor = input.color(color.new(color.rgb(140, 160, 200), 92), "London color", group="Sessions")
+nyColor = input.color(color.new(color.rgb(170, 145, 190), 92), "NY color", group="Sessions")
 
 enableHs = input.bool(true, "Enable Hammer/Shooting", group="Hammer/Shooting")
 fibLevel = input.float(0.382, "Fibonacci Level", options=[0.236, 0.382, 0.5], group="Hammer/Shooting")
@@ -782,6 +794,120 @@ else
     if not na(liveLowLbl)
         label.delete(liveLowLbl)
         liveLowLbl := na
+
+sessTz = str.length(sessionTz) > 0 ? sessionTz : syminfo.timezone
+sessH = hour(time, sessTz)
+sessM = minute(time, sessTz)
+
+f_in_session(_startH, _endH) =>
+    _startH < _endH ? (sessH >= _startH and sessH < _endH) : (sessH >= _startH or sessH < _endH)
+
+inAsia = showSessionBoxes and f_in_session(asiaStartHour, asiaEndHour)
+inLondon = showSessionBoxes and f_in_session(londonStartHour, londonEndHour)
+inNy = showSessionBoxes and f_in_session(nyStartHour, nyEndHour)
+
+var box asiaBox = na
+var box londonBox = na
+var box nyBox = na
+var label asiaLbl = na
+var label londonLbl = na
+var label nyLbl = na
+var int asiaStart = na
+var int londonStart = na
+var int nyStart = na
+var float asiaHi = na
+var float asiaLo = na
+var float londonHi = na
+var float londonLo = na
+var float nyHi = na
+var float nyLo = na
+var bool prevAsia = false
+var bool prevLondon = false
+var bool prevNy = false
+
+if showSessionBoxes
+    if inAsia and not prevAsia
+        asiaHi := high
+        asiaLo := low
+        asiaStart := bar_index
+        asiaBox := box.new(left=bar_index, right=bar_index, top=asiaHi, bottom=asiaLo, bgcolor=asiaColor, border_color=color.new(color.black, 100))
+        asiaLbl := label.new(bar_index, asiaHi, "ASIA", style=label.style_label_down, textcolor=color.white, color=color.new(asiaColor, 0), size=size.tiny)
+    if inAsia and prevAsia and not na(asiaBox)
+        asiaHi := math.max(asiaHi, high)
+        asiaLo := math.min(asiaLo, low)
+        box.set_right(asiaBox, bar_index)
+        box.set_top(asiaBox, asiaHi)
+        box.set_bottom(asiaBox, asiaLo)
+        if not na(asiaLbl)
+            label.set_xy(asiaLbl, asiaStart, asiaHi)
+    if not inAsia and prevAsia
+        asiaBox := na
+        asiaHi := na
+        asiaLo := na
+        asiaLbl := na
+        asiaStart := na
+
+    if inLondon and not prevLondon
+        londonHi := high
+        londonLo := low
+        londonStart := bar_index
+        londonBox := box.new(left=bar_index, right=bar_index, top=londonHi, bottom=londonLo, bgcolor=londonColor, border_color=color.new(color.black, 100))
+        londonLbl := label.new(bar_index, londonHi, "LONDON", style=label.style_label_down, textcolor=color.white, color=color.new(londonColor, 0), size=size.tiny)
+    if inLondon and prevLondon and not na(londonBox)
+        londonHi := math.max(londonHi, high)
+        londonLo := math.min(londonLo, low)
+        box.set_right(londonBox, bar_index)
+        box.set_top(londonBox, londonHi)
+        box.set_bottom(londonBox, londonLo)
+        if not na(londonLbl)
+            label.set_xy(londonLbl, londonStart, londonHi)
+    if not inLondon and prevLondon
+        londonBox := na
+        londonHi := na
+        londonLo := na
+        londonLbl := na
+        londonStart := na
+
+    if inNy and not prevNy
+        nyHi := high
+        nyLo := low
+        nyStart := bar_index
+        nyBox := box.new(left=bar_index, right=bar_index, top=nyHi, bottom=nyLo, bgcolor=nyColor, border_color=color.new(color.black, 100))
+        nyLbl := label.new(bar_index, nyHi, "NY", style=label.style_label_down, textcolor=color.white, color=color.new(nyColor, 0), size=size.tiny)
+    if inNy and prevNy and not na(nyBox)
+        nyHi := math.max(nyHi, high)
+        nyLo := math.min(nyLo, low)
+        box.set_right(nyBox, bar_index)
+        box.set_top(nyBox, nyHi)
+        box.set_bottom(nyBox, nyLo)
+        if not na(nyLbl)
+            label.set_xy(nyLbl, nyStart, nyHi)
+    if not inNy and prevNy
+        nyBox := na
+        nyHi := na
+        nyLo := na
+        nyLbl := na
+        nyStart := na
+else
+    asiaBox := na
+    londonBox := na
+    nyBox := na
+    asiaLbl := na
+    londonLbl := na
+    nyLbl := na
+    asiaStart := na
+    londonStart := na
+    nyStart := na
+    asiaHi := na
+    asiaLo := na
+    londonHi := na
+    londonLo := na
+    nyHi := na
+    nyLo := na
+
+prevAsia := inAsia
+prevLondon := inLondon
+prevNy := inNy
 
 isNyOpen = showDailyLevels and hour(time, dailyTz) == nyOpenHour and minute(time, dailyTz) == 0
 isClosing = showDailyLevels and hour(time, dailyTz) == closingHour and minute(time, dailyTz) == closingMinute

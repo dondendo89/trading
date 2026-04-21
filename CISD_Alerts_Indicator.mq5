@@ -118,17 +118,32 @@ input int InpLiveHlYOffsetPoints = 0;
 
 input group "Daily Levels"
 input bool InpDailyEnabled = true;
-input int InpDailyTzOffsetHours = -7;
-input int InpDailyNyOpenHour = 21;
-input int InpDailyClosingHour = 6;
+input int InpDailyTzOffsetHours = 1;
+input int InpDailyNyOpenHour = 5;
+input int InpDailyClosingHour = 14;
 input int InpDailyClosingMinute = 30;
-input int InpDailyFinalHour = 9;
+input int InpDailyFinalHour = 17;
 input int InpDailyMaxBars = 2000;
 input bool InpDailyShowVerticalLines = true;
 input color InpDailyLineColor = clrWhite;
 input color InpDailyNyOpenColor = clrBlue;
 input bool InpDailyAlertOnCreate = true;
 input bool InpDailyAlertOnTouch = true;
+
+input group "Sessions"
+input bool InpShowSessions = true;
+input int InpSessionsTzOffsetHours = 1;
+input int InpAsiaStartHour = 1;
+input int InpAsiaEndHour = 10;
+input int InpLondonStartHour = 9;
+input int InpLondonEndHour = 18;
+input int InpNyStartHour = 14;
+input int InpNyEndHour = 23;
+input color InpAsiaColor = clrCadetBlue;
+input color InpLondonColor = clrSteelBlue;
+input color InpNyColor = clrThistle;
+input int InpSessionBoxAlpha = 20;
+input int InpSessionsMaxDays = 5;
 
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
@@ -223,6 +238,8 @@ bool g_daily_has = false;
 bool g_daily_touched_open = false;
 bool g_daily_touched_high = false;
 bool g_daily_touched_low = false;
+
+datetime g_sessions_last_time0 = 0;
 
 void DeleteObjectSafe(const string name)
 {
@@ -520,6 +537,141 @@ void ProcessDailyLevels(const datetime &time[], const double &open[], const doub
          string msg = "Daily Low touched on " + _Symbol + " TF=" + EnumToString(_Period);
          if(InpSendAlert) Alert(msg);
          if(InpSendPush) SendNotification(msg);
+      }
+   }
+}
+
+datetime DayStartLocal(const datetime serverTime, const int offsetHours)
+{
+   datetime t = serverTime + (datetime)offsetHours * 3600;
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   dt.hour = 0;
+   dt.min = 0;
+   dt.sec = 0;
+   datetime localStart = StructToTime(dt);
+   return localStart - (datetime)offsetHours * 3600;
+}
+
+datetime MakeLocalTimeOnDay(const datetime dayStartServer, const int offsetHours, const int hour, const int minute)
+{
+   datetime localStart = dayStartServer + (datetime)offsetHours * 3600;
+   MqlDateTime dt;
+   TimeToStruct(localStart, dt);
+   dt.hour = hour;
+   dt.min = minute;
+   dt.sec = 0;
+   datetime localT = StructToTime(dt);
+   return localT - (datetime)offsetHours * 3600;
+}
+
+void CreateOrUpdateSessionRect(const string name, const datetime t1, const datetime t2, const double top, const double bottom, const color c)
+{
+   color fill = ColorToARGB(c, (uchar)InpSessionBoxAlpha);
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_RECTANGLE, 0, t1, top, t2, bottom);
+      ObjectSetInteger(0, name, OBJPROP_BACK, true);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_FILL, true);
+   }
+   else
+   {
+      ObjectMove(0, name, 0, t1, top);
+      ObjectMove(0, name, 1, t2, bottom);
+   }
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, fill);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, ColorToARGB(c, 0));
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+}
+
+void CreateOrUpdateSessionText(const string name, const datetime t, const double y, const string txt, const color c)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_TEXT, 0, t, y);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   else
+   {
+      ObjectMove(0, name, 0, t, y);
+   }
+   ObjectSetString(0, name, OBJPROP_TEXT, txt);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, c);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+}
+
+void DrawSessions(const int rates_total, const datetime &time[], const double &high[], const double &low[])
+{
+   if(!InpShowSessions) return;
+   int maxDays = InpSessionsMaxDays;
+   if(maxDays < 1) maxDays = 1;
+   datetime now0 = time[0];
+   datetime day0 = DayStartLocal(now0, InpSessionsTzOffsetHours);
+
+   DeleteObjectsByPrefix(g_prefix + "SES_");
+
+   for(int d = 0; d < maxDays; d++)
+   {
+      datetime dayStart = day0 - (datetime)d * 86400;
+
+      datetime a1 = MakeLocalTimeOnDay(dayStart, InpSessionsTzOffsetHours, InpAsiaStartHour, 0);
+      datetime a2 = MakeLocalTimeOnDay(dayStart, InpSessionsTzOffsetHours, InpAsiaEndHour, 0);
+      if(InpAsiaEndHour <= InpAsiaStartHour) a2 += 86400;
+
+      datetime l1 = MakeLocalTimeOnDay(dayStart, InpSessionsTzOffsetHours, InpLondonStartHour, 0);
+      datetime l2 = MakeLocalTimeOnDay(dayStart, InpSessionsTzOffsetHours, InpLondonEndHour, 0);
+      if(InpLondonEndHour <= InpLondonStartHour) l2 += 86400;
+
+      datetime n1 = MakeLocalTimeOnDay(dayStart, InpSessionsTzOffsetHours, InpNyStartHour, 0);
+      datetime n2 = MakeLocalTimeOnDay(dayStart, InpSessionsTzOffsetHours, InpNyEndHour, 0);
+      if(InpNyEndHour <= InpNyStartHour) n2 += 86400;
+
+      double aHi = -DBL_MAX, aLo = DBL_MAX;
+      double lHi = -DBL_MAX, lLo = DBL_MAX;
+      double nHi = -DBL_MAX, nLo = DBL_MAX;
+      bool aOk = false, lOk = false, nOk = false;
+
+      for(int i = 0; i < rates_total; i++)
+      {
+         datetime t = time[i];
+         if(t < (dayStart - 86400)) break;
+         if(t >= a1 && t < a2)
+         {
+            aOk = true;
+            if(high[i] > aHi) aHi = high[i];
+            if(low[i] < aLo) aLo = low[i];
+         }
+         if(t >= l1 && t < l2)
+         {
+            lOk = true;
+            if(high[i] > lHi) lHi = high[i];
+            if(low[i] < lLo) lLo = low[i];
+         }
+         if(t >= n1 && t < n2)
+         {
+            nOk = true;
+            if(high[i] > nHi) nHi = high[i];
+            if(low[i] < nLo) nLo = low[i];
+         }
+      }
+
+      string dayTag = IntegerToString((int)(dayStart / 86400));
+      if(aOk)
+      {
+         CreateOrUpdateSessionRect(g_prefix + "SES_ASIA_" + dayTag, a1, a2, aHi, aLo, InpAsiaColor);
+         CreateOrUpdateSessionText(g_prefix + "SES_TXT_ASIA_" + dayTag, a1, aHi, "ASIA", InpAsiaColor);
+      }
+      if(lOk)
+      {
+         CreateOrUpdateSessionRect(g_prefix + "SES_LONDON_" + dayTag, l1, l2, lHi, lLo, InpLondonColor);
+         CreateOrUpdateSessionText(g_prefix + "SES_TXT_LONDON_" + dayTag, l1, lHi, "LONDON", InpLondonColor);
+      }
+      if(nOk)
+      {
+         CreateOrUpdateSessionRect(g_prefix + "SES_NY_" + dayTag, n1, n2, nHi, nLo, InpNyColor);
+         CreateOrUpdateSessionText(g_prefix + "SES_TXT_NY_" + dayTag, n1, nHi, "NY", InpNyColor);
       }
    }
 }
@@ -2380,6 +2532,22 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
 
    UpdateLiveHighLow(time[0], high[0], low[0]);
    ProcessDailyLevels(time, open, high, low);
+   if(!InpShowSessions)
+   {
+      if(g_sessions_last_time0 != 0)
+      {
+         DeleteObjectsByPrefix(g_prefix + "SES_");
+         g_sessions_last_time0 = 0;
+      }
+   }
+   else
+   {
+      if(time[0] != g_sessions_last_time0)
+      {
+         DrawSessions(rates_total, time, high, low);
+         g_sessions_last_time0 = time[0];
+      }
+   }
 
    DrawHsStatusOnChart();
    ProcessHsTimeframe(PERIOD_M15, InpHsEnableM15, g_tf_last_time0_m15, g_tf_armed_m15, g_last_hammer_time_m15, g_last_shooting_time_m15);
@@ -2410,6 +2578,7 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
       g_daily_touched_open = false;
       g_daily_touched_high = false;
       g_daily_touched_low = false;
+      g_sessions_last_time0 = 0;
       int oldest = rates_total - 1;
       g_top_price = high[oldest];
       g_bottom_price = low[oldest];

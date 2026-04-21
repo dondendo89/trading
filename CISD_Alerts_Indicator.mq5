@@ -11,6 +11,7 @@ input ENUM_LINE_STYLE InpLineStyle = STYLE_SOLID;
 input int InpLineWidth = 1;
 input int InpExtendBars = 5;
 input bool InpKeepLevels = false;
+input bool InpCisdShowLines = false;
 
 input group "Alerts"
 input bool InpSendAlert = true;
@@ -142,8 +143,32 @@ input int InpNyEndHour = 23;
 input color InpAsiaColor = clrCadetBlue;
 input color InpLondonColor = clrSteelBlue;
 input color InpNyColor = clrThistle;
-input int InpSessionBoxAlpha = 20;
+input int InpSessionBoxAlpha = 10;
 input int InpSessionsMaxDays = 5;
+input bool InpShowOHLC = true;
+input color InpOhlcBullColor = clrLimeGreen;
+input color InpOhlcBearColor = clrRed;
+
+input group "OHCL HTF Trend Levels"
+input bool InpOhclEnabled = true;
+input ENUM_TIMEFRAMES InpOhclHtf = PERIOD_H4;
+input int InpOhclExtendBars = 50;
+input int InpOhclBreakoutBufferPoints = 0;
+input bool InpOhclResetOnNewHtf = true;
+input bool InpOhclKeepOld = false;
+input bool InpOhclShowSignals = true;
+input bool InpOhclShowTp = true;
+input bool InpOhclConfirmOnClose = true;
+input bool InpOhclSendNotifications = true;
+input bool InpOhclPlotHistorySignals = true;
+input bool InpOhclPlotHistoryLevels = true;
+input int InpOhclMaxHistoryLevels = 50;
+input int InpOhclEmaLen = 50;
+input bool InpOhclShowEma = false;
+input bool InpOhclShowLines = false;
+input color InpOhclBullColor = clrLimeGreen;
+input color InpOhclBearColor = clrRed;
+input color InpOhclNeutralColor = clrGray;
 
 double g_top_price = 0.0;
 double g_bottom_price = 0.0;
@@ -240,6 +265,14 @@ bool g_daily_touched_high = false;
 bool g_daily_touched_low = false;
 
 datetime g_sessions_last_time0 = 0;
+
+int g_ohcl_trend = 0;
+double g_ohcl_base = 0.0;
+datetime g_ohcl_htf_time0 = 0;
+datetime g_ohcl_last_calc_time0 = 0;
+datetime g_ohcl_last_signal_time = 0;
+int g_ohcl_ema_handle = INVALID_HANDLE;
+datetime g_ohcl_hist_times[];
 
 void DeleteObjectSafe(const string name)
 {
@@ -567,7 +600,7 @@ datetime MakeLocalTimeOnDay(const datetime dayStartServer, const int offsetHours
 
 void CreateOrUpdateSessionRect(const string name, const datetime t1, const datetime t2, const double top, const double bottom, const color c)
 {
-   color fill = ColorToARGB(c, (uchar)InpSessionBoxAlpha);
+   color fill = (color)ColorToARGB(c, (uchar)InpSessionBoxAlpha);
    if(ObjectFind(0, name) < 0)
    {
       ObjectCreate(0, name, OBJ_RECTANGLE, 0, t1, top, t2, bottom);
@@ -581,7 +614,7 @@ void CreateOrUpdateSessionRect(const string name, const datetime t1, const datet
       ObjectMove(0, name, 1, t2, bottom);
    }
    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, fill);
-   ObjectSetInteger(0, name, OBJPROP_COLOR, ColorToARGB(c, 0));
+   ObjectSetInteger(0, name, OBJPROP_COLOR, (color)ColorToARGB(c, 0));
    ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
 }
 
@@ -602,9 +635,58 @@ void CreateOrUpdateSessionText(const string name, const datetime t, const double
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
 }
 
-void DrawSessions(const int rates_total, const datetime &time[], const double &high[], const double &low[])
+void CreateOrUpdateSessionOhlc(const string name, const datetime t, const double y, const double o, const double h, const double l, const double c)
 {
-   if(!InpShowSessions) return;
+   if(!InpShowOHLC) return;
+   double rng = h - l;
+   bool openNearLow = false;
+   bool closeNearHigh = false;
+   bool openNearHigh = false;
+   bool closeNearLow = false;
+   if(rng > 0.0)
+   {
+      openNearLow = (o - l) <= rng * 0.2;
+      closeNearHigh = (h - c) <= rng * 0.2;
+      openNearHigh = (h - o) <= rng * 0.2;
+      closeNearLow = (c - l) <= rng * 0.2;
+   }
+   bool strongBullish = (rng > 0.0 && openNearLow && closeNearHigh);
+   bool strongBearish = (rng > 0.0 && openNearHigh && closeNearLow);
+
+   string txt = "O: " + DoubleToString(o, _Digits) + "\n" +
+                "H: " + DoubleToString(h, _Digits) + "\n" +
+                "L: " + DoubleToString(l, _Digits) + "\n" +
+                "C: " + DoubleToString(c, _Digits);
+   color clr = clrGray;
+   if(strongBullish)
+   {
+      txt += "\nStrong Bullish IB";
+      clr = InpOhlcBullColor;
+   }
+   else if(strongBearish)
+   {
+      txt += "\nStrong Bearish IB";
+      clr = InpOhlcBearColor;
+   }
+
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_TEXT, 0, t, y);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+   else
+   {
+      ObjectMove(0, name, 0, t, y);
+   }
+   ObjectSetString(0, name, OBJPROP_TEXT, txt);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+}
+
+void DrawSessions(const int rates_total, const datetime &time[], const double &high[], const double &low[], const double &open[], const double &close[])
+{
+   if(!InpShowSessions && !InpShowOHLC) return;
    int maxDays = InpSessionsMaxDays;
    if(maxDays < 1) maxDays = 1;
    datetime now0 = time[0];
@@ -633,24 +715,32 @@ void DrawSessions(const int rates_total, const datetime &time[], const double &h
       double nHi = -DBL_MAX, nLo = DBL_MAX;
       bool aOk = false, lOk = false, nOk = false;
 
-      for(int i = 0; i < rates_total; i++)
+      double aO = 0, aH = 0, aL = 0, aC = 0;
+      double lO = 0, lH = 0, lL = 0, lC = 0;
+      double nO = 0, nH = 0, nL = 0, nC = 0;
+      datetime aT = 0, lT = 0, nT = 0;
+
+      for(int i = rates_total - 1; i >= 0; i--)
       {
          datetime t = time[i];
-         if(t < (dayStart - 86400)) break;
+         if(t < (dayStart - 86400)) continue;
          if(t >= a1 && t < a2)
          {
+            if(!aOk) { aO = open[i]; aH = high[i]; aL = low[i]; aC = close[i]; aT = t; }
             aOk = true;
             if(high[i] > aHi) aHi = high[i];
             if(low[i] < aLo) aLo = low[i];
          }
          if(t >= l1 && t < l2)
          {
+            if(!lOk) { lO = open[i]; lH = high[i]; lL = low[i]; lC = close[i]; lT = t; }
             lOk = true;
             if(high[i] > lHi) lHi = high[i];
             if(low[i] < lLo) lLo = low[i];
          }
          if(t >= n1 && t < n2)
          {
+            if(!nOk) { nO = open[i]; nH = high[i]; nL = low[i]; nC = close[i]; nT = t; }
             nOk = true;
             if(high[i] > nHi) nHi = high[i];
             if(low[i] < nLo) nLo = low[i];
@@ -660,18 +750,30 @@ void DrawSessions(const int rates_total, const datetime &time[], const double &h
       string dayTag = IntegerToString((int)(dayStart / 86400));
       if(aOk)
       {
-         CreateOrUpdateSessionRect(g_prefix + "SES_ASIA_" + dayTag, a1, a2, aHi, aLo, InpAsiaColor);
-         CreateOrUpdateSessionText(g_prefix + "SES_TXT_ASIA_" + dayTag, a1, aHi, "ASIA", InpAsiaColor);
+         if(InpShowSessions)
+         {
+            CreateOrUpdateSessionRect(g_prefix + "SES_ASIA_" + dayTag, a1, a2, aHi, aLo, InpAsiaColor);
+            CreateOrUpdateSessionText(g_prefix + "SES_TXT_ASIA_" + dayTag, a1, aHi, "ASIA", InpAsiaColor);
+         }
+         CreateOrUpdateSessionOhlc(g_prefix + "SES_OHLC_ASIA_" + dayTag, aT, aL, aO, aH, aL, aC);
       }
       if(lOk)
       {
-         CreateOrUpdateSessionRect(g_prefix + "SES_LONDON_" + dayTag, l1, l2, lHi, lLo, InpLondonColor);
-         CreateOrUpdateSessionText(g_prefix + "SES_TXT_LONDON_" + dayTag, l1, lHi, "LONDON", InpLondonColor);
+         if(InpShowSessions)
+         {
+            CreateOrUpdateSessionRect(g_prefix + "SES_LONDON_" + dayTag, l1, l2, lHi, lLo, InpLondonColor);
+            CreateOrUpdateSessionText(g_prefix + "SES_TXT_LONDON_" + dayTag, l1, lHi, "LONDON", InpLondonColor);
+         }
+         CreateOrUpdateSessionOhlc(g_prefix + "SES_OHLC_LONDON_" + dayTag, lT, lL, lO, lH, lL, lC);
       }
       if(nOk)
       {
-         CreateOrUpdateSessionRect(g_prefix + "SES_NY_" + dayTag, n1, n2, nHi, nLo, InpNyColor);
-         CreateOrUpdateSessionText(g_prefix + "SES_TXT_NY_" + dayTag, n1, nHi, "NY", InpNyColor);
+         if(InpShowSessions)
+         {
+            CreateOrUpdateSessionRect(g_prefix + "SES_NY_" + dayTag, n1, n2, nHi, nLo, InpNyColor);
+            CreateOrUpdateSessionText(g_prefix + "SES_TXT_NY_" + dayTag, n1, nHi, "NY", InpNyColor);
+         }
+         CreateOrUpdateSessionOhlc(g_prefix + "SES_OHLC_NY_" + dayTag, nT, nL, nO, nH, nL, nC);
       }
    }
 }
@@ -852,6 +954,200 @@ datetime ExtendTime(datetime t, int bars)
    return (datetime)(t + (long)bars * sec);
 }
 
+bool GetOhclEmaValue(const int shift, double &emaValue)
+{
+   emaValue = 0.0;
+   if(!InpOhclEnabled) return false;
+   if(g_ohcl_ema_handle == INVALID_HANDLE) return false;
+   double buf[1];
+   if(CopyBuffer(g_ohcl_ema_handle, 0, shift, 1, buf) <= 0) return false;
+   emaValue = buf[0];
+   return true;
+}
+
+void SendOhclSignalNotification(const string kind, const datetime t, const double levelPrice)
+{
+   if(!InpOhclEnabled) return;
+   if(!InpOhclSendNotifications) return;
+   if(!g_alerts_armed) return;
+   if(!InpNotifyHistorical)
+   {
+      if(t != iTime(_Symbol, _Period, 1)) return;
+   }
+   string msg = kind + " on " + _Symbol + " TF=" + EnumToString(_Period) + " Level=" + DoubleToString(levelPrice, _Digits);
+   if(InpSendAlert) Alert(msg);
+   if(InpSendPush) SendNotification(msg);
+}
+
+void CreateOhclSignalText(const string kind, const datetime t, const double y, const color clr)
+{
+   if(!InpOhclEnabled) return;
+   if(!InpOhclShowSignals && kind != "TP") return;
+   if(kind == "TP" && !InpOhclShowTp) return;
+   if(!InpOhclPlotHistorySignals) return;
+
+   string name = g_prefix + "OHCL_SIG_" + kind + "_" + IntegerToString((long)t);
+   if(ObjectFind(0, name) >= 0) return;
+
+   if(ObjectCreate(0, name, OBJ_TEXT, 0, t, y))
+   {
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   }
+   ObjectSetString(0, name, OBJPROP_TEXT, kind);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+}
+
+void DeleteOhclLiveLine()
+{
+   string name = g_prefix + "OHCL_LIVE";
+   DeleteObjectSafe(name);
+}
+
+void CreateOrUpdateOhclLine(const datetime t1, const datetime t2, const double price, const color clr, const bool history)
+{
+   if(!InpOhclEnabled) return;
+   if(!InpOhclShowLines) return;
+
+   string name = history ? (g_prefix + "OHCL_L_" + IntegerToString((long)t1)) : (g_prefix + "OHCL_LIVE");
+
+   if(ObjectFind(0, name) < 0)
+   {
+      if(!ObjectCreate(0, name, OBJ_TREND, 0, t1, price, t2, price)) return;
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_SOLID);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
+   }
+   else
+   {
+      ObjectMove(0, name, 0, t1, price);
+      ObjectMove(0, name, 1, t2, price);
+   }
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+
+   if(history && InpOhclMaxHistoryLevels > 0)
+   {
+      int n = ArraySize(g_ohcl_hist_times);
+      ArrayResize(g_ohcl_hist_times, n + 1);
+      g_ohcl_hist_times[n] = t1;
+      if(ArraySize(g_ohcl_hist_times) > InpOhclMaxHistoryLevels)
+      {
+         datetime oldT = g_ohcl_hist_times[0];
+         string oldName = g_prefix + "OHCL_L_" + IntegerToString((long)oldT);
+         DeleteObjectSafe(oldName);
+         for(int i = 1; i < ArraySize(g_ohcl_hist_times); i++)
+            g_ohcl_hist_times[i - 1] = g_ohcl_hist_times[i];
+         ArrayResize(g_ohcl_hist_times, ArraySize(g_ohcl_hist_times) - 1);
+      }
+   }
+}
+
+void ProcessOhcl(const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[])
+{
+   if(!InpOhclEnabled) return;
+   int idx = InpOhclConfirmOnClose ? 1 : 0;
+   if(ArraySize(time) <= idx) return;
+
+   if(InpOhclConfirmOnClose)
+   {
+      if(time[0] == g_ohcl_last_calc_time0) return;
+      g_ohcl_last_calc_time0 = time[0];
+   }
+
+   datetime htfTimes[];
+   ArrayResize(htfTimes, 1);
+   ArraySetAsSeries(htfTimes, true);
+   if(CopyTime(_Symbol, InpOhclHtf, 0, 1, htfTimes) <= 0) return;
+   datetime htfT0 = htfTimes[0];
+   bool newHtf = (g_ohcl_htf_time0 != 0 && htfT0 != g_ohcl_htf_time0);
+   g_ohcl_htf_time0 = htfT0;
+
+   if(newHtf && InpOhclResetOnNewHtf)
+   {
+      g_ohcl_trend = 0;
+      g_ohcl_base = 0.0;
+      if(!InpOhclKeepOld && !InpOhclPlotHistoryLevels)
+         DeleteOhclLiveLine();
+   }
+
+   double htfHigh[];
+   double htfLow[];
+   ArrayResize(htfHigh, 2);
+   ArrayResize(htfLow, 2);
+   ArraySetAsSeries(htfHigh, true);
+   ArraySetAsSeries(htfLow, true);
+   if(CopyHigh(_Symbol, InpOhclHtf, 0, 2, htfHigh) < 2) return;
+   if(CopyLow(_Symbol, InpOhclHtf, 0, 2, htfLow) < 2) return;
+   double prevH = htfHigh[1];
+   double prevL = htfLow[1];
+
+   double emaVal = 0.0;
+   if(!GetOhclEmaValue(idx, emaVal)) emaVal = close[idx];
+
+   double buf = (double)InpOhclBreakoutBufferPoints * _Point;
+   bool barOk = (!InpOhclConfirmOnClose) || (idx == 1);
+
+   bool bullConfirm = barOk && close[idx] > (prevH + buf) && close[idx] > open[idx] && close[idx] > emaVal;
+   bool bearConfirm = barOk && close[idx] < (prevL - buf) && close[idx] < open[idx] && close[idx] < emaVal;
+
+   bool bullEvent = bullConfirm && g_ohcl_trend != 1;
+   bool bearEvent = bearConfirm && g_ohcl_trend != -1;
+
+   if(bullEvent && time[idx] != g_ohcl_last_signal_time)
+   {
+      if(!InpOhclKeepOld && !InpOhclPlotHistoryLevels)
+         DeleteOhclLiveLine();
+
+      g_ohcl_trend = 1;
+      g_ohcl_base = prevH;
+      g_ohcl_last_signal_time = time[idx];
+
+      double y = low[idx] - 10 * _Point;
+      CreateOhclSignalText("BUY", time[idx], y, InpOhclBullColor);
+      SendOhclSignalNotification("OHCL BUY", time[idx], g_ohcl_base);
+
+      datetime t2 = ExtendTime(time[idx], InpOhclExtendBars);
+      CreateOrUpdateOhclLine(time[idx], t2, g_ohcl_base, InpOhclBullColor, InpOhclPlotHistoryLevels);
+   }
+
+   if(bearEvent && time[idx] != g_ohcl_last_signal_time)
+   {
+      if(!InpOhclKeepOld && !InpOhclPlotHistoryLevels)
+         DeleteOhclLiveLine();
+
+      g_ohcl_trend = -1;
+      g_ohcl_base = prevL;
+      g_ohcl_last_signal_time = time[idx];
+
+      double y = high[idx] + 10 * _Point;
+      CreateOhclSignalText("SELL", time[idx], y, InpOhclBearColor);
+      SendOhclSignalNotification("OHCL SELL", time[idx], g_ohcl_base);
+
+      datetime t2 = ExtendTime(time[idx], InpOhclExtendBars);
+      CreateOrUpdateOhclLine(time[idx], t2, g_ohcl_base, InpOhclBearColor, InpOhclPlotHistoryLevels);
+   }
+
+   bool neutralizeLong = (g_ohcl_trend == 1 && g_ohcl_base != 0.0 && close[idx] < (g_ohcl_base - buf));
+   bool neutralizeShort = (g_ohcl_trend == -1 && g_ohcl_base != 0.0 && close[idx] > (g_ohcl_base + buf));
+   if(neutralizeLong || neutralizeShort)
+   {
+      CreateOhclSignalText("TP", time[idx], close[idx], InpOhclNeutralColor);
+      g_ohcl_trend = 0;
+      g_ohcl_base = 0.0;
+      if(!InpOhclKeepOld && !InpOhclPlotHistoryLevels)
+         DeleteOhclLiveLine();
+   }
+
+   if(InpOhclShowLines && !InpOhclPlotHistoryLevels && g_ohcl_trend != 0 && g_ohcl_base != 0.0)
+   {
+      datetime t2 = ExtendTime(time[0], InpOhclExtendBars);
+      color clr = (g_ohcl_trend == 1) ? InpOhclBullColor : InpOhclBearColor;
+      CreateOrUpdateOhclLine(time[0], t2, g_ohcl_base, clr, false);
+   }
+}
+
 bool ComputeVpLevelsSeries(const int lookbackBars, const int rows, const int valueAreaPercent, const double &high[], const double &low[], const long &tick_volume[], double &poc, double &vah, double &val)
 {
    poc = 0.0;
@@ -1003,13 +1299,15 @@ void CreateLevel(const string side, datetime t1, datetime t2, double price, colo
       if(side == "MINUS") { DeleteObjectSafe(g_minus_obj); DeleteObjectSafe(g_minus_lbl); }
    }
 
+   color lineClr = InpCisdShowLines ? clr : (color)ColorToARGB(clr, 0);
    if(ObjectCreate(0, lineName, OBJ_TREND, 0, t1, price, t2, price))
    {
-      ObjectSetInteger(0, lineName, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, lineName, OBJPROP_COLOR, lineClr);
       ObjectSetInteger(0, lineName, OBJPROP_STYLE, InpLineStyle);
       ObjectSetInteger(0, lineName, OBJPROP_WIDTH, InpLineWidth);
       ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, false);
       ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, lineName, OBJPROP_HIDDEN, !InpCisdShowLines);
    }
 
    if(ObjectCreate(0, lblName, OBJ_TEXT, 0, t2, price))
@@ -2445,6 +2743,7 @@ int OnInit()
    g_ema_fast_h4 = iMA(_Symbol, PERIOD_H4, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);
    g_ema_slow_h4 = iMA(_Symbol, PERIOD_H4, InpHsTrendEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
    g_atr_h4 = iATR(_Symbol, PERIOD_H4, InpHsTrendAtrPeriod);
+   g_ohcl_ema_handle = iMA(_Symbol, _Period, InpOhclEmaLen, 0, MODE_EMA, PRICE_CLOSE);
    return(INIT_SUCCEEDED);
 }
 
@@ -2469,6 +2768,7 @@ void OnDeinit(const int reason)
    if(g_ema_fast_h4 != INVALID_HANDLE) IndicatorRelease(g_ema_fast_h4);
    if(g_ema_slow_h4 != INVALID_HANDLE) IndicatorRelease(g_ema_slow_h4);
    if(g_atr_h4 != INVALID_HANDLE) IndicatorRelease(g_atr_h4);
+   if(g_ohcl_ema_handle != INVALID_HANDLE) IndicatorRelease(g_ohcl_ema_handle);
    g_ema_fast_m15 = INVALID_HANDLE;
    g_ema_slow_m15 = INVALID_HANDLE;
    g_atr_m15 = INVALID_HANDLE;
@@ -2481,6 +2781,7 @@ void OnDeinit(const int reason)
    g_ema_fast_h4 = INVALID_HANDLE;
    g_ema_slow_h4 = INVALID_HANDLE;
    g_atr_h4 = INVALID_HANDLE;
+   g_ohcl_ema_handle = INVALID_HANDLE;
 }
 
 datetime VpAsiaOpenLocal(datetime nowLocal)
@@ -2544,7 +2845,7 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    {
       if(time[0] != g_sessions_last_time0)
       {
-         DrawSessions(rates_total, time, high, low);
+         DrawSessions(rates_total, time, high, low, open, close);
          g_sessions_last_time0 = time[0];
       }
    }
@@ -2611,7 +2912,15 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
       g_vp_poc_line = "";
       g_vp_vah_line = "";
       g_vp_val_line = "";
+      g_ohcl_trend = 0;
+      g_ohcl_base = 0.0;
+      g_ohcl_htf_time0 = 0;
+      g_ohcl_last_calc_time0 = 0;
+      g_ohcl_last_signal_time = 0;
+      ArrayResize(g_ohcl_hist_times, 0);
    }
+
+   ProcessOhcl(time, open, high, low, close);
 
    if(InpVpShowLines || InpVpFilterEnabled)
    {

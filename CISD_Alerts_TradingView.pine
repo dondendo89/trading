@@ -10,6 +10,7 @@ lineWidth = input.int(1, "Line Width", minval=1, maxval=5)
 lookAheadBars = input.int(5, "Line Extension Bars", minval=1, maxval=50)
 styleOption = input.string("Solid", "Line Style", options=["Solid", "Dotted", "Dashed"])
 keepLevels = input.bool(false, "Keep old CISD levels")
+cisdShowLines = input.bool(false, "Show CISD Bull/Bear lines")
 
 sendAlerts = input.bool(true, "Enable alerts", group="Alerts")
 plotHistory = input.bool(true, "Plot history", group="Alerts")
@@ -44,6 +45,26 @@ nyEndHour = input.int(23, "NY end hour", minval=0, maxval=23, group="Sessions")
 asiaColor = input.color(color.new(color.rgb(126, 170, 170), 92), "Asia color", group="Sessions")
 londonColor = input.color(color.new(color.rgb(140, 160, 200), 92), "London color", group="Sessions")
 nyColor = input.color(color.new(color.rgb(170, 145, 190), 92), "NY color", group="Sessions")
+
+ohclEnabled = input.bool(true, "Enable", group="OHCL HTF Trend Levels")
+ohclTf = input.timeframe("240", "HTF timeframe", group="OHCL HTF Trend Levels")
+ohclExtendBars = input.int(50, "Baseline extend bars", minval=1, maxval=500, group="OHCL HTF Trend Levels")
+ohclBufferTicks = input.int(0, "Break buffer (ticks)", minval=0, group="OHCL HTF Trend Levels")
+ohclResetOnNewHtf = input.bool(true, "Reset on new HTF candle", group="OHCL HTF Trend Levels")
+ohclKeepOld = input.bool(false, "Keep old levels", group="OHCL HTF Trend Levels")
+ohclShowSignals = input.bool(true, "Show BUY/SELL", group="OHCL HTF Trend Levels")
+ohclShowTp = input.bool(true, "Show TP", group="OHCL HTF Trend Levels")
+ohclConfirmOnClose = input.bool(true, "Confirm on candle close", group="OHCL HTF Trend Levels")
+ohclShowLines = input.bool(false, "Show Bull/Bear lines", group="OHCL HTF Trend Levels")
+ohclPlotHistorySignals = input.bool(true, "Plot history signals", group="OHCL HTF Trend Levels")
+ohclPlotHistoryLevels = input.bool(true, "Plot history levels", group="OHCL HTF Trend Levels")
+ohclMaxHistoryLevels = input.int(50, "Max history levels", minval=1, maxval=200, group="OHCL HTF Trend Levels")
+ohclEmaLen = input.int(50, "EMA length", minval=1, group="OHCL HTF Trend Levels")
+ohclBullColor = input.color(color.new(color.lime, 0), "Bull color", group="OHCL HTF Trend Levels")
+ohclBearColor = input.color(color.new(color.red, 0), "Bear color", group="OHCL HTF Trend Levels")
+ohclNeutralColor = input.color(color.new(color.gray, 0), "Neutral color", group="OHCL HTF Trend Levels")
+ohclLineWidth = input.int(2, "Line width", minval=1, maxval=5, group="OHCL HTF Trend Levels")
+ohclLineStyleOpt = input.string("Solid", "Line style", options=["Solid", "Dotted", "Dashed"], group="OHCL HTF Trend Levels")
 
 enableHs = input.bool(true, "Enable Hammer/Shooting", group="Hammer/Shooting")
 fibLevel = input.float(0.382, "Fibonacci Level", options=[0.236, 0.382, 0.5], group="Hammer/Shooting")
@@ -87,7 +108,7 @@ hsTrendEmaFast = input.int(10, "EMA fast", minval=1, group="Trend Filter")
 hsTrendEmaSlow = input.int(60, "EMA slow", minval=2, group="Trend Filter")
 hsTrendAtrPeriod = input.int(14, "ATR period", minval=1, group="Trend Filter")
 hsTrendAtrMult = input.float(0.5, "ATR mult", minval=0.0, step=0.1, group="Trend Filter")
-showEma = input.bool(true, "Show EMA", group="Trend Filter")
+showEma = input.bool(false, "Show EMA", group="Trend Filter")
 emaFastColor = input.color(color.new(color.lime, 0), "EMA fast color", group="Trend Filter")
 emaSlowColor = input.color(color.new(color.orange, 0), "EMA slow color", group="Trend Filter")
 emaTouchTagEnabled = input.bool(true, "EMA touch tag", group="Trend Filter")
@@ -119,11 +140,105 @@ structureLineWidth = input.int(2, "Structure line width", minval=1, maxval=4, gr
 stZigzagDeviation = input.float(5.0, "Price deviation for reversals (%)", minval=0.00001, maxval=100.0, step=0.5, group="Structure")
 
 lineStyle = styleOption == "Dotted" ? line.style_dotted : styleOption == "Dashed" ? line.style_dashed : line.style_solid
+cisdBullLineColor = cisdShowLines ? bullishBreakColor : color.new(bullishBreakColor, 100)
+cisdBearLineColor = cisdShowLines ? bearishBreakColor : color.new(bearishBreakColor, 100)
 
 emaFastPlot = ta.ema(close, hsTrendEmaFast)
 emaSlowPlot = ta.ema(close, hsTrendEmaSlow)
 plot(showEma ? emaFastPlot : na, "EMA Fast", color=emaFastColor, linewidth=2)
 plot(showEma ? emaSlowPlot : na, "EMA Slow", color=emaSlowColor, linewidth=2)
+
+ohclLineStyle = ohclLineStyleOpt == "Dotted" ? line.style_dotted : ohclLineStyleOpt == "Dashed" ? line.style_dashed : line.style_solid
+ohclBullLineColor = ohclShowLines ? ohclBullColor : color.new(ohclBullColor, 100)
+ohclBearLineColor = ohclShowLines ? ohclBearColor : color.new(ohclBearColor, 100)
+
+f_ohcl_levels() =>
+    [open, high, low, close, time]
+
+[ohclO, ohclH, ohclL, ohclC, ohclT] = request.security(syminfo.tickerid, ohclTf, f_ohcl_levels(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+ohclPrevH = ohclH[1]
+ohclPrevL = ohclL[1]
+ohclBuf = ohclBufferTicks * syminfo.mintick
+ohclNewHtf = ohclT != ohclT[1]
+
+ohclEma = ta.ema(close, ohclEmaLen)
+var int ohclTrend = 0
+var float ohclBase = na
+var line ohclBaseLine = na
+var line[] ohclHistLines = array.new_line()
+
+ohclBarOk = (not ohclConfirmOnClose) or barstate.isconfirmed
+ohclBullConfirm = ohclEnabled and ohclBarOk and not na(ohclPrevH) and close > (ohclPrevH + ohclBuf) and close > open and close > ohclEma
+ohclBearConfirm = ohclEnabled and ohclBarOk and not na(ohclPrevL) and close < (ohclPrevL - ohclBuf) and close < open and close < ohclEma
+ohclBullEvent = ohclBullConfirm and ohclTrend != 1
+ohclBearEvent = ohclBearConfirm and ohclTrend != -1
+
+if ohclEnabled and ohclResetOnNewHtf and ohclNewHtf
+    ohclTrend := 0
+    ohclBase := na
+    if not ohclKeepOld
+        if not na(ohclBaseLine)
+            line.delete(ohclBaseLine)
+            ohclBaseLine := na
+
+if ohclBullEvent
+    if not ohclKeepOld and not ohclPlotHistoryLevels
+        if not na(ohclBaseLine)
+            line.delete(ohclBaseLine)
+            ohclBaseLine := na
+    ohclTrend := 1
+    ohclBase := ohclPrevH
+    x1 = bar_index
+    x2 = bar_index + ohclExtendBars
+    if ohclPlotHistoryLevels
+        ln = line.new(x1, ohclBase, x2, ohclBase, color=ohclBullLineColor, width=ohclLineWidth, style=ohclLineStyle)
+        array.push(ohclHistLines, ln)
+        if array.size(ohclHistLines) > ohclMaxHistoryLevels
+            oldLn = array.shift(ohclHistLines)
+            line.delete(oldLn)
+    else
+        ohclBaseLine := line.new(x1, ohclBase, x2, ohclBase, color=ohclBullLineColor, width=ohclLineWidth, style=ohclLineStyle)
+
+if ohclBearEvent
+    if not ohclKeepOld and not ohclPlotHistoryLevels
+        if not na(ohclBaseLine)
+            line.delete(ohclBaseLine)
+            ohclBaseLine := na
+    ohclTrend := -1
+    ohclBase := ohclPrevL
+    x1 = bar_index
+    x2 = bar_index + ohclExtendBars
+    if ohclPlotHistoryLevels
+        ln = line.new(x1, ohclBase, x2, ohclBase, color=ohclBearLineColor, width=ohclLineWidth, style=ohclLineStyle)
+        array.push(ohclHistLines, ln)
+        if array.size(ohclHistLines) > ohclMaxHistoryLevels
+            oldLn = array.shift(ohclHistLines)
+            line.delete(oldLn)
+    else
+        ohclBaseLine := line.new(x1, ohclBase, x2, ohclBase, color=ohclBearLineColor, width=ohclLineWidth, style=ohclLineStyle)
+
+ohclNeutralizeLong = ohclEnabled and ohclBarOk and ohclTrend == 1 and not na(ohclBase) and close < (ohclBase - ohclBuf)
+ohclNeutralizeShort = ohclEnabled and ohclBarOk and ohclTrend == -1 and not na(ohclBase) and close > (ohclBase + ohclBuf)
+ohclTpEvent = (ohclNeutralizeLong or ohclNeutralizeShort)
+if ohclNeutralizeLong or ohclNeutralizeShort
+    ohclTrend := 0
+    ohclBase := na
+    if not ohclKeepOld and not ohclPlotHistoryLevels
+        if not na(ohclBaseLine)
+            line.delete(ohclBaseLine)
+            ohclBaseLine := na
+
+if ohclEnabled and not ohclPlotHistoryLevels and ohclTrend != 0 and not na(ohclBaseLine) and not na(ohclBase)
+    line.set_xy1(ohclBaseLine, bar_index, ohclBase)
+    line.set_xy2(ohclBaseLine, bar_index + ohclExtendBars, ohclBase)
+
+ohclEmaColor = ohclTrend == 1 ? ohclBullColor : ohclTrend == -1 ? ohclBearColor : ohclNeutralColor
+plot(ohclEnabled ? ohclEma : na, "OHCL EMA", color=ohclEmaColor, linewidth=2)
+
+plotshape(ohclShowSignals and ohclPlotHistorySignals and ohclBullEvent, title="OHCL BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=ohclBullColor, textcolor=color.white, size=size.tiny)
+plotshape(ohclShowSignals and ohclPlotHistorySignals and ohclBearEvent, title="OHCL SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=ohclBearColor, textcolor=color.white, size=size.tiny)
+if ohclShowTp and ohclPlotHistorySignals and ohclTpEvent
+    label.new(x=bar_index, y=close, text="TP", style=label.style_label_left, textcolor=ohclNeutralColor, color=color.new(color.white, 100), size=size.tiny)
 
 f_body_touches_ema(_o, _c, _ema1, _ema2) =>
     tol = emaTouchTolTicks * syminfo.mintick
@@ -187,14 +302,14 @@ if low < currentStructure.bottomPrice
     if isBearishPullback and (bar_index - bullishBreakIndex != 0)
         currentStructure.topPrice := math.max(high[bar_index - bullishBreakIndex], high[bar_index - bullishBreakIndex + 1])
         isBearishPullback := false
-        bearishLine = line.new(bullishBreakIndex, potentialTopPrice, bar_index + lookAheadBars, potentialTopPrice, color=bullishBreakColor, width=lineWidth, style=lineStyle)
+        bearishLine = line.new(bullishBreakIndex, potentialTopPrice, bar_index + lookAheadBars, potentialTopPrice, color=cisdBullLineColor, width=lineWidth, style=lineStyle)
         bearishLabel = label.new(bar_index + lookAheadBars, potentialTopPrice, bullStr, color=color.new(color.white, 100), textcolor=bullishBreakColor, style=label.style_label_left, size=size.small)
         b = cisd.new(bearishLine, bearishLabel, false)
         cisdLevelsBe.push(b)
     else if close[1] > open[1] and close < open
         currentStructure.topPrice := high[1]
         isBearishPullback := false
-        bearishLine = line.new(bullishBreakIndex, potentialTopPrice, bar_index + lookAheadBars, potentialTopPrice, color=bullishBreakColor, width=lineWidth, style=lineStyle)
+        bearishLine = line.new(bullishBreakIndex, potentialTopPrice, bar_index + lookAheadBars, potentialTopPrice, color=cisdBullLineColor, width=lineWidth, style=lineStyle)
         bearishLabel = label.new(bar_index + lookAheadBars, potentialTopPrice, bullStr, color=color.new(color.white, 100), textcolor=bullishBreakColor, style=label.style_label_left, size=size.small)
         b = cisd.new(bearishLine, bearishLabel, false)
         cisdLevelsBe.push(b)
@@ -205,14 +320,14 @@ if high > currentStructure.topPrice
     if isBullishPullback and (bar_index - bearishBreakIndex != 0)
         currentStructure.bottomPrice := math.min(low[bar_index - bearishBreakIndex], low[bar_index - bearishBreakIndex + 1])
         isBullishPullback := false
-        bullishLine = line.new(bearishBreakIndex, potentialBottomPrice, bar_index + lookAheadBars, potentialBottomPrice, color=bearishBreakColor, width=lineWidth, style=lineStyle)
+        bullishLine = line.new(bearishBreakIndex, potentialBottomPrice, bar_index + lookAheadBars, potentialBottomPrice, color=cisdBearLineColor, width=lineWidth, style=lineStyle)
         bullishLabel = label.new(bar_index + lookAheadBars, potentialBottomPrice, bearStr, color=color.new(color.white, 100), textcolor=bearishBreakColor, style=label.style_label_left, size=size.small)
         bu = cisd.new(bullishLine, bullishLabel, false)
         cisdLevelsBu.push(bu)
     else if close[1] < open[1] and close > open
         currentStructure.bottomPrice := low[1]
         isBullishPullback := false
-        bullishLine = line.new(bearishBreakIndex, potentialBottomPrice, bar_index + lookAheadBars, potentialBottomPrice, color=bearishBreakColor, width=lineWidth, style=lineStyle)
+        bullishLine = line.new(bearishBreakIndex, potentialBottomPrice, bar_index + lookAheadBars, potentialBottomPrice, color=cisdBearLineColor, width=lineWidth, style=lineStyle)
         bullishLabel = label.new(bar_index + lookAheadBars, potentialBottomPrice, bearStr, color=color.new(color.white, 100), textcolor=bearishBreakColor, style=label.style_label_left, size=size.small)
         bu = cisd.new(bullishLine, bullishLabel, false)
         cisdLevelsBu.push(bu)
@@ -802,9 +917,9 @@ sessM = minute(time, sessTz)
 f_in_session(_startH, _endH) =>
     _startH < _endH ? (sessH >= _startH and sessH < _endH) : (sessH >= _startH or sessH < _endH)
 
-inAsia = showSessionBoxes and f_in_session(asiaStartHour, asiaEndHour)
-inLondon = showSessionBoxes and f_in_session(londonStartHour, londonEndHour)
-inNy = showSessionBoxes and f_in_session(nyStartHour, nyEndHour)
+inAsia = f_in_session(asiaStartHour, asiaEndHour)
+inLondon = f_in_session(londonStartHour, londonEndHour)
+inNy = f_in_session(nyStartHour, nyEndHour)
 
 var box asiaBox = na
 var box londonBox = na
@@ -824,6 +939,10 @@ var float nyLo = na
 var bool prevAsia = false
 var bool prevLondon = false
 var bool prevNy = false
+
+inAsia := showSessionBoxes and inAsia
+inLondon := showSessionBoxes and inLondon
+inNy := showSessionBoxes and inNy
 
 if showSessionBoxes
     if inAsia and not prevAsia

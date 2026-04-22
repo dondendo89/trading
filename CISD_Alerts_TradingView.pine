@@ -71,6 +71,8 @@ capitalTzInput = input.string("Europe/Rome", "Timezone", group="Configurazione C
 capitalIbHour = input.int(9, "IB hour (H1)", minval=0, maxval=23, group="Configurazione Capital")
 capitalSignalTf = input.timeframe("15", "Signal TF", group="Configurazione Capital")
 capitalConfirmOnClose = input.bool(true, "Confirm on candle close", group="Configurazione Capital")
+capitalConfirmWithDxy = input.bool(false, "Conferma con DXY (DXY giù=BUY, su=SELL)", group="Configurazione Capital")
+capitalDxySymbol = input.string("DXY.cash", "DXY Symbol (Capital)", group="Configurazione Capital")
 capitalNyStartHour = input.int(15, "NY start hour", minval=0, maxval=23, group="Configurazione Capital")
 capitalNyStartMinute = input.int(0, "NY start minute", minval=0, maxval=59, group="Configurazione Capital")
 capitalNyEndHour = input.int(16, "NY end hour", minval=0, maxval=23, group="Configurazione Capital")
@@ -338,10 +340,21 @@ f_cap_sig() =>
 capSig = request.security(syminfo.tickerid, capitalSignalTf, f_cap_sig(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 capSigNew = showCapitalSignals and capSig != 0 and capSig != capSig[1]
 
-plotshape(capSigNew and capSig == 2, title="BUY Capital NY", style=shape.labelup, location=location.belowbar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="BUY Capital NY")
-plotshape(capSigNew and capSig == 1, title="BUY Capital", style=shape.labelup, location=location.belowbar, color=color.lime, textcolor=color.white, size=size.tiny, text="BUY Capital")
-plotshape(capSigNew and capSig == -2, title="SELL Capital NY", style=shape.labeldown, location=location.abovebar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="SELL Capital NY")
-plotshape(capSigNew and capSig == -1, title="SELL Capital", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny, text="SELL Capital")
+capDxyC = request.security(capitalDxySymbol, capitalSignalTf, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+capDxyDown = capDxyC < capDxyC[1]
+capDxyUp = capDxyC > capDxyC[1]
+capBuyDxyOk = (not capitalConfirmWithDxy) or capDxyDown
+capSellDxyOk = (not capitalConfirmWithDxy) or capDxyUp
+
+plotshape(not capitalConfirmWithDxy and capSigNew and capSig == 2, title="BUY Capital NY", style=shape.labelup, location=location.belowbar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="BUY Capital NY")
+plotshape(not capitalConfirmWithDxy and capSigNew and capSig == 1, title="BUY Capital", style=shape.labelup, location=location.belowbar, color=color.lime, textcolor=color.white, size=size.tiny, text="BUY Capital")
+plotshape(not capitalConfirmWithDxy and capSigNew and capSig == -2, title="SELL Capital NY", style=shape.labeldown, location=location.abovebar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="SELL Capital NY")
+plotshape(not capitalConfirmWithDxy and capSigNew and capSig == -1, title="SELL Capital", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny, text="SELL Capital")
+
+plotshape(capitalConfirmWithDxy and capBuyDxyOk and capSigNew and capSig == 2, title="BUY Capital NY Confermato", style=shape.labelup, location=location.belowbar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="BUY Capital NY Confermato")
+plotshape(capitalConfirmWithDxy and capBuyDxyOk and capSigNew and capSig == 1, title="BUY Capital Confermato", style=shape.labelup, location=location.belowbar, color=color.lime, textcolor=color.white, size=size.tiny, text="BUY Capital Confermato")
+plotshape(capitalConfirmWithDxy and capSellDxyOk and capSigNew and capSig == -2, title="SELL Capital NY Confermato", style=shape.labeldown, location=location.abovebar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="SELL Capital NY Confermato")
+plotshape(capitalConfirmWithDxy and capSellDxyOk and capSigNew and capSig == -1, title="SELL Capital Confermato", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny, text="SELL Capital Confermato")
 
 f_body_touches_ema(_o, _c, _ema1, _ema2) =>
     tol = emaTouchTolTicks * syminfo.mintick

@@ -28,6 +28,9 @@ input bool InpMaxOneTradePerDay = false;
 input bool InpSpreadFilterEnabled = false;
 input int InpMaxSpreadPoints = 50;
 
+input bool InpDxyConfirmEnabled = false;
+input string InpDxySymbol = "DXY.cash";
+
 input bool InpPartialEnabled = false;
 input double InpPartialPercent = 50.0;
 input double InpPartialTpMult = 0.5;
@@ -80,6 +83,22 @@ string TimeToStringLocal(const datetime tServer, const int offsetHours)
 {
    datetime tLocal = tServer + (datetime)offsetHours * 3600;
    return TimeToString(tLocal, TIME_DATE|TIME_MINUTES);
+}
+
+bool GetDxyDirectionAtBar(const datetime tBarOpen, const ENUM_TIMEFRAMES tf, bool &dxyDown, bool &dxyUp)
+{
+   dxyDown = false;
+   dxyUp = false;
+   if(InpDxySymbol == "") return false;
+   ENUM_TIMEFRAMES n = NormalizeTf(tf);
+   int shift = iBarShift(InpDxySymbol, n, tBarOpen, true);
+   if(shift < 0) return false;
+   double c1 = iClose(InpDxySymbol, n, shift);
+   double c2 = iClose(InpDxySymbol, n, shift + 1);
+   if(c1 == 0.0 && c2 == 0.0) return false;
+   dxyDown = (c1 < c2);
+   dxyUp = (c1 > c2);
+   return true;
 }
 
 bool InLocalWindow(const datetime tServer, const int offsetHours, const int h1, const int m1, const int h2, const int m2)
@@ -328,6 +347,8 @@ void OnTick()
             " onlyNY=", (InpTradeOnlyInNy ? "true" : "false"));
       if(InpPartialEnabled && InpUseTakeProfit && InpTakeProfitMult <= InpPartialTpMult)
          Print("Capital note: TakeProfitMult <= PartialTpMult (TP finale coincide/sta prima del parziale). TPmult=", InpTakeProfitMult, " PartialMult=", InpPartialTpMult);
+      if(InpDxyConfirmEnabled)
+         Print("Capital DXY confirm enabled: symbol=", InpDxySymbol, " rule=(DXY down=BUY, up=SELL)");
       g_last_ib_print_day_key = dayKey;
    }
 
@@ -379,6 +400,18 @@ void OnTick()
 
    bool buy = volOk && aboveMid && (breakUp || (!InpOnlyExpansion && sweepIbl));
    bool sell = volOk && belowMid && (breakDn || (!InpOnlyExpansion && sweepIbh));
+
+   if(InpDxyConfirmEnabled)
+   {
+      bool dxyDown = false, dxyUp = false;
+      if(!GetDxyDirectionAtBar(prevBarOpen, sigTf, dxyDown, dxyUp))
+      {
+         g_last_signal_bar_time = prevBarOpen;
+         return;
+      }
+      if(buy && !dxyDown) buy = false;
+      if(sell && !dxyUp) sell = false;
+   }
 
    if(!buy && !sell) { g_last_signal_bar_time = prevBarOpen; return; }
 

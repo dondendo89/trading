@@ -85,13 +85,15 @@ string TimeToStringLocal(const datetime tServer, const int offsetHours)
    return TimeToString(tLocal, TIME_DATE|TIME_MINUTES);
 }
 
-bool GetDxyDirectionAtBar(const datetime tBarOpen, const ENUM_TIMEFRAMES tf, bool &dxyDown, bool &dxyUp)
+bool GetDxyDirectionAtTime(const datetime tServer, const ENUM_TIMEFRAMES tf, bool &dxyDown, bool &dxyUp)
 {
    dxyDown = false;
    dxyUp = false;
    if(InpDxySymbol == "") return false;
    ENUM_TIMEFRAMES n = NormalizeTf(tf);
-   int shift = iBarShift(InpDxySymbol, n, tBarOpen, true);
+   datetime t = tServer;
+   if(t > 0) t -= 1;
+   int shift = iBarShift(InpDxySymbol, n, t, false);
    if(shift < 0) return false;
    double c1 = iClose(InpDxySymbol, n, shift);
    double c2 = iClose(InpDxySymbol, n, shift + 1);
@@ -404,7 +406,7 @@ void OnTick()
    if(InpDxyConfirmEnabled)
    {
       bool dxyDown = false, dxyUp = false;
-      if(!GetDxyDirectionAtBar(prevBarOpen, sigTf, dxyDown, dxyUp))
+      if(!GetDxyDirectionAtTime(prevClose, sigTf, dxyDown, dxyUp))
       {
          g_last_signal_bar_time = prevBarOpen;
          return;

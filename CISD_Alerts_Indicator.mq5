@@ -1119,12 +1119,14 @@ double AvgTickVolTf(const ENUM_TIMEFRAMES tf, const int startShift, const int le
    return (copied > 0) ? (sum / (double)copied) : 0.0;
 }
 
-bool GetDxyDirectionAtBar(const string dxySymbol, const ENUM_TIMEFRAMES tf, const datetime tBarOpen, bool &dxyDown, bool &dxyUp)
+bool GetDxyDirectionAtTime(const string dxySymbol, const ENUM_TIMEFRAMES tf, const datetime tServer, bool &dxyDown, bool &dxyUp)
 {
    dxyDown = false;
    dxyUp = false;
    if(dxySymbol == "") return false;
-   int shift = iBarShift(dxySymbol, tf, tBarOpen, true);
+   datetime t = tServer;
+   if(t > 0) t -= 1;
+   int shift = iBarShift(dxySymbol, tf, t, false);
    if(shift < 0) return false;
    double c1 = iClose(dxySymbol, tf, shift);
    double c2 = iClose(dxySymbol, tf, shift + 1);
@@ -1212,7 +1214,7 @@ void ProcessCapital(const datetime nowServer)
    if(InpCapConfirmWithDxy)
    {
       bool dxyDown = false, dxyUp = false;
-      if(!GetDxyDirectionAtBar(InpDxySymbol, InpCapSignalTf, tBar, dxyDown, dxyUp))
+      if(!GetDxyDirectionAtTime(InpDxySymbol, InpCapSignalTf, tClose, dxyDown, dxyUp))
       {
          if(InpCapConfirmOnClose) g_cap_last_signal_time = tBar;
          return;
@@ -1240,6 +1242,7 @@ void ProcessCapital(const datetime nowServer)
 void BackfillCapital()
 {
    if(!InpCapEnabled) return;
+   DeleteObjectsByPrefix(g_prefix + "CAP_");
    int bars = InpCapHistoryBars;
    if(bars < 50) bars = 50;
 
@@ -1320,7 +1323,7 @@ void BackfillCapital()
       if(InpCapConfirmWithDxy)
       {
          bool dxyDown = false, dxyUp = false;
-         if(!GetDxyDirectionAtBar(InpDxySymbol, InpCapSignalTf, tBar, dxyDown, dxyUp)) continue;
+         if(!GetDxyDirectionAtTime(InpDxySymbol, InpCapSignalTf, tClose, dxyDown, dxyUp)) continue;
          if(buy && !dxyDown) buy = false;
          if(sell && !dxyUp) sell = false;
          if(!buy && !sell) continue;
@@ -3201,6 +3204,9 @@ int OnInit()
 {
    if(InpConfirmWithDxy && InpDxySymbol != "")
       SymbolSelect(InpDxySymbol, true);
+   if(InpCapConfirmWithDxy && InpDxySymbol != "")
+      SymbolSelect(InpDxySymbol, true);
+   DeleteObjectsByPrefix(g_prefix + "CAP_");
    g_alerts_armed = !InpSuppressAlertsOnLoad;
    g_last_time0 = 0;
    g_ema_fast_handle = iMA(_Symbol, _Period, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);

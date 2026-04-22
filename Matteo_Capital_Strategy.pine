@@ -1,0 +1,92 @@
+//@version=6
+strategy("Matteo Capital (IB + 50% Bias) Strategy", overlay=true, process_orders_on_close=true, pyramiding=0, max_labels_count=500, max_lines_count=500)
+
+capTz = input.string("Europe/Rome", "Timezone", group="Matteo Capital")
+capIbHour = input.int(9, "IB hour (H1)", minval=0, maxval=23, group="Matteo Capital")
+capSignalTf = input.timeframe("15", "Signal TF", group="Matteo Capital")
+capConfirmOnClose = input.bool(true, "Confirm on candle close", group="Matteo Capital")
+
+capNyStartHour = input.int(15, "NY start hour", minval=0, maxval=23, group="Matteo Capital")
+capNyStartMinute = input.int(0, "NY start minute", minval=0, maxval=59, group="Matteo Capital")
+capNyEndHour = input.int(16, "NY end hour", minval=0, maxval=23, group="Matteo Capital")
+capNyEndMinute = input.int(30, "NY end minute", minval=0, maxval=59, group="Matteo Capital")
+capTradeOnlyInNy = input.bool(true, "Trade only in NY window", group="Matteo Capital")
+
+capVolFilterEnabled = input.bool(true, "Volume filter", group="Matteo Capital")
+capVolMaLen = input.int(20, "Volume MA len", minval=1, group="Matteo Capital")
+capVolMinMult = input.float(0.7, "Volume min mult", minval=0.0, step=0.1, group="Matteo Capital")
+
+capShowLevels = input.bool(true, "Show IB/Mid/TP levels", group="Matteo Capital")
+capMidColor = input.color(color.new(color.blue, 0), "Mid color", group="Matteo Capital")
+capLevelColor = input.color(color.new(color.gray, 50), "IB/TP color", group="Matteo Capital")
+
+f_ib_pack() =>
+    isIbH1 = hour(time, capTz) == capIbHour and minute(time, capTz) == 0
+    [isIbH1 ? high : na, isIbH1 ? low : na, isIbH1 ? time_close : na]
+
+[ibH_raw, ibL_raw, ibT_raw] = request.security(syminfo.tickerid, "60", f_ib_pack(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+ibH = ta.valuewhen(not na(ibH_raw), ibH_raw, 0)
+ibL = ta.valuewhen(not na(ibL_raw), ibL_raw, 0)
+ibT = ta.valuewhen(not na(ibT_raw), ibT_raw, 0)
+
+dayKeyNow = year(time, capTz) * 10000 + month(time, capTz) * 100 + dayofmonth(time, capTz)
+dayKeyIb = not na(ibT) ? (year(ibT, capTz) * 10000 + month(ibT, capTz) * 100 + dayofmonth(ibT, capTz)) : na
+ibReady = not na(ibH) and not na(ibL) and dayKeyIb == dayKeyNow and ibH > ibL
+
+ibRange = ibReady ? (ibH - ibL) : na
+mid = ibReady ? ((ibH + ibL) / 2.0) : na
+
+nyWin = str.format("{0,number,00}{1,number,00}-{2,number,00}{3,number,00}", capNyStartHour, capNyStartMinute, capNyEndHour, capNyEndMinute)
+
+f_cap_sig() =>
+    if not ibReady
+        0
+    else
+        confOk = not capConfirmOnClose or barstate.isconfirmed
+        volMa = ta.sma(volume, capVolMaLen)
+        volOk = not capVolFilterEnabled or (not na(volMa) and volume >= volMa * capVolMinMult)
+        aboveMid = close > mid
+        belowMid = close < mid
+        bodyMin = math.min(open, close)
+        bodyMax = math.max(open, close)
+        prevBodyMin = math.min(open[1], close[1])
+        prevBodyMax = math.max(open[1], close[1])
+        breakUp = bodyMin > ibH and prevBodyMin <= ibH
+        breakDn = bodyMax < ibL and prevBodyMax >= ibL
+        sweepIbl = low < ibL and close > ibL
+        sweepIbh = high > ibH and close < ibH
+        buy = confOk and volOk and aboveMid and (breakUp or sweepIbl)
+        sell = confOk and volOk and belowMid and (breakDn or sweepIbh)
+        inNy = not na(time(timeframe.period, nyWin, capTz))
+        buyNy = buy and inNy and breakUp
+        sellNy = sell and inNy and breakDn
+        buyNy ? 2 : buy ? 1 : sellNy ? -2 : sell ? -1 : 0
+
+sig = request.security(syminfo.tickerid, capSignalTf, f_cap_sig(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+newSig = sig != 0 and sig != sig[1]
+inNyChart = not na(time(timeframe.period, nyWin, capTz))
+tradeOk = ibReady and (not capTradeOnlyInNy or inNyChart)
+
+if tradeOk and newSig and sig > 0
+    strategy.entry("CAP", strategy.long)
+
+if tradeOk and newSig and sig < 0
+    strategy.entry("CAP", strategy.short)
+
+if capShowLevels and ibReady
+    plot(mid, "Mid (50%)", color=capMidColor, linewidth=1, style=plot.style_linebr)
+    plot(ibH, "IBH", color=capLevelColor, linewidth=1, style=plot.style_linebr)
+    plot(ibL, "IBL", color=capLevelColor, linewidth=1, style=plot.style_linebr)
+    tp1Up = ibH + 0.5 * ibRange
+    tp2Up = ibH + 1.0 * ibRange
+    tp1Dn = ibL - 0.5 * ibRange
+    tp2Dn = ibL - 1.0 * ibRange
+    plot(tp1Up, "TP1 Up (0.5x)", color=capLevelColor, linewidth=1, style=plot.style_linebr)
+    plot(tp2Up, "TP2 Up (1.0x)", color=capLevelColor, linewidth=1, style=plot.style_linebr)
+    plot(tp1Dn, "TP1 Dn (0.5x)", color=capLevelColor, linewidth=1, style=plot.style_linebr)
+    plot(tp2Dn, "TP2 Dn (1.0x)", color=capLevelColor, linewidth=1, style=plot.style_linebr)
+
+plotshape(newSig and sig == 2, title="BUY Capital NY", style=shape.labelup, location=location.belowbar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="BUY Capital NY")
+plotshape(newSig and sig == 1, title="BUY Capital", style=shape.labelup, location=location.belowbar, color=color.lime, textcolor=color.white, size=size.tiny, text="BUY Capital")
+plotshape(newSig and sig == -2, title="SELL Capital NY", style=shape.labeldown, location=location.abovebar, color=color.fuchsia, textcolor=color.white, size=size.tiny, text="SELL Capital NY")
+plotshape(newSig and sig == -1, title="SELL Capital", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny, text="SELL Capital")

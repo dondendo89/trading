@@ -1,0 +1,170 @@
+//@version=5
+indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500)
+
+// --- INPUT ---
+showSessions = input.bool(true, "Mostra Box Sessioni (Asia, London, NY)")
+showDailyHL  = input.bool(true, "Mostra Daily High/Low")
+showNYOpen   = input.bool(true, "Mostra NY Open (14:30)")
+showA2NRange = input.bool(true, "Mostra Range 02:00→NY (Max/Min)")
+
+// --- CONFIGURAZIONE ORARI (Roma) ---
+tz = "Europe/Rome"
+
+// --- 1. DAILY OPEN, HIGH, LOW ---
+is_0000 = hour(time, tz) == 0 and minute(time, tz) == 0
+var float dHigh = na
+var float dLow = na
+var float dailyOpen = na
+
+if is_0000
+    dailyOpen := open
+    dHigh := high
+    dLow := low
+else
+    dHigh := math.max(dHigh, high)
+    dLow := math.min(dLow, low)
+
+plot(dailyOpen, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
+plot(showDailyHL ? dHigh : na, "Daily High", color.white, 1, plot.style_linebr)
+plot(showDailyHL ? dLow : na, "Daily Low", color.white, 1, plot.style_linebr)
+
+var label dHighLbl = na
+var label dLowLbl = na
+if showDailyHL and not na(dHigh) and not na(dLow)
+    if na(dHighLbl)
+        dHighLbl := label.new(bar_index, dHigh, "Daily High", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
+    else
+        label.set_x(dHighLbl, bar_index)
+        label.set_y(dHighLbl, dHigh)
+    if na(dLowLbl)
+        dLowLbl := label.new(bar_index, dLow, "Daily Low", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
+    else
+        label.set_x(dLowLbl, bar_index)
+        label.set_y(dLowLbl, dLow)
+else
+    if not na(dHighLbl)
+        label.delete(dHighLbl)
+        dHighLbl := na
+    if not na(dLowLbl)
+        label.delete(dLowLbl)
+        dLowLbl := na
+
+// --- 2. NY OPEN (14:30) ---
+is_ny_open = hour(time, tz) == 14 and minute(time, tz) == 30
+var float nyOpenPrice = na
+if is_ny_open
+    nyOpenPrice := open
+
+plot(showNYOpen ? nyOpenPrice : na, "NY Open Line", color.blue, 2, plot.style_linebr)
+
+var label nyOpenLbl = na
+if showNYOpen and not na(nyOpenPrice)
+    if na(nyOpenLbl)
+        nyOpenLbl := label.new(bar_index, nyOpenPrice, "NY Open", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
+    else
+        label.set_x(nyOpenLbl, bar_index)
+        label.set_y(nyOpenLbl, nyOpenPrice)
+else
+    if not na(nyOpenLbl)
+        label.delete(nyOpenLbl)
+        nyOpenLbl := na
+
+// --- 3. FUNZIONE BOX SESSIONI ---
+var box asiaBox = na, var box londonBox = na, var box nyBox = na
+var label asiaLab = na, var label londonLab = na, var label nyLab = na
+var float aHigh = na, var float aLow = na
+var float lHigh = na, var float lLow = na
+var float nHigh = na, var float nLow = na
+
+draw_session(sess_time, sess_name, sess_color, sBox, sLab, sHigh, sLow) =>
+    t = time(timeframe.period, sess_time, tz)
+    isIn = not na(t)
+    isFirst = isIn and na(t[1])
+    resHigh = sHigh, resLow = sLow, resBox = sBox, resLab = sLab
+    if isFirst
+        resHigh := high
+        resLow := low
+        resBox := box.new(left=bar_index, top=resHigh, right=bar_index, bottom=resLow, bgcolor=color.new(sess_color, 92), border_color=color.new(sess_color, 100), border_width=0)
+        if showSessions
+            resLab := label.new(bar_index, high, sess_name, color=sess_color, textcolor=color.white, style=label.style_label_down, size=size.small)
+    else if isIn
+        resHigh := math.max(nz(resHigh, high), high)
+        resLow := math.min(nz(resLow, low), low)
+        box.set_top(resBox, resHigh)
+        box.set_bottom(resBox, resLow)
+        box.set_right(resBox, bar_index)
+        label.set_x(resLab, bar_index)
+        label.set_y(resLab, resHigh)
+    [resBox, resLab, resHigh, resLow]
+
+if showSessions
+    [b1, l1, h1, lw1] = draw_session("0000-0800", "ASIA", color.green, asiaBox, asiaLab, aHigh, aLow)
+    asiaBox := b1, asiaLab := l1, aHigh := h1, aLow := lw1
+    [b2, l2, h2, lw2] = draw_session("0900-1730", "LONDON", color.blue, londonBox, londonLab, lHigh, lLow)
+    londonBox := b2, londonLab := l2, lHigh := h2, lLow := lw2
+    [b3, l3, h3, lw3] = draw_session("1430-2100", "NY", color.orange, nyBox, nyLab, nHigh, nLow)
+    nyBox := b3, nyLab := l3, nHigh := h3, nLow := lw3
+
+// --- 4. INITIAL BALANCE (09:00 - 10:00) ---
+isInIB = not na(time(timeframe.period, "0900-1000", tz))
+var float ibH = na
+var float ibL = na
+if isInIB
+    if not isInIB[1]
+        ibH := high
+        ibL := low
+    else
+        ibH := math.max(ibH, high)
+        ibL := math.min(ibL, low)
+ibMid = (ibH + ibL) / 2
+plot(ibH, "IB High", color.new(color.blue, 40), 1, plot.style_linebr)
+plot(ibL, "IB Low", color.new(color.blue, 40), 1, plot.style_linebr)
+
+// --- 5. SETUP 13:00 (LINEE ARANCIONI - START DALLE 13:00) ---
+is_1300_range = not na(time(timeframe.period, "1300-1400", tz))
+var float orangeH = na
+var float orangeL = na
+
+if is_1300_range
+    if not is_1300_range[1]
+        orangeH := high
+        orangeL := low
+    else
+        orangeH := math.max(orangeH, high)
+        orangeL := math.min(orangeL, low)
+
+// Modifica: ora le linee partono dalle 13:00 (appena iniziano a esistere)
+plot(hour(time, tz) >= 13 ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
+plot(hour(time, tz) >= 13 ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
+
+is_0200 = hour(time, tz) == 2 and minute(time, tz) == 0
+var float a2nH = na
+var float a2nL = na
+if is_0000
+    a2nH := na
+    a2nL := na
+if is_0200
+    a2nH := high
+    a2nL := low
+
+plot(showA2NRange and hour(time, tz) >= 2 ? a2nH : na, "A2N High", color.green, 2, plot.style_linebr)
+plot(showA2NRange and hour(time, tz) >= 2 ? a2nL : na, "A2N Low", color.green, 2, plot.style_linebr)
+
+// --- 6. LOGICA SEGNALI ---
+isKill = not na(time(timeframe.period, "1430-1630", tz))
+var bool bDone = false
+var bool sDone = false
+if is_0000
+    bDone := false
+    sDone := false
+
+validB = close > orangeH and close > ibMid and isKill and not bDone
+validS = close < orangeL and close < ibMid and isKill and not sDone
+
+if validB
+    bDone := true
+if validS
+    sDone := true
+
+plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY")
+plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")

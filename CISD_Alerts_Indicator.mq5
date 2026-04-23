@@ -177,7 +177,6 @@ input int InpCapTzOffsetHours = 1;
 input int InpCapIbHour = 9;
 input ENUM_TIMEFRAMES InpCapSignalTf = PERIOD_M15;
 input bool InpCapConfirmOnClose = true;
-input bool InpCapConfirmWithDxy = false;
 input int InpCapNyStartHour = 15;
 input int InpCapNyStartMinute = 0;
 input int InpCapNyEndHour = 16;
@@ -1119,23 +1118,6 @@ double AvgTickVolTf(const ENUM_TIMEFRAMES tf, const int startShift, const int le
    return (copied > 0) ? (sum / (double)copied) : 0.0;
 }
 
-bool GetDxyDirectionAtTime(const string dxySymbol, const ENUM_TIMEFRAMES tf, const datetime tServer, bool &dxyDown, bool &dxyUp)
-{
-   dxyDown = false;
-   dxyUp = false;
-   if(dxySymbol == "") return false;
-   datetime t = tServer;
-   if(t > 0) t -= 1;
-   int shift = iBarShift(dxySymbol, tf, t, false);
-   if(shift < 0) return false;
-   double c1 = iClose(dxySymbol, tf, shift);
-   double c2 = iClose(dxySymbol, tf, shift + 1);
-   if(c1 == 0.0 && c2 == 0.0) return false;
-   dxyDown = (c1 < c2);
-   dxyUp = (c1 > c2);
-   return true;
-}
-
 void ProcessCapital(const datetime nowServer)
 {
    if(!InpCapEnabled) { DeleteObjectsByPrefix(g_prefix + "CAP_"); return; }
@@ -1211,18 +1193,6 @@ void ProcessCapital(const datetime nowServer)
    bool buy = volOk && aboveMid && (breakUp || sweepIbl);
    bool sell = volOk && belowMid && (breakDn || sweepIbh);
 
-   if(InpCapConfirmWithDxy)
-   {
-      bool dxyDown = false, dxyUp = false;
-      if(!GetDxyDirectionAtTime(InpDxySymbol, InpCapSignalTf, tClose, dxyDown, dxyUp))
-      {
-         if(InpCapConfirmOnClose) g_cap_last_signal_time = tBar;
-         return;
-      }
-      if(buy && !dxyDown) buy = false;
-      if(sell && !dxyUp) sell = false;
-   }
-
    bool inNy = InLocalWindow(tClose, tzOff, InpCapNyStartHour, InpCapNyStartMinute, InpCapNyEndHour, InpCapNyEndMinute);
    bool buyNy = buy && inNy && breakUp;
    bool sellNy = sell && inNy && breakDn;
@@ -1230,7 +1200,6 @@ void ProcessCapital(const datetime nowServer)
    if((buy || sell) && tBar != g_cap_last_signal_time)
    {
       string txt = buy ? (buyNy ? "BUY Capital NY" : "BUY Capital") : (sellNy ? "SELL Capital NY" : "SELL Capital");
-      if(InpCapConfirmWithDxy) txt += " Confermato";
       color clr = buy ? (buyNy ? InpCapNyColor : InpCapBuyColor) : (sellNy ? InpCapNyColor : InpCapSellColor);
       double y = buy ? (rates[idx].low - 10 * _Point) : (rates[idx].high + 10 * _Point);
       CreateCapitalSignal(tBar, y, txt, clr);
@@ -1242,7 +1211,6 @@ void ProcessCapital(const datetime nowServer)
 void BackfillCapital()
 {
    if(!InpCapEnabled) return;
-   DeleteObjectsByPrefix(g_prefix + "CAP_");
    int bars = InpCapHistoryBars;
    if(bars < 50) bars = 50;
 
@@ -1320,21 +1288,11 @@ void BackfillCapital()
       bool sell = volOk && belowMid && (breakDn || sweepIbh);
       if(!buy && !sell) continue;
 
-      if(InpCapConfirmWithDxy)
-      {
-         bool dxyDown = false, dxyUp = false;
-         if(!GetDxyDirectionAtTime(InpDxySymbol, InpCapSignalTf, tClose, dxyDown, dxyUp)) continue;
-         if(buy && !dxyDown) buy = false;
-         if(sell && !dxyUp) sell = false;
-         if(!buy && !sell) continue;
-      }
-
       bool inNy = InLocalWindow(tClose, cacheOff, InpCapNyStartHour, InpCapNyStartMinute, InpCapNyEndHour, InpCapNyEndMinute);
       bool buyNy = buy && inNy && breakUp;
       bool sellNy = sell && inNy && breakDn;
 
       string txt = buy ? (buyNy ? "BUY Capital NY" : "BUY Capital") : (sellNy ? "SELL Capital NY" : "SELL Capital");
-      if(InpCapConfirmWithDxy) txt += " Confermato";
       color clr = buy ? (buyNy ? InpCapNyColor : InpCapBuyColor) : (sellNy ? InpCapNyColor : InpCapSellColor);
       double y = buy ? (rates[i].low - 10 * _Point) : (rates[i].high + 10 * _Point);
       CreateCapitalSignal(tBar, y, txt, clr);
@@ -3204,9 +3162,6 @@ int OnInit()
 {
    if(InpConfirmWithDxy && InpDxySymbol != "")
       SymbolSelect(InpDxySymbol, true);
-   if(InpCapConfirmWithDxy && InpDxySymbol != "")
-      SymbolSelect(InpDxySymbol, true);
-   DeleteObjectsByPrefix(g_prefix + "CAP_");
    g_alerts_armed = !InpSuppressAlertsOnLoad;
    g_last_time0 = 0;
    g_ema_fast_handle = iMA(_Symbol, _Period, InpHsTrendEmaFast, 0, MODE_EMA, PRICE_CLOSE);

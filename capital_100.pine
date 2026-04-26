@@ -7,6 +7,13 @@ showDailyHL  = input.bool(true, "Mostra Daily High/Low")
 showNYOpen   = input.bool(true, "Mostra NY Open (14:30)")
 showA2NRange = input.bool(true, "Mostra Range 02:00→NY (Max/Min)")
 
+useDailyOpenFilter     = input.bool(true, "Filtro Daily Open (Midnight)")
+useIbMidFilter         = input.bool(true, "Filtro IB Mid")
+requireManipulation    = input.bool(false, "Richiedi Manipolazione (Sweep)")
+sweepBufferTicks       = input.int(0, "Sweep buffer (ticks)", minval=0)
+reclaimMaxBars         = input.int(6, "Reclaim max bars", minval=1)
+midnightSignalsEnabled = input.bool(true, "Segnali Midnight (Sweep & Reclaim)")
+
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
 
@@ -150,6 +157,45 @@ if is_0200
 plot(showA2NRange and hour(time, tz) >= 2 ? a2nH : na, "A2N High", color.green, 2, plot.style_linebr)
 plot(showA2NRange and hour(time, tz) >= 2 ? a2nL : na, "A2N Low", color.green, 2, plot.style_linebr)
 
+buf = sweepBufferTicks * syminfo.mintick
+
+var float midH = na
+var float midL = na
+var int midSweepDownBar = na
+var int midSweepUpBar = na
+var bool midLongDone = false
+var bool midShortDone = false
+
+if is_0000
+    midH := high
+    midL := low
+    midSweepDownBar := na
+    midSweepUpBar := na
+    midLongDone := false
+    midShortDone := false
+
+if not na(midL) and na(midSweepDownBar) and low < (midL - buf)
+    midSweepDownBar := bar_index
+if not na(midH) and na(midSweepUpBar) and high > (midH + buf)
+    midSweepUpBar := bar_index
+
+midSweepDown = not na(midSweepDownBar)
+midSweepUp = not na(midSweepUpBar)
+
+var int ibSweepDownBar = na
+var int ibSweepUpBar = na
+if is_0000
+    ibSweepDownBar := na
+    ibSweepUpBar := na
+
+if not na(ibL) and na(ibSweepDownBar) and low < (ibL - buf)
+    ibSweepDownBar := bar_index
+if not na(ibH) and na(ibSweepUpBar) and high > (ibH + buf)
+    ibSweepUpBar := bar_index
+
+ibSweepDown = not na(ibSweepDownBar)
+ibSweepUp = not na(ibSweepUpBar)
+
 // --- 6. LOGICA SEGNALI ---
 isKill = not na(time(timeframe.period, "1430-1630", tz))
 var bool bDone = false
@@ -158,8 +204,15 @@ if is_0000
     bDone := false
     sDone := false
 
-validB = close > orangeH and close > ibMid and isKill and not bDone
-validS = close < orangeL and close < ibMid and isKill and not sDone
+dailyOkB = (not useDailyOpenFilter) or (close > dailyOpen)
+dailyOkS = (not useDailyOpenFilter) or (close < dailyOpen)
+ibOkB = (not useIbMidFilter) or (close > ibMid)
+ibOkS = (not useIbMidFilter) or (close < ibMid)
+manipOkB = (not requireManipulation) or midSweepDown or ibSweepDown
+manipOkS = (not requireManipulation) or midSweepUp or ibSweepUp
+
+validB = close > orangeH and isKill and not bDone and dailyOkB and ibOkB and manipOkB
+validS = close < orangeL and isKill and not sDone and dailyOkS and ibOkS and manipOkS
 
 if validB
     bDone := true
@@ -168,3 +221,17 @@ if validS
 
 plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY")
 plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
+
+canMidLong = midnightSignalsEnabled and midSweepDown and not midLongDone and (bar_index - midSweepDownBar) <= reclaimMaxBars
+canMidShort = midnightSignalsEnabled and midSweepUp and not midShortDone and (bar_index - midSweepUpBar) <= reclaimMaxBars
+
+midLong = canMidLong and close > midL and isKill and dailyOkB and ibOkB
+midShort = canMidShort and close < midH and isKill and dailyOkS and ibOkS
+
+if midLong
+    midLongDone := true
+if midShort
+    midShortDone := true
+
+plotshape(midLong, "BUY Mid", shape.triangleup, location.belowbar, color.aqua, size=size.small, text="BUY Mid")
+plotshape(midShort, "SELL Mid", shape.triangledown, location.abovebar, color.fuchsia, size=size.small, text="SELL Mid")

@@ -26,6 +26,14 @@ input bool InpSendPush = false;
 input bool InpNotifyHistorical = false;
 input bool InpNotifyCrossLevels = true;
 
+input group "Logic"
+input bool InpUseDailyOpenFilter = true;
+input bool InpUseIbMidFilter = true;
+input bool InpRequireManipulation = false;
+input int InpSweepBufferPoints = 0;
+input int InpReclaimMaxBars = 6;
+input bool InpMidnightSignalsEnabled = true;
+
 input group "Colors"
 input color InpDailyOpenColor = clrPurple;
 input color InpDailyHLColor = clrWhite;
@@ -80,6 +88,22 @@ datetime g_h02_time = 0;
 datetime g_day_start_time = 0;
 bool g_buy_done = false;
 bool g_sell_done = false;
+
+double g_mid_high = 0.0;
+double g_mid_low = 0.0;
+bool g_mid_has = false;
+datetime g_mid_time = 0;
+bool g_mid_sweep_down = false;
+bool g_mid_sweep_up = false;
+int g_mid_sweep_down_bar = -1;
+int g_mid_sweep_up_bar = -1;
+bool g_mid_long_done = false;
+bool g_mid_short_done = false;
+
+bool g_ib_sweep_down = false;
+bool g_ib_sweep_up = false;
+int g_ib_sweep_down_bar = -1;
+int g_ib_sweep_up_bar = -1;
 
 double g_asia_high = 0.0, g_asia_low = 0.0;
 double g_london_high = 0.0, g_london_low = 0.0;
@@ -369,6 +393,10 @@ void ResetDay(const int dayKey)
    g_ib_high = 0.0; g_ib_low = 0.0; g_ib_has = false; g_ib_time = 0;
    g_h13_high = 0.0; g_h13_low = 0.0; g_h13_has = false; g_h13_time = 0;
    g_h02_high = 0.0; g_h02_low = 0.0; g_h02_has = false; g_h02_time = 0;
+   g_mid_high = 0.0; g_mid_low = 0.0; g_mid_has = false; g_mid_time = 0;
+   g_mid_sweep_down = false; g_mid_sweep_up = false; g_mid_sweep_down_bar = -1; g_mid_sweep_up_bar = -1;
+   g_mid_long_done = false; g_mid_short_done = false;
+   g_ib_sweep_down = false; g_ib_sweep_up = false; g_ib_sweep_down_bar = -1; g_ib_sweep_up_bar = -1;
    g_asia_high = 0.0; g_asia_low = 0.0; g_asia_has = false; g_asia_start = 0;
    g_london_high = 0.0; g_london_low = 0.0; g_london_has = false; g_london_start = 0;
    g_ny_high = 0.0; g_ny_low = 0.0; g_ny_sess_has = false; g_ny_start = 0;
@@ -387,6 +415,26 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
    if(!g_daily_has) { g_day_start_time = tBarOpen; g_daily_open = o; g_daily_high = h; g_daily_low = l; g_daily_has = true; }
    else { if(h > g_daily_high) g_daily_high = h; if(l < g_daily_low) g_daily_low = l; }
 
+   if(IsLocalTime(tBarOpen, 0, 0))
+   {
+      g_mid_time = tBarOpen;
+      g_mid_high = h;
+      g_mid_low = l;
+      g_mid_has = true;
+      g_mid_sweep_down = false;
+      g_mid_sweep_up = false;
+      g_mid_sweep_down_bar = -1;
+      g_mid_sweep_up_bar = -1;
+      g_mid_long_done = false;
+      g_mid_short_done = false;
+      g_ib_sweep_down = false;
+      g_ib_sweep_up = false;
+      g_ib_sweep_down_bar = -1;
+      g_ib_sweep_up_bar = -1;
+      g_buy_done = false;
+      g_sell_done = false;
+   }
+
    if(IsLocalTime(tBarOpen, 14, 30)) { g_ny_time = tBarOpen; g_ny_open = o; g_ny_has = true; }
    if(IsLocalTime(tBarOpen, 2, 0)) { g_h02_time = tBarOpen; g_h02_high = h; g_h02_low = l; g_h02_has = true; }
 
@@ -400,6 +448,19 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
    {
       if(!g_h13_has) { g_h13_time = tBarOpen; g_h13_high = h; g_h13_low = l; g_h13_has = true; }
       else { if(h > g_h13_high) g_h13_high = h; if(l < g_h13_low) g_h13_low = l; }
+   }
+
+   double sweepBuf = (double)InpSweepBufferPoints * _Point;
+   if(g_mid_has)
+   {
+      if(!g_mid_sweep_down && l < (g_mid_low - sweepBuf)) { g_mid_sweep_down = true; g_mid_sweep_down_bar = g_update_calls; }
+      if(!g_mid_sweep_up && h > (g_mid_high + sweepBuf)) { g_mid_sweep_up = true; g_mid_sweep_up_bar = g_update_calls; }
+   }
+
+   if(g_ib_has)
+   {
+      if(!g_ib_sweep_down && l < (g_ib_low - sweepBuf)) { g_ib_sweep_down = true; g_ib_sweep_down_bar = g_update_calls; }
+      if(!g_ib_sweep_up && h > (g_ib_high + sweepBuf)) { g_ib_sweep_up = true; g_ib_sweep_up_bar = g_update_calls; }
    }
 
    string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
@@ -478,8 +539,14 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
    {
       double mid = (g_ib_high + g_ib_low) / 2.0;
       bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
-      bool buy = (c > g_h13_high && c > mid && isKill && !g_buy_done);
-      bool sell = (c < g_h13_low && c < mid && isKill && !g_sell_done);
+      bool dailyOkB = (!InpUseDailyOpenFilter || (g_daily_has && c > g_daily_open));
+      bool dailyOkS = (!InpUseDailyOpenFilter || (g_daily_has && c < g_daily_open));
+      bool ibOkB = (!InpUseIbMidFilter || (c > mid));
+      bool ibOkS = (!InpUseIbMidFilter || (c < mid));
+      bool manipOkB = (!InpRequireManipulation || g_mid_sweep_down || g_ib_sweep_down);
+      bool manipOkS = (!InpRequireManipulation || g_mid_sweep_up || g_ib_sweep_up);
+      bool buy = (c > g_h13_high && isKill && !g_buy_done && dailyOkB && ibOkB && manipOkB);
+      bool sell = (c < g_h13_low && isKill && !g_sell_done && dailyOkS && ibOkS && manipOkS);
       if(buy)
       {
          g_buy_done = true;
@@ -494,6 +561,7 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
             ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
          }
          CreateOrUpdateText(n2, tBarOpen, l - 10 * _Point, "BUY", InpBuyColor, ANCHOR_LEFT_LOWER);
+         NotifySignal("BUY", tBarOpen);
       }
       if(sell)
       {
@@ -509,6 +577,64 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
             ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
          }
          CreateOrUpdateText(n2, tBarOpen, h + 10 * _Point, "SELL", InpSellColor, ANCHOR_LEFT_UPPER);
+         NotifySignal("SELL", tBarOpen);
+      }
+   }
+
+   if(InpShowSignals && InpMidnightSignalsEnabled && g_mid_has && g_ib_has)
+   {
+      double ibMid = (g_ib_high + g_ib_low) / 2.0;
+      bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
+      bool dailyOkB = (!InpUseDailyOpenFilter || (g_daily_has && c > g_daily_open));
+      bool dailyOkS = (!InpUseDailyOpenFilter || (g_daily_has && c < g_daily_open));
+      bool ibOkB = (!InpUseIbMidFilter || (c > ibMid));
+      bool ibOkS = (!InpUseIbMidFilter || (c < ibMid));
+
+      bool canLong = g_mid_sweep_down && !g_mid_long_done;
+      if(canLong && InpReclaimMaxBars > 0 && g_mid_sweep_down_bar >= 0)
+      {
+         int barsSince = g_update_calls - g_mid_sweep_down_bar;
+         if(barsSince > InpReclaimMaxBars) canLong = false;
+      }
+      bool longSig = (canLong && c > g_mid_low && isKill && dailyOkB && ibOkB);
+
+      bool canShort = g_mid_sweep_up && !g_mid_short_done;
+      if(canShort && InpReclaimMaxBars > 0 && g_mid_sweep_up_bar >= 0)
+      {
+         int barsSince = g_update_calls - g_mid_sweep_up_bar;
+         if(barsSince > InpReclaimMaxBars) canShort = false;
+      }
+      bool shortSig = (canShort && c < g_mid_high && isKill && dailyOkS && ibOkS);
+
+      if(longSig)
+      {
+         g_mid_long_done = true;
+         string n1 = (g_prefix + IntegerToString(g_day_key) + "_") + "SIG_MID_BUY_" + IntegerToString((long)tBarOpen);
+         if(ObjectFind(0, n1) < 0)
+         {
+            ObjectCreate(0, n1, OBJ_ARROW_BUY, 0, tBarOpen, l - 12 * _Point);
+            ObjectSetInteger(0, n1, OBJPROP_COLOR, clrAqua);
+            ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+            ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+         }
+         CreateOrUpdateText(n1 + "_T", tBarOpen, l - 12 * _Point, "BUY Mid", clrAqua, ANCHOR_LEFT_LOWER);
+         NotifySignal("BUY Midnight", tBarOpen);
+      }
+      if(shortSig)
+      {
+         g_mid_short_done = true;
+         string n1 = (g_prefix + IntegerToString(g_day_key) + "_") + "SIG_MID_SELL_" + IntegerToString((long)tBarOpen);
+         if(ObjectFind(0, n1) < 0)
+         {
+            ObjectCreate(0, n1, OBJ_ARROW_SELL, 0, tBarOpen, h + 12 * _Point);
+            ObjectSetInteger(0, n1, OBJPROP_COLOR, clrMagenta);
+            ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+            ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+         }
+         CreateOrUpdateText(n1 + "_T", tBarOpen, h + 12 * _Point, "SELL Mid", clrMagenta, ANCHOR_LEFT_UPPER);
+         NotifySignal("SELL Midnight", tBarOpen);
       }
    }
 

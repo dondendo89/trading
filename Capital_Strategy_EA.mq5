@@ -15,6 +15,14 @@ input double InpRiskReward = 1.0;
 input bool InpCloseOpposite = true;
 input bool InpMaxOneTradePerDayPerSide = true;
 
+input group "Filters"
+input bool InpUseDailyOpenFilter = true;
+input bool InpUseIbMidFilter = true;
+input bool InpRequireManipulation = false;
+input int InpSweepBufferPoints = 0;
+input int InpReclaimMaxBars = 6;
+input bool InpMidnightSignalsEnabled = true;
+
 input group "Alerts"
 input bool InpSendAlert = true;
 input bool InpSendPush = false;
@@ -25,6 +33,22 @@ CTrade trade;
 datetime g_last_bar_time = 0;
 int g_day_key = 0;
 datetime g_day_start_time = 0;
+double g_daily_open = 0.0;
+bool g_daily_has = false;
+double g_mid_high = 0.0;
+double g_mid_low = 0.0;
+bool g_mid_has = false;
+bool g_mid_sweep_down = false;
+bool g_mid_sweep_up = false;
+int g_mid_sweep_down_bar = -1;
+int g_mid_sweep_up_bar = -1;
+bool g_mid_long_done = false;
+bool g_mid_short_done = false;
+bool g_ib_sweep_down = false;
+bool g_ib_sweep_up = false;
+int g_ib_sweep_down_bar = -1;
+int g_ib_sweep_up_bar = -1;
+int g_update_calls = 0;
 
 double g_ib_high = 0.0, g_ib_low = 0.0;
 bool g_ib_has = false;
@@ -70,6 +94,14 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
 {
    g_day_key = dayKey;
    g_day_start_time = firstBarOpen;
+   g_daily_open = 0.0; g_daily_has = false;
+   g_mid_high = 0.0; g_mid_low = 0.0; g_mid_has = false;
+   g_mid_sweep_down = false; g_mid_sweep_up = false;
+   g_mid_sweep_down_bar = -1; g_mid_sweep_up_bar = -1;
+   g_mid_long_done = false; g_mid_short_done = false;
+   g_ib_sweep_down = false; g_ib_sweep_up = false;
+   g_ib_sweep_down_bar = -1; g_ib_sweep_up_bar = -1;
+   g_update_calls = 0;
    g_ib_high = 0.0; g_ib_low = 0.0; g_ib_has = false;
    g_h13_high = 0.0; g_h13_low = 0.0; g_h13_has = false;
    g_buy_done = false;
@@ -123,8 +155,30 @@ void Notify(const string txt, const datetime tBarOpen)
 
 void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const double l)
 {
+   g_update_calls++;
    int dk = DayKeyLocal(tBarOpen);
    if(dk != g_day_key) ResetDay(dk, tBarOpen);
+
+   if(IsLocalTime(tBarOpen, 0, 0))
+   {
+      g_daily_open = iOpen(_Symbol, _Period, 1);
+      g_daily_has = (g_daily_open > 0.0);
+      g_mid_high = h;
+      g_mid_low = l;
+      g_mid_has = true;
+      g_mid_sweep_down = false;
+      g_mid_sweep_up = false;
+      g_mid_sweep_down_bar = -1;
+      g_mid_sweep_up_bar = -1;
+      g_mid_long_done = false;
+      g_mid_short_done = false;
+      g_ib_sweep_down = false;
+      g_ib_sweep_up = false;
+      g_ib_sweep_down_bar = -1;
+      g_ib_sweep_up_bar = -1;
+      g_buy_done = false;
+      g_sell_done = false;
+   }
 
    if(InWindowLocal(tBarOpen, 9, 0, 10, 0))
    {
@@ -142,6 +196,18 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
    {
       g_buy_done = false;
       g_sell_done = false;
+   }
+
+   double sweepBuf = (double)InpSweepBufferPoints * _Point;
+   if(g_mid_has)
+   {
+      if(!g_mid_sweep_down && l < (g_mid_low - sweepBuf)) { g_mid_sweep_down = true; g_mid_sweep_down_bar = g_update_calls; }
+      if(!g_mid_sweep_up && h > (g_mid_high + sweepBuf)) { g_mid_sweep_up = true; g_mid_sweep_up_bar = g_update_calls; }
+   }
+   if(g_ib_has)
+   {
+      if(!g_ib_sweep_down && l < (g_ib_low - sweepBuf)) { g_ib_sweep_down = true; g_ib_sweep_down_bar = g_update_calls; }
+      if(!g_ib_sweep_up && h > (g_ib_high + sweepBuf)) { g_ib_sweep_up = true; g_ib_sweep_up_bar = g_update_calls; }
    }
 }
 
@@ -187,8 +253,14 @@ void ProcessSignalOnNewBar()
    {
       double ibMid = (g_ib_high + g_ib_low) / 2.0;
       bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
-      bool validB = (c > g_h13_high && c > ibMid && isKill && !g_buy_done);
-      bool validS = (c < g_h13_low && c < ibMid && isKill && !g_sell_done);
+      bool dailyOkB = (!InpUseDailyOpenFilter || (g_daily_has && c > g_daily_open));
+      bool dailyOkS = (!InpUseDailyOpenFilter || (g_daily_has && c < g_daily_open));
+      bool ibOkB = (!InpUseIbMidFilter || (c > ibMid));
+      bool ibOkS = (!InpUseIbMidFilter || (c < ibMid));
+      bool manipOkB = (!InpRequireManipulation || g_mid_sweep_down || g_ib_sweep_down);
+      bool manipOkS = (!InpRequireManipulation || g_mid_sweep_up || g_ib_sweep_up);
+      bool validB = (c > g_h13_high && isKill && !g_buy_done && dailyOkB && ibOkB && manipOkB);
+      bool validS = (c < g_h13_low && isKill && !g_sell_done && dailyOkS && ibOkS && manipOkS);
 
       if(validB)
       {
@@ -207,6 +279,49 @@ void ProcessSignalOnNewBar()
          if(!HasPosition(-1))
          {
             if(TryEnter(false, tBarOpen, c)) g_sell_done = true;
+         }
+      }
+   }
+
+   if(InpMidnightSignalsEnabled && g_mid_has && g_ib_has)
+   {
+      double ibMid = (g_ib_high + g_ib_low) / 2.0;
+      bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
+      bool dailyOkB = (!InpUseDailyOpenFilter || (g_daily_has && c > g_daily_open));
+      bool dailyOkS = (!InpUseDailyOpenFilter || (g_daily_has && c < g_daily_open));
+      bool ibOkB = (!InpUseIbMidFilter || (c > ibMid));
+      bool ibOkS = (!InpUseIbMidFilter || (c < ibMid));
+
+      bool canLong = g_mid_sweep_down && !g_mid_long_done;
+      if(canLong && InpReclaimMaxBars > 0 && g_mid_sweep_down_bar >= 0)
+      {
+         int barsSince = g_update_calls - g_mid_sweep_down_bar;
+         if(barsSince > InpReclaimMaxBars) canLong = false;
+      }
+      bool longSig = (canLong && c > g_mid_low && isKill && dailyOkB && ibOkB);
+
+      bool canShort = g_mid_sweep_up && !g_mid_short_done;
+      if(canShort && InpReclaimMaxBars > 0 && g_mid_sweep_up_bar >= 0)
+      {
+         int barsSince = g_update_calls - g_mid_sweep_up_bar;
+         if(barsSince > InpReclaimMaxBars) canShort = false;
+      }
+      bool shortSig = (canShort && c < g_mid_high && isKill && dailyOkS && ibOkS);
+
+      if(longSig)
+      {
+         if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+         if(!HasPosition(+1))
+         {
+            if(TryEnter(true, tBarOpen, c)) g_mid_long_done = true;
+         }
+      }
+      if(shortSig)
+      {
+         if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+         if(!HasPosition(-1))
+         {
+            if(TryEnter(false, tBarOpen, c)) g_mid_short_done = true;
          }
       }
    }

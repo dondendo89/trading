@@ -13,6 +13,8 @@ input bool InpShowNYOpen = true;
 input bool InpShowIB = true;
 input bool InpShowH13 = true;
 input bool InpShow02 = true;
+input bool InpShowMidnightHL = true;
+input bool InpShowAsiaBiasArrow = true;
 input bool InpShowSignals = true;
 input bool InpShowStatusLabel = true;
 input bool InpShowChartComment = true;
@@ -30,6 +32,7 @@ input group "Logic"
 input bool InpUseDailyOpenFilter = true;
 input bool InpUseIbMidFilter = true;
 input bool InpRequireManipulation = false;
+input bool InpUseAsiaLondonSell13 = true;
 input int InpSweepBufferPoints = 0;
 input int InpReclaimMaxBars = 6;
 input bool InpMidnightSignalsEnabled = true;
@@ -41,6 +44,7 @@ input color InpNyOpenColor = clrBlue;
 input color InpIbColor = clrBlue;
 input color InpH13Color = clrOrange;
 input color InpH02Color = clrGreen;
+input color InpMidnightColor = clrGreen;
 input color InpAsiaColor = clrGreen;
 input color InpLondonColor = clrBlue;
 input color InpNyColor = clrOrange;
@@ -110,11 +114,25 @@ double g_london_high = 0.0, g_london_low = 0.0;
 double g_ny_high = 0.0, g_ny_low = 0.0;
 bool g_asia_has = false, g_london_has = false, g_ny_sess_has = false;
 datetime g_asia_start = 0, g_london_start = 0, g_ny_start = 0;
+double g_asia_open = 0.0;
+double g_asia_close = 0.0;
+bool g_asia_bias_has = false;
 
 datetime g_last_cross_h13_h = 0, g_last_cross_h13_l = 0;
 datetime g_last_cross_h02_h = 0, g_last_cross_h02_l = 0;
 
 datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
+
+datetime NextLocalMidnightServer(const datetime tServer)
+{
+   datetime local = LocalTime(tServer);
+   MqlDateTime dt;
+   TimeToStruct(local, dt);
+   dt.hour = 0; dt.min = 0; dt.sec = 0;
+   datetime localMid = StructToTime(dt);
+   datetime serverMid = localMid - (datetime)InpItalyOffsetHours * 3600;
+   return serverMid + 86400;
+}
 
 void UpdateChartComment(const string txt)
 {
@@ -218,7 +236,7 @@ void CreateOrUpdateHLine(const string name, const double price, const color clr,
 
 void CreateOrUpdateRay(const string name, const datetime t1, const double price, const color clr, const ENUM_LINE_STYLE style, const int width)
 {
-   datetime t2 = t1 + (datetime)PeriodSeconds(_Period);
+   datetime t2 = NextLocalMidnightServer(t1);
    if(ObjectFind(0, name) < 0)
    {
       ResetLastError();
@@ -231,11 +249,11 @@ void CreateOrUpdateRay(const string name, const datetime t1, const double price,
       ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(0, name, OBJPROP_BACK, false);
       ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
-      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, true);
-      ObjectSetInteger(0, name, OBJPROP_RAY_LEFT, false);
    }
    ObjectMove(0, name, 0, t1, price);
    ObjectMove(0, name, 1, t2, price);
+   ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+   ObjectSetInteger(0, name, OBJPROP_RAY_LEFT, false);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
    ObjectSetInteger(0, name, OBJPROP_STYLE, style);
    ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
@@ -400,6 +418,7 @@ void ResetDay(const int dayKey)
    g_asia_high = 0.0; g_asia_low = 0.0; g_asia_has = false; g_asia_start = 0;
    g_london_high = 0.0; g_london_low = 0.0; g_london_has = false; g_london_start = 0;
    g_ny_high = 0.0; g_ny_low = 0.0; g_ny_sess_has = false; g_ny_start = 0;
+   g_asia_open = 0.0; g_asia_close = 0.0; g_asia_bias_has = false;
    g_last_cross_h13_h = 0; g_last_cross_h13_l = 0; g_last_cross_h02_h = 0; g_last_cross_h02_l = 0;
    g_buy_done = false;
    g_sell_done = false;
@@ -436,7 +455,7 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
    }
 
    if(IsLocalTime(tBarOpen, 14, 30)) { g_ny_time = tBarOpen; g_ny_open = o; g_ny_has = true; }
-   if(IsLocalTime(tBarOpen, 0, 0)) { g_h02_time = tBarOpen; g_h02_high = h; g_h02_low = l; g_h02_has = true; }
+   if(IsLocalTime(tBarOpen, 2, 0)) { g_h02_time = tBarOpen; g_h02_high = h; g_h02_low = l; g_h02_has = true; }
 
    if(InWindowLocal(tBarOpen, 9, 0, 10, 0))
    {
@@ -464,38 +483,55 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
    }
 
    string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
+   bool inAsia = InWindowLocal(tBarOpen, 0, 0, 8, 0);
+   bool inLondon = InWindowLocal(tBarOpen, 9, 0, 17, 30);
+   bool inNy = InWindowLocal(tBarOpen, 14, 30, 21, 0);
+
+   if(inAsia)
+   {
+      if(!g_asia_has)
+      {
+         g_asia_high = h; g_asia_low = l; g_asia_has = true; g_asia_start = tBarOpen;
+         g_asia_open = o;
+         g_asia_close = c;
+         g_asia_bias_has = true;
+      }
+      else { if(h > g_asia_high) g_asia_high = h; if(l < g_asia_low) g_asia_low = l; }
+      g_asia_close = c;
+   }
+   else { g_asia_start = 0; }
+
+   if(inLondon)
+   {
+      if(!g_london_has) { g_london_high = h; g_london_low = l; g_london_has = true; g_london_start = tBarOpen; }
+      else { if(h > g_london_high) g_london_high = h; if(l < g_london_low) g_london_low = l; }
+   }
+   else { g_london_has = false; g_london_start = 0; }
+
+   if(inNy)
+   {
+      if(!g_ny_sess_has) { g_ny_high = h; g_ny_low = l; g_ny_sess_has = true; g_ny_start = tBarOpen; }
+      else { if(h > g_ny_high) g_ny_high = h; if(l < g_ny_low) g_ny_low = l; }
+   }
+   else { g_ny_sess_has = false; g_ny_start = 0; }
+
    if(InpShowSessions)
    {
-      bool inAsia = InWindowLocal(tBarOpen, 0, 0, 8, 0);
-      bool inLondon = InWindowLocal(tBarOpen, 9, 0, 17, 30);
-      bool inNy = InWindowLocal(tBarOpen, 14, 30, 21, 0);
-
       if(inAsia)
       {
-         if(!g_asia_has) { g_asia_high = h; g_asia_low = l; g_asia_has = true; g_asia_start = tBarOpen; }
-         else { if(h > g_asia_high) g_asia_high = h; if(l < g_asia_low) g_asia_low = l; }
          CreateOrUpdateRect(dayPfx + "ASIA_BOX", g_asia_start, g_asia_high, tBarOpen + PeriodSeconds(_Period), g_asia_low, InpAsiaColor);
          UpdateSessionTag(dayPfx, "ASIA", "ASIA", InpAsiaColor, tBarOpen, g_asia_high);
       }
-      else { g_asia_has = false; g_asia_start = 0; }
-
       if(inLondon)
       {
-         if(!g_london_has) { g_london_high = h; g_london_low = l; g_london_has = true; g_london_start = tBarOpen; }
-         else { if(h > g_london_high) g_london_high = h; if(l < g_london_low) g_london_low = l; }
          CreateOrUpdateRect(dayPfx + "LONDON_BOX", g_london_start, g_london_high, tBarOpen + PeriodSeconds(_Period), g_london_low, InpLondonColor);
          UpdateSessionTag(dayPfx, "LONDON", "LONDON", InpLondonColor, tBarOpen, g_london_high);
       }
-      else { g_london_has = false; g_london_start = 0; }
-
       if(inNy)
       {
-         if(!g_ny_sess_has) { g_ny_high = h; g_ny_low = l; g_ny_sess_has = true; g_ny_start = tBarOpen; }
-         else { if(h > g_ny_high) g_ny_high = h; if(l < g_ny_low) g_ny_low = l; }
          CreateOrUpdateRect(dayPfx + "NY_BOX", g_ny_start, g_ny_high, tBarOpen + PeriodSeconds(_Period), g_ny_low, InpNyColor);
          UpdateSessionTag(dayPfx, "NY", "NY", InpNyColor, tBarOpen, g_ny_high);
       }
-      else { g_ny_sess_has = false; g_ny_start = 0; }
    }
 
    if(g_daily_has)
@@ -528,11 +564,45 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
       CreateOrUpdateRay(dayPfx + "H13_L", tStart, g_h13_low, InpH13Color, STYLE_SOLID, 2);
    }
 
-   if(InpShow02 && g_h02_has)
+   if(InpShow02 && g_h02_has && MinuteOfDayLocal(tBarOpen) >= 2 * 60)
    {
       datetime tStart = (g_h02_time == 0 ? tBarOpen : g_h02_time);
       CreateOrUpdateRay(dayPfx + "H02_H", tStart, g_h02_high, InpH02Color, STYLE_SOLID, 2);
       CreateOrUpdateRay(dayPfx + "H02_L", tStart, g_h02_low, InpH02Color, STYLE_SOLID, 2);
+   }
+
+   if(InpShowMidnightHL && g_mid_has)
+   {
+      datetime tStart = (g_mid_time == 0 ? tBarOpen : g_mid_time);
+      CreateOrUpdateRay(dayPfx + "MID_H", tStart, g_mid_high, InpMidnightColor, STYLE_SOLID, 2);
+      CreateOrUpdateRay(dayPfx + "MID_L", tStart, g_mid_low, InpMidnightColor, STYLE_SOLID, 2);
+   }
+
+   if(InpShowAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_bias_has && g_asia_open > 0.0)
+   {
+      bool asiaBear = (g_asia_close < g_asia_open);
+      string n1 = (g_prefix + IntegerToString(g_day_key) + "_") + "ASIA_BIAS_" + IntegerToString((long)tBarOpen);
+      if(ObjectFind(0, n1) < 0)
+      {
+         ObjectCreate(0, n1, asiaBear ? OBJ_ARROW_BUY : OBJ_ARROW_SELL, 0, tBarOpen, l - 12 * _Point);
+         ObjectSetInteger(0, n1, OBJPROP_COLOR, asiaBear ? InpBuyColor : InpSellColor);
+         ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+         ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+      }
+   }
+
+   if(InpUseAsiaLondonSell13 && IsLocalTime(tBarOpen, 13, 0) && g_london_has && g_h02_has && g_h02_high > g_london_high && g_h02_low > g_london_high)
+   {
+      string n1 = (g_prefix + IntegerToString(g_day_key) + "_") + "ASIA_LONDON_SELL13_" + IntegerToString((long)tBarOpen);
+      if(ObjectFind(0, n1) < 0)
+      {
+         ObjectCreate(0, n1, OBJ_ARROW_SELL, 0, tBarOpen, h + 12 * _Point);
+         ObjectSetInteger(0, n1, OBJPROP_COLOR, InpSellColor);
+         ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+         ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+      }
    }
 
    if(InpShowSignals && g_ib_has && g_h13_has)
@@ -781,7 +851,9 @@ int OnCalculate(const int rates_total,
          g_mid_high = high[curIdx];
          g_mid_low = low[curIdx];
          g_mid_has = true;
-
+      }
+      if(IsLocalTime(time[curIdx], 2, 0))
+      {
          g_h02_time = time[curIdx];
          g_h02_high = high[curIdx];
          g_h02_low = low[curIdx];

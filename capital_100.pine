@@ -7,6 +7,9 @@ showDailyHL  = input.bool(true, "Mostra Daily High/Low")
 showNYOpen   = input.bool(true, "Mostra NY Open (14:30)")
 showA2NRange = input.bool(true, "Mostra Range 00:00→NY (Max/Min)")
 showMidnightLines = input.bool(true, "Mostra Linee 00:00 (High/Low)")
+show02CandleLines = input.bool(true, "Mostra Linee 02:00 (High/Low)")
+showAsiaBiasArrow = input.bool(true, "Freccia Asia @09:00")
+useAsiaLondonSell13 = input.bool(true, "Sell @13 se Asia+02 sopra London")
 
 useDailyOpenFilter     = input.bool(true, "Filtro Daily Open (Midnight)")
 useIbMidFilter         = input.bool(true, "Filtro IB Mid")
@@ -58,10 +61,13 @@ else
         dLowLbl := na
 
 // --- 2. NY OPEN (14:30) ---
-is_ny_open = hour(time, tz) == 14 and minute(time, tz) == 30
 var float nyOpenPrice = na
-if is_ny_open
-    nyOpenPrice := open
+isAfterNyOpen = not na(time(timeframe.period, "1430-2359", tz))
+nyOpenFrom1m = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, tz) == 14 and minute(time, tz) == 30, open, 0), barmerge.gaps_off, barmerge.lookahead_off)
+if is_0000
+    nyOpenPrice := na
+if isAfterNyOpen and not na(nyOpenFrom1m)
+    nyOpenPrice := nyOpenFrom1m
 
 plot(showNYOpen ? nyOpenPrice : na, "NY Open Line", color.blue, 2, plot.style_linebr)
 
@@ -83,6 +89,39 @@ var label asiaLab = na, var label londonLab = na, var label nyLab = na
 var float aHigh = na, var float aLow = na
 var float lHigh = na, var float lLow = na
 var float nHigh = na, var float nLow = na
+
+var float asiaOpen = na
+var float asiaClose = na
+var float asiaHigh = na
+var float asiaLow = na
+isInAsia = not na(time(timeframe.period, "0000-0800", tz))
+if is_0000
+    asiaOpen := na
+    asiaClose := na
+    asiaHigh := na
+    asiaLow := na
+if isInAsia
+    if not isInAsia[1]
+        asiaOpen := open
+        asiaHigh := high
+        asiaLow := low
+    asiaClose := close
+    asiaHigh := math.max(nz(asiaHigh, high), high)
+    asiaLow := math.min(nz(asiaLow, low), low)
+
+var float londonHighLive = na
+var float londonLowLive = na
+isInLondon = not na(time(timeframe.period, "0900-1730", tz))
+if is_0000
+    londonHighLive := na
+    londonLowLive := na
+if isInLondon
+    if not isInLondon[1]
+        londonHighLive := high
+        londonLowLive := low
+    else
+        londonHighLive := math.max(nz(londonHighLive, high), high)
+        londonLowLive := math.min(nz(londonLowLive, low), low)
 
 draw_session(sess_time, sess_name, sess_color, sBox, sLab, sHigh, sLow) =>
     t = time(timeframe.period, sess_time, tz)
@@ -133,6 +172,10 @@ is_1300_range = not na(time(timeframe.period, "1300-1400", tz))
 var float orangeH = na
 var float orangeL = na
 
+if is_0000
+    orangeH := na
+    orangeL := na
+
 if is_1300_range
     if not is_1300_range[1]
         orangeH := high
@@ -144,6 +187,22 @@ if is_1300_range
 // Modifica: ora le linee partono dalle 13:00 (appena iniziano a esistere)
 plot(hour(time, tz) >= 13 ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
 plot(hour(time, tz) >= 13 ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
+
+is_0200 = hour(time, tz) == 2 and minute(time, tz) == 0
+var float c02H = na
+var float c02L = na
+if is_0000
+    c02H := na
+    c02L := na
+if is_0200
+    c02H := high
+    c02L := low
+plot(show02CandleLines and hour(time, tz) >= 2 ? c02H : na, "02 High", color.green, 2, plot.style_linebr)
+plot(show02CandleLines and hour(time, tz) >= 2 ? c02L : na, "02 Low", color.green, 2, plot.style_linebr)
+
+is_1300 = hour(time, tz) == 13 and minute(time, tz) == 0
+c02AboveLondon = not na(c02H) and not na(c02L) and not na(londonHighLive) and c02H > londonHighLive and c02L > londonHighLive
+plotshape(useAsiaLondonSell13 and is_1300 and c02AboveLondon, title="Sell 13 (02>London)", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
 
 midCandleHigh = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, tz) == 0 and minute(time, tz) == 0, high, 0), barmerge.gaps_off, barmerge.lookahead_on)
 midCandleLow  = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, tz) == 0 and minute(time, tz) == 0, low, 0), barmerge.gaps_off, barmerge.lookahead_on)
@@ -232,6 +291,9 @@ isKill = not na(time(timeframe.period, "1430-1630", tz))
 is1m = timeframe.isminutes and timeframe.multiplier == 1
 isStar13 = is1m ? (hour(time, tz) == 12 and minute(time, tz) == 59) : (hour(time, tz) == 13 and minute(time, tz) == 0)
 isStar16 = is1m ? (hour(time, tz) == 15 and minute(time, tz) == 59) : (hour(time, tz) == 16 and minute(time, tz) == 0)
+is_0900 = hour(time, tz) == 9 and minute(time, tz) == 0
+asiaBear = not na(asiaOpen) and not na(asiaClose) and asiaClose < asiaOpen
+asiaBull = not na(asiaOpen) and not na(asiaClose) and asiaClose > asiaOpen
 var bool bDone = false
 var bool sDone = false
 if is_0000
@@ -257,6 +319,8 @@ plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=
 plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
 plotshape(isStar13, title="13:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
 plotshape(isStar16, title="16:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
+plotshape(showAsiaBiasArrow and is_0900 and asiaBear, title="Asia Bias Long", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="A")
+plotshape(showAsiaBiasArrow and is_0900 and asiaBull, title="Asia Bias Short", style=shape.triangledown, location=location.belowbar, color=color.red, size=size.small, text="A")
 
 canMidLong = midnightSignalsEnabled and midSweepDown and not midLongDone and (bar_index - midSweepDownBar) <= reclaimMaxBars
 canMidShort = midnightSignalsEnabled and midSweepUp and not midShortDone and (bar_index - midSweepUpBar) <= reclaimMaxBars

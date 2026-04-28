@@ -436,7 +436,7 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
    }
 
    if(IsLocalTime(tBarOpen, 14, 30)) { g_ny_time = tBarOpen; g_ny_open = o; g_ny_has = true; }
-   if(IsLocalTime(tBarOpen, 2, 0)) { g_h02_time = tBarOpen; g_h02_high = h; g_h02_low = l; g_h02_has = true; }
+   if(IsLocalTime(tBarOpen, 0, 0)) { g_h02_time = tBarOpen; g_h02_high = h; g_h02_low = l; g_h02_has = true; }
 
    if(InWindowLocal(tBarOpen, 9, 0, 10, 0))
    {
@@ -528,7 +528,7 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
       CreateOrUpdateRay(dayPfx + "H13_L", tStart, g_h13_low, InpH13Color, STYLE_SOLID, 2);
    }
 
-   if(InpShow02 && g_h02_has && MinuteOfDayLocal(tBarOpen) >= 2 * 60)
+   if(InpShow02 && g_h02_has)
    {
       datetime tStart = (g_h02_time == 0 ? tBarOpen : g_h02_time);
       CreateOrUpdateRay(dayPfx + "H02_H", tStart, g_h02_high, InpH02Color, STYLE_SOLID, 2);
@@ -636,6 +636,19 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
          CreateOrUpdateText(n1 + "_T", tBarOpen, h + 12 * _Point, "SELL Mid", clrMagenta, ANCHOR_LEFT_UPPER);
          NotifySignal("SELL Midnight", tBarOpen);
       }
+   }
+
+   bool isStar13 = (_Period == PERIOD_M1) ? IsLocalTime(tBarOpen, 12, 59) : IsLocalTime(tBarOpen, 13, 0);
+   bool isStar16 = (_Period == PERIOD_M1) ? IsLocalTime(tBarOpen, 15, 59) : IsLocalTime(tBarOpen, 16, 0);
+   if(isStar13)
+   {
+      string n = (g_prefix + IntegerToString(g_day_key) + "_") + "STAR_13_" + IntegerToString((long)tBarOpen);
+      CreateOrUpdateText(n, tBarOpen, l - 14 * _Point, "★", clrYellow, ANCHOR_LEFT_LOWER);
+   }
+   if(isStar16)
+   {
+      string n = (g_prefix + IntegerToString(g_day_key) + "_") + "STAR_16_" + IntegerToString((long)tBarOpen);
+      CreateOrUpdateText(n, tBarOpen, l - 14 * _Point, "★", clrYellow, ANCHOR_LEFT_LOWER);
    }
 
    string st = "CAP_IND | it " + IntegerToString(MinuteOfDayLocal(tBarOpen) / 60) + ":" + IntegerToString(MinuteOfDayLocal(tBarOpen) % 60) +
@@ -751,6 +764,30 @@ int OnCalculate(const int rates_total,
    int curIdx = IndexByShift(isSeries, rates_total, 0);
    int prevIdx = IndexByShift(isSeries, rates_total, 1);
    int prevPrevIdx = IndexByShift(isSeries, rates_total, 2);
+
+   if(_Period == PERIOD_M1)
+   {
+      int dkCur = DayKeyLocal(time[curIdx]);
+      if(dkCur != g_day_key) ResetDay(dkCur);
+      if(IsLocalTime(time[curIdx], 0, 0))
+      {
+         g_day_start_time = time[curIdx];
+         g_daily_open = open[curIdx];
+         g_daily_high = high[curIdx];
+         g_daily_low = low[curIdx];
+         g_daily_has = (g_daily_open > 0.0);
+
+         g_mid_time = time[curIdx];
+         g_mid_high = high[curIdx];
+         g_mid_low = low[curIdx];
+         g_mid_has = true;
+
+         g_h02_time = time[curIdx];
+         g_h02_high = high[curIdx];
+         g_h02_low = low[curIdx];
+         g_h02_has = true;
+      }
+   }
 
    if(time[curIdx] != g_last_time0)
    {

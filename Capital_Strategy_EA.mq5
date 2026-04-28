@@ -30,6 +30,7 @@ input bool InpNotifyHistorical = false;
 
 CTrade trade;
 
+string g_prefix = "CAP_EA_";
 datetime g_last_bar_time = 0;
 int g_day_key = 0;
 datetime g_day_start_time = 0;
@@ -38,6 +39,7 @@ bool g_daily_has = false;
 double g_mid_high = 0.0;
 double g_mid_low = 0.0;
 bool g_mid_has = false;
+datetime g_mid_time = 0;
 bool g_mid_sweep_down = false;
 bool g_mid_sweep_up = false;
 int g_mid_sweep_down_bar = -1;
@@ -90,12 +92,60 @@ bool IsLocalTime(const datetime tServer, const int h, const int m)
    return (dt.hour == h && dt.min == m);
 }
 
+bool IsEntryTimeLocal(const datetime tServer)
+{
+   MqlDateTime dt;
+   TimeToStruct(LocalTime(tServer), dt);
+   if(_Period == PERIOD_M1)
+      return ((dt.hour == 12 && dt.min == 59) || (dt.hour == 15 && dt.min == 59));
+   return (dt.min == 0 && (dt.hour == 13 || dt.hour == 16));
+}
+
+void DeleteByPrefix(const string pfx)
+{
+   int total = ObjectsTotal(0, -1, -1);
+   for(int i = total - 1; i >= 0; i--)
+   {
+      string n = ObjectName(0, i);
+      if(StringFind(n, pfx) == 0) ObjectDelete(0, n);
+   }
+}
+
+void CreateOrUpdateRay(const string name, const datetime t1, const double price, const color clr, const int width)
+{
+   datetime t2 = t1 + (datetime)PeriodSeconds(_Period);
+   if(ObjectFind(0, name) < 0)
+   {
+      ResetLastError();
+      if(!ObjectCreate(0, name, OBJ_TREND, 0, t1, price, t2, price)) return;
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, true);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
+   }
+   ObjectMove(0, name, 0, t1, price);
+   ObjectMove(0, name, 1, t2, price);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_SOLID);
+}
+
+void DrawMidnightCandleLevels()
+{
+   if(!g_mid_has || g_day_key == 0) return;
+   string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
+   datetime tStart = (g_mid_time == 0 ? TimeCurrent() : g_mid_time);
+   CreateOrUpdateRay(dayPfx + "MID_H", tStart, g_mid_high, clrGreen, 2);
+   CreateOrUpdateRay(dayPfx + "MID_L", tStart, g_mid_low, clrGreen, 2);
+}
+
 void ResetDay(const int dayKey, const datetime firstBarOpen)
 {
+   DeleteByPrefix(g_prefix);
    g_day_key = dayKey;
    g_day_start_time = firstBarOpen;
    g_daily_open = 0.0; g_daily_has = false;
-   g_mid_high = 0.0; g_mid_low = 0.0; g_mid_has = false;
+   g_mid_high = 0.0; g_mid_low = 0.0; g_mid_has = false; g_mid_time = 0;
    g_mid_sweep_down = false; g_mid_sweep_up = false;
    g_mid_sweep_down_bar = -1; g_mid_sweep_up_bar = -1;
    g_mid_long_done = false; g_mid_short_done = false;
@@ -163,6 +213,7 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
    {
       g_daily_open = iOpen(_Symbol, _Period, 1);
       g_daily_has = (g_daily_open > 0.0);
+      g_mid_time = tBarOpen;
       g_mid_high = h;
       g_mid_low = l;
       g_mid_has = true;
@@ -209,6 +260,8 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
       if(!g_ib_sweep_down && l < (g_ib_low - sweepBuf)) { g_ib_sweep_down = true; g_ib_sweep_down_bar = g_update_calls; }
       if(!g_ib_sweep_up && h > (g_ib_high + sweepBuf)) { g_ib_sweep_up = true; g_ib_sweep_up_bar = g_update_calls; }
    }
+
+   DrawMidnightCandleLevels();
 }
 
 bool TryEnter(const bool isBuy, const datetime tBarOpen, const double barClose)
@@ -239,6 +292,26 @@ void ProcessSignalOnNewBar()
    if(t0 == 0) return;
    if(t0 == g_last_bar_time) return;
 
+   int dkCur = DayKeyLocal(t0);
+   if(dkCur != g_day_key) ResetDay(dkCur, t0);
+
+   if(_Period == PERIOD_M1 && IsLocalTime(t0, 0, 0))
+   {
+      double o0 = iOpen(_Symbol, _Period, 0);
+      double h0 = iHigh(_Symbol, _Period, 0);
+      double l0 = iLow(_Symbol, _Period, 0);
+      if(o0 > 0.0 && h0 > 0.0 && l0 > 0.0)
+      {
+         g_daily_open = o0;
+         g_daily_has = true;
+         g_mid_time = t0;
+         g_mid_high = h0;
+         g_mid_low = l0;
+         g_mid_has = true;
+         DrawMidnightCandleLevels();
+      }
+   }
+
    datetime tBarOpen = iTime(_Symbol, _Period, 1);
    if(tBarOpen == 0) { g_last_bar_time = t0; return; }
 
@@ -249,18 +322,19 @@ void ProcessSignalOnNewBar()
 
    UpdateLevelsWithClosedBar(tBarOpen, h, l);
 
+   bool isEntryTime = IsEntryTimeLocal(tBarOpen);
+
    if(g_ib_has && g_h13_has)
    {
       double ibMid = (g_ib_high + g_ib_low) / 2.0;
-      bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
       bool dailyOkB = (!InpUseDailyOpenFilter || (g_daily_has && c > g_daily_open));
       bool dailyOkS = (!InpUseDailyOpenFilter || (g_daily_has && c < g_daily_open));
       bool ibOkB = (!InpUseIbMidFilter || (c > ibMid));
       bool ibOkS = (!InpUseIbMidFilter || (c < ibMid));
       bool manipOkB = (!InpRequireManipulation || g_mid_sweep_down || g_ib_sweep_down);
       bool manipOkS = (!InpRequireManipulation || g_mid_sweep_up || g_ib_sweep_up);
-      bool validB = (c > g_h13_high && isKill && !g_buy_done && dailyOkB && ibOkB && manipOkB);
-      bool validS = (c < g_h13_low && isKill && !g_sell_done && dailyOkS && ibOkS && manipOkS);
+      bool validB = (c > g_h13_high && isEntryTime && !g_buy_done && dailyOkB && ibOkB && manipOkB);
+      bool validS = (c < g_h13_low && isEntryTime && !g_sell_done && dailyOkS && ibOkS && manipOkS);
 
       if(validB)
       {
@@ -286,7 +360,6 @@ void ProcessSignalOnNewBar()
    if(InpMidnightSignalsEnabled && g_mid_has && g_ib_has)
    {
       double ibMid = (g_ib_high + g_ib_low) / 2.0;
-      bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
       bool dailyOkB = (!InpUseDailyOpenFilter || (g_daily_has && c > g_daily_open));
       bool dailyOkS = (!InpUseDailyOpenFilter || (g_daily_has && c < g_daily_open));
       bool ibOkB = (!InpUseIbMidFilter || (c > ibMid));
@@ -298,7 +371,7 @@ void ProcessSignalOnNewBar()
          int barsSince = g_update_calls - g_mid_sweep_down_bar;
          if(barsSince > InpReclaimMaxBars) canLong = false;
       }
-      bool longSig = (canLong && c > g_mid_low && isKill && dailyOkB && ibOkB);
+      bool longSig = (canLong && c > g_mid_low && isEntryTime && dailyOkB && ibOkB);
 
       bool canShort = g_mid_sweep_up && !g_mid_short_done;
       if(canShort && InpReclaimMaxBars > 0 && g_mid_sweep_up_bar >= 0)
@@ -306,7 +379,7 @@ void ProcessSignalOnNewBar()
          int barsSince = g_update_calls - g_mid_sweep_up_bar;
          if(barsSince > InpReclaimMaxBars) canShort = false;
       }
-      bool shortSig = (canShort && c < g_mid_high && isKill && dailyOkS && ibOkS);
+      bool shortSig = (canShort && c < g_mid_high && isEntryTime && dailyOkS && ibOkS);
 
       if(longSig)
       {
@@ -335,6 +408,11 @@ int OnInit()
    g_last_bar_time = 0;
    g_day_key = 0;
    return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   DeleteByPrefix(g_prefix);
 }
 
 void OnTick()

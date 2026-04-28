@@ -5,7 +5,8 @@ indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true,
 showSessions = input.bool(true, "Mostra Box Sessioni (Asia, London, NY)")
 showDailyHL  = input.bool(true, "Mostra Daily High/Low")
 showNYOpen   = input.bool(true, "Mostra NY Open (14:30)")
-showA2NRange = input.bool(true, "Mostra Range 02:00→NY (Max/Min)")
+showA2NRange = input.bool(true, "Mostra Range 00:00→NY (Max/Min)")
+showMidnightLines = input.bool(true, "Mostra Linee 00:00 (High/Low)")
 
 useDailyOpenFilter     = input.bool(true, "Filtro Daily Open (Midnight)")
 useIbMidFilter         = input.bool(true, "Filtro IB Mid")
@@ -144,18 +145,42 @@ if is_1300_range
 plot(hour(time, tz) >= 13 ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
 plot(hour(time, tz) >= 13 ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
 
-is_0200 = hour(time, tz) == 2 and minute(time, tz) == 0
-var float a2nH = na
-var float a2nL = na
-if is_0000
-    a2nH := na
-    a2nL := na
-if is_0200
-    a2nH := high
-    a2nL := low
+midCandleHigh = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, tz) == 0 and minute(time, tz) == 0, high, 0), barmerge.gaps_off, barmerge.lookahead_on)
+midCandleLow  = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, tz) == 0 and minute(time, tz) == 0, low, 0), barmerge.gaps_off, barmerge.lookahead_on)
 
-plot(showA2NRange and hour(time, tz) >= 2 ? a2nH : na, "A2N High", color.green, 2, plot.style_linebr)
-plot(showA2NRange and hour(time, tz) >= 2 ? a2nL : na, "A2N Low", color.green, 2, plot.style_linebr)
+newDayRome = na(time[1]) ? true : dayofmonth(time, tz) != dayofmonth(time[1], tz)
+midCandlePlotHigh = newDayRome ? na : midCandleHigh
+midCandlePlotLow = newDayRome ? na : midCandleLow
+plot(showMidnightLines ? midCandlePlotHigh : na, "00 High", color.green, 2, plot.style_linebr)
+plot(showMidnightLines ? midCandlePlotLow : na, "00 Low", color.green, 2, plot.style_linebr)
+
+var line a2nHighLine = na
+var line a2nLowLine = na
+if newDayRome
+    if not na(a2nHighLine)
+        line.delete(a2nHighLine)
+        a2nHighLine := na
+    if not na(a2nLowLine)
+        line.delete(a2nLowLine)
+        a2nLowLine := na
+    if showA2NRange
+        a2nHighLine := line.new(bar_index, midCandleHigh, bar_index + 1, midCandleHigh, extend=extend.right, color=color.green, width=2)
+        a2nLowLine := line.new(bar_index, midCandleLow, bar_index + 1, midCandleLow, extend=extend.right, color=color.green, width=2)
+
+if not showA2NRange
+    if not na(a2nHighLine)
+        line.delete(a2nHighLine)
+        a2nHighLine := na
+    if not na(a2nLowLine)
+        line.delete(a2nLowLine)
+        a2nLowLine := na
+else
+    if not na(a2nHighLine) and not na(midCandleHigh)
+        line.set_xy1(a2nHighLine, line.get_x1(a2nHighLine), midCandleHigh)
+        line.set_xy2(a2nHighLine, bar_index + 1, midCandleHigh)
+    if not na(a2nLowLine) and not na(midCandleLow)
+        line.set_xy1(a2nLowLine, line.get_x1(a2nLowLine), midCandleLow)
+        line.set_xy2(a2nLowLine, bar_index + 1, midCandleLow)
 
 buf = sweepBufferTicks * syminfo.mintick
 
@@ -182,6 +207,12 @@ if not na(midH) and na(midSweepUpBar) and high > (midH + buf)
 midSweepDown = not na(midSweepDownBar)
 midSweepUp = not na(midSweepUpBar)
 
+newDay = year(time, tz) != year(time[1], tz) or month(time, tz) != month(time[1], tz) or dayofmonth(time, tz) != dayofmonth(time[1], tz)
+midPlotH = newDay ? na : midH
+midPlotL = newDay ? na : midL
+plot(showA2NRange ? midPlotH : na, "MID High", color.green, 2, plot.style_linebr)
+plot(showA2NRange ? midPlotL : na, "MID Low", color.green, 2, plot.style_linebr)
+
 var int ibSweepDownBar = na
 var int ibSweepUpBar = na
 if is_0000
@@ -198,6 +229,9 @@ ibSweepUp = not na(ibSweepUpBar)
 
 // --- 6. LOGICA SEGNALI ---
 isKill = not na(time(timeframe.period, "1430-1630", tz))
+is1m = timeframe.isminutes and timeframe.multiplier == 1
+isStar13 = is1m ? (hour(time, tz) == 12 and minute(time, tz) == 59) : (hour(time, tz) == 13 and minute(time, tz) == 0)
+isStar16 = is1m ? (hour(time, tz) == 15 and minute(time, tz) == 59) : (hour(time, tz) == 16 and minute(time, tz) == 0)
 var bool bDone = false
 var bool sDone = false
 if is_0000
@@ -221,6 +255,8 @@ if validS
 
 plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY")
 plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
+plotshape(isStar13, title="13:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
+plotshape(isStar16, title="16:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
 
 canMidLong = midnightSignalsEnabled and midSweepDown and not midLongDone and (bar_index - midSweepDownBar) <= reclaimMaxBars
 canMidShort = midnightSignalsEnabled and midSweepUp and not midShortDone and (bar_index - midSweepUpBar) <= reclaimMaxBars

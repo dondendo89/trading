@@ -15,6 +15,16 @@ input double InpRiskReward = 1.0;
 input bool InpCloseOpposite = true;
 input bool InpMaxOneTradePerDayPerSide = true;
 
+input group "Break Even"
+input bool InpBreakEvenEnabled = true;
+input double InpBreakEvenAtRR = 1.0;
+input int InpBreakEvenPlusPoints = 0;
+
+input group "Partial TP"
+input bool InpPartialTpEnabled = true;
+input double InpPartialTpAtRR = 1.0;
+input int InpPartialTpPercent = 50;
+
 input group "Filters"
 input bool InpUseDailyOpenFilter = true;
 input bool InpUseIbMidFilter = true;
@@ -22,6 +32,9 @@ input bool InpRequireManipulation = false;
 input bool InpUseAsiaTrendFilter = true;
 input bool InpDrawAsiaBiasArrow = true;
 input bool InpUseAsiaLondonSell13 = true;
+input bool InpUseHammerSlots = true;
+input double InpHammerFibLevel = 0.382;
+input bool InpTradeOnlyAt13_16_18 = true;
 input int InpBreakoutBufferPoints = 0;
 input int InpMinH13RangePoints = 0;
 input bool InpSpreadFilterEnabled = false;
@@ -86,6 +99,9 @@ bool g_london_range_has = false;
 bool g_buy_done = false;
 bool g_sell_done = false;
 
+ulong g_partial_ticket_buy_done = 0;
+ulong g_partial_ticket_sell_done = 0;
+
 datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
 datetime NextLocalMidnightServer(const datetime tServer)
@@ -97,6 +113,129 @@ datetime NextLocalMidnightServer(const datetime tServer)
    datetime localMid = StructToTime(dt);
    datetime serverMid = localMid - (datetime)InpItalyOffsetHours * 3600;
    return serverMid + 86400;
+}
+
+void ManageBreakEven()
+{
+   if(!InpBreakEvenEnabled) return;
+   if(!InpUseStopLoss) return;
+   if(InpBreakEvenAtRR <= 0.0) return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   if(bid <= 0.0 || ask <= 0.0) return;
+
+   int stopsLevelPts = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double stops = (double)stopsLevelPts * _Point;
+   double plus = (double)InpBreakEvenPlusPoints * _Point;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      string sym = PositionGetString(POSITION_SYMBOL);
+      if(sym != _Symbol) continue;
+
+      long type = PositionGetInteger(POSITION_TYPE);
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl = PositionGetDouble(POSITION_SL);
+      double tp = PositionGetDouble(POSITION_TP);
+      if(entry <= 0.0 || sl <= 0.0) continue;
+
+      if(type == POSITION_TYPE_BUY)
+      {
+         double risk = entry - sl;
+         if(risk <= 0.0) continue;
+         double moved = bid - entry;
+         if(moved < risk * InpBreakEvenAtRR) continue;
+
+         double newSl = entry + plus;
+         if(sl >= newSl) continue;
+         double maxSl = bid - stops;
+         if(maxSl <= 0.0) continue;
+         if(newSl > maxSl) newSl = maxSl;
+         if(newSl <= sl) continue;
+
+         trade.PositionModify(ticket, NormalizeDouble(newSl, _Digits), tp);
+      }
+      else if(type == POSITION_TYPE_SELL)
+      {
+         double risk = sl - entry;
+         if(risk <= 0.0) continue;
+         double moved = entry - ask;
+         if(moved < risk * InpBreakEvenAtRR) continue;
+
+         double newSl = entry - plus;
+         if(sl <= newSl) continue;
+         double minSl = ask + stops;
+         if(minSl <= 0.0) continue;
+         if(newSl < minSl) newSl = minSl;
+         if(newSl >= sl) continue;
+
+         trade.PositionModify(ticket, NormalizeDouble(newSl, _Digits), tp);
+      }
+   }
+}
+
+double NormalizeVolumeDown(const double vol)
+{
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minv = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if(step <= 0.0) return vol;
+   double v = MathFloor(vol / step) * step;
+   v = NormalizeDouble(v, 8);
+   if(v < minv) return 0.0;
+   return v;
+}
+
+void ManagePartialTp()
+{
+   if(!InpPartialTpEnabled) return;
+   if(InpPartialTpAtRR <= 0.0) return;
+   if(InpPartialTpPercent <= 0 || InpPartialTpPercent >= 100) return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   if(bid <= 0.0 || ask <= 0.0) return;
+
+   trade.SetDeviationInPoints(InpDeviationPoints);
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      string sym = PositionGetString(POSITION_SYMBOL);
+      if(sym != _Symbol) continue;
+
+      long type = PositionGetInteger(POSITION_TYPE);
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl = PositionGetDouble(POSITION_SL);
+      double vol = PositionGetDouble(POSITION_VOLUME);
+      if(entry <= 0.0 || sl <= 0.0 || vol <= 0.0) continue;
+
+      if(type == POSITION_TYPE_BUY && ticket == g_partial_ticket_buy_done) continue;
+      if(type == POSITION_TYPE_SELL && ticket == g_partial_ticket_sell_done) continue;
+
+      double risk = (type == POSITION_TYPE_BUY) ? (entry - sl) : (sl - entry);
+      if(risk <= 0.0) continue;
+      double moved = (type == POSITION_TYPE_BUY) ? (bid - entry) : (entry - ask);
+      if(moved < risk * InpPartialTpAtRR) continue;
+
+      double closeVolRaw = vol * ((double)InpPartialTpPercent / 100.0);
+      double closeVol = NormalizeVolumeDown(closeVolRaw);
+      if(closeVol <= 0.0) continue;
+      if(closeVol >= vol) continue;
+
+      bool ok = trade.PositionClosePartial(_Symbol, closeVol);
+      if(ok)
+      {
+         if(type == POSITION_TYPE_BUY) g_partial_ticket_buy_done = ticket;
+         if(type == POSITION_TYPE_SELL) g_partial_ticket_sell_done = ticket;
+         Notify("PARTIAL TP " + IntegerToString(InpPartialTpPercent) + "%", TimeCurrent());
+      }
+   }
 }
 
 int DayKeyLocal(const datetime tServer)
@@ -134,12 +273,16 @@ bool IsEntryTimeLocal(const datetime tServer)
    {
       MqlDateTime dt;
       TimeToStruct(LocalTime(tServer), dt);
+      if(InpTradeOnlyAt13_16_18)
+         return ((dt.hour == 12 && dt.min == 59) || (dt.hour == 15 && dt.min == 59) || (dt.hour == 17 && dt.min == 59));
       return ((dt.hour == 12 && dt.min == 59) || (dt.hour == 15 && dt.min == 59));
    }
 
    datetime tRef = tServer + (datetime)PeriodSeconds(_Period);
    MqlDateTime dt;
    TimeToStruct(LocalTime(tRef), dt);
+   if(InpTradeOnlyAt13_16_18)
+      return (dt.min == 0 && (dt.hour == 13 || dt.hour == 16 || dt.hour == 18));
    return (dt.min == 0 && (dt.hour == 13 || dt.hour == 16));
 }
 
@@ -151,13 +294,21 @@ int EntrySlotLocal(const datetime tServer)
       TimeToStruct(LocalTime(tServer), dt);
       if(dt.hour == 12 && dt.min == 59) return 13;
       if(dt.hour == 15 && dt.min == 59) return 16;
+      if(InpTradeOnlyAt13_16_18 && dt.hour == 17 && dt.min == 59) return 18;
       return 0;
    }
 
    datetime tRef = tServer + (datetime)PeriodSeconds(_Period);
    MqlDateTime dt;
    TimeToStruct(LocalTime(tRef), dt);
-   if(dt.min == 0 && (dt.hour == 13 || dt.hour == 16)) return dt.hour;
+   if(InpTradeOnlyAt13_16_18)
+   {
+      if(dt.min == 0 && (dt.hour == 13 || dt.hour == 16 || dt.hour == 18)) return dt.hour;
+   }
+   else
+   {
+      if(dt.min == 0 && (dt.hour == 13 || dt.hour == 16)) return dt.hour;
+   }
    return 0;
 }
 
@@ -256,6 +407,8 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    g_london_high = 0.0; g_london_low = 0.0; g_london_range_has = false;
    g_buy_done = false;
    g_sell_done = false;
+   g_partial_ticket_buy_done = 0;
+   g_partial_ticket_sell_done = 0;
 }
 
 bool HasPosition(const int dir)
@@ -458,9 +611,13 @@ void ProcessSignalOnNewBar()
    }
    if(InpDrawAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_has && g_asia_open > 0.0)
    {
-      bool asiaBear = (g_asia_close < g_asia_open);
-      string n = g_prefix + IntegerToString(g_day_key) + "_ASIA_BIAS_" + IntegerToString((long)tBarOpen);
-      CreateOrUpdateArrow(n, tBarOpen, l - 12 * _Point, asiaBear);
+      bool buyBias = (g_asia_high > 0.0 && l > g_asia_high);
+      bool sellBias = (g_asia_low > 0.0 && h < g_asia_low);
+      if(buyBias || sellBias)
+      {
+         string n = g_prefix + IntegerToString(g_day_key) + "_ASIA_BIAS_" + IntegerToString((long)tBarOpen);
+         CreateOrUpdateArrow(n, tBarOpen, buyBias ? (l - 12 * _Point) : (h + 12 * _Point), buyBias);
+      }
    }
 
    int entrySlot = EntrySlotLocal(tBarOpen);
@@ -472,6 +629,38 @@ void ProcessSignalOnNewBar()
    {
       dirOkB = false;
       dirOkS = c02AboveLondon;
+   }
+
+   if(InpUseHammerSlots && (entrySlot == 13 || entrySlot == 16))
+   {
+      double candleSize = MathAbs(h - l);
+      bool isHammer = (candleSize > 0.0 && (h - InpHammerFibLevel * candleSize) < MathMin(o, c));
+      bool isShoot = (candleSize > 0.0 && (l + InpHammerFibLevel * candleSize) > MathMax(o, c));
+      bool doBuy = (isHammer && !isShoot);
+      bool doSell = (isShoot && !isHammer);
+
+      if(doBuy && dirOkB)
+      {
+         if(!(InpMaxOneTradePerDayPerSide && g_buy_done))
+         {
+            if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+            if(!HasPosition(+1))
+            {
+               if(SpreadOk() && TryEnter(true, tBarOpen, c)) g_buy_done = true;
+            }
+         }
+      }
+      if(doSell && dirOkS)
+      {
+         if(!(InpMaxOneTradePerDayPerSide && g_sell_done))
+         {
+            if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+            if(!HasPosition(-1))
+            {
+               if(SpreadOk() && TryEnter(false, tBarOpen, c)) g_sell_done = true;
+            }
+         }
+      }
    }
 
    if(g_ib_has && g_h13_has)
@@ -583,4 +772,6 @@ void OnTick()
 {
    if(!InpEnabled) return;
    ProcessSignalOnNewBar();
+   ManagePartialTp();
+   ManageBreakEven();
 }

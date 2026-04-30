@@ -2,14 +2,19 @@
 indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500)
 
 // --- INPUT ---
-showSessions = input.bool(true, "Mostra Box Sessioni (Asia, London, NY)")
+showSessions = input.bool(false, "Mostra Box Sessioni (Asia, London, NY)")
 showDailyHL  = input.bool(true, "Mostra Daily High/Low")
+showDailyOpen = input.bool(false, "Mostra Daily Open (line viola)")
 showNYOpen   = input.bool(true, "Mostra NY Open (14:30)")
 showA2NRange = input.bool(true, "Mostra Range 00:00→NY (Max/Min)")
 showMidnightLines = input.bool(true, "Mostra Linee 00:00 (High/Low)")
 show02CandleLines = input.bool(true, "Mostra Linee 02:00 (High/Low)")
 showAsiaBiasArrow = input.bool(true, "Freccia Asia @09:00")
 useAsiaLondonSell13 = input.bool(true, "Sell @13 se Asia+02 sopra London")
+hsEnabled = input.bool(true, "Hammer & Shooting")
+hsFibLevel = input.float(defval=0.382, title="Hammer Fib Level", options=[0.236, 0.382, 0.5])
+hsConfirm = input.bool(defval=true, title="Hammer Confirm next candle")
+hsShowLabels = input.bool(defval=true, title="Hammer Show labels")
 
 useDailyOpenFilter     = input.bool(true, "Filtro Daily Open (Midnight)")
 useIbMidFilter         = input.bool(true, "Filtro IB Mid")
@@ -35,7 +40,7 @@ else
     dHigh := math.max(dHigh, high)
     dLow := math.min(dLow, low)
 
-plot(dailyOpen, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
+plot(showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
 plot(showDailyHL ? dHigh : na, "Daily High", color.white, 1, plot.style_linebr)
 plot(showDailyHL ? dLow : na, "Daily Low", color.white, 1, plot.style_linebr)
 
@@ -292,8 +297,9 @@ is1m = timeframe.isminutes and timeframe.multiplier == 1
 isStar13 = is1m ? (hour(time, tz) == 12 and minute(time, tz) == 59) : (hour(time, tz) == 13 and minute(time, tz) == 0)
 isStar16 = is1m ? (hour(time, tz) == 15 and minute(time, tz) == 59) : (hour(time, tz) == 16 and minute(time, tz) == 0)
 is_0900 = hour(time, tz) == 9 and minute(time, tz) == 0
-asiaBear = not na(asiaOpen) and not na(asiaClose) and asiaClose < asiaOpen
-asiaBull = not na(asiaOpen) and not na(asiaClose) and asiaClose > asiaOpen
+asiaRangeHas = not na(asiaHigh) and not na(asiaLow)
+asiaBiasBuy = asiaRangeHas and is_0900 and low > asiaHigh
+asiaBiasSell = asiaRangeHas and is_0900 and high < asiaLow
 var bool bDone = false
 var bool sDone = false
 if is_0000
@@ -319,8 +325,19 @@ plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=
 plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
 plotshape(isStar13, title="13:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
 plotshape(isStar16, title="16:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
-plotshape(showAsiaBiasArrow and is_0900 and asiaBear, title="Asia Bias Long", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="A")
-plotshape(showAsiaBiasArrow and is_0900 and asiaBull, title="Asia Bias Short", style=shape.triangledown, location=location.belowbar, color=color.red, size=size.small, text="A")
+plotshape(showAsiaBiasArrow and asiaBiasBuy, title="Asia Bias Buy", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="A")
+plotshape(showAsiaBiasArrow and asiaBiasSell, title="Asia Bias Sell", style=shape.triangledown, location=location.belowbar, color=color.red, size=size.small, text="A")
+
+hsIsGreen = open < close
+hsIsRed = open > close
+hsCandleSize = math.abs(high - low)
+hsIsHammer = high - hsFibLevel * hsCandleSize < math.min(open, close)
+hsIsShoot = low + hsFibLevel * hsCandleSize > math.max(open, close)
+hsConfirmedHammer = hsConfirm ? hsIsHammer[1] and hsIsGreen : hsIsHammer
+hsConfirmedShoot = hsConfirm ? hsIsShoot[1] and hsIsRed : hsIsShoot
+hsOffset = hsConfirm ? -1 : 0
+plotshape(hsEnabled and hsConfirmedHammer, title="Hammer", style=shape.arrowup, location=location.belowbar, color=color.green, textcolor=color.green, text="Hammer", offset=hsOffset, display=hsShowLabels ? display.all : display.none)
+plotshape(hsEnabled and hsConfirmedShoot, title="Shooting", style=shape.arrowdown, location=location.abovebar, color=color.red, textcolor=color.red, text="Shooting", offset=hsOffset, display=hsShowLabels ? display.all : display.none)
 
 canMidLong = midnightSignalsEnabled and midSweepDown and not midLongDone and (bar_index - midSweepDownBar) <= reclaimMaxBars
 canMidShort = midnightSignalsEnabled and midSweepUp and not midShortDone and (bar_index - midSweepUpBar) <= reclaimMaxBars

@@ -6,9 +6,10 @@
 input group "Capital Indicator"
 input bool InpEnabled = true;
 input int InpItalyOffsetHours = 2;
-input bool InpShowSessions = true;
+input bool InpShowSessions = false;
 input int InpBoxAlpha = 60;
 input bool InpShowDailyHL = true;
+input bool InpShowDailyOpen = false;
 input bool InpShowNYOpen = true;
 input bool InpShowIB = true;
 input bool InpShowH13 = true;
@@ -18,13 +19,13 @@ input bool InpShowAsiaBiasArrow = true;
 input bool InpShowSignals = true;
 input bool InpShowStatusLabel = true;
 input bool InpShowChartComment = true;
-input bool InpShowTestLines = true;
+input bool InpShowTestLines = false;
 input int InpHistoryDays = 5;
 input bool InpDebugOverlay = true;
 
 input group "Alerts"
 input bool InpSendAlert = true;
-input bool InpSendPush = false;
+input bool InpSendPush = true;
 input bool InpNotifyHistorical = false;
 input bool InpNotifyCrossLevels = true;
 
@@ -36,6 +37,12 @@ input bool InpUseAsiaLondonSell13 = true;
 input int InpSweepBufferPoints = 0;
 input int InpReclaimMaxBars = 6;
 input bool InpMidnightSignalsEnabled = true;
+
+input group "Hammer/Shooting"
+input bool InpHammerShootingEnabled = true;
+input double InpHammerFibLevel = 0.382;
+input bool InpHammerConfirmNextCandle = true;
+input bool InpHammerShowLabels = true;
 
 input group "Colors"
 input color InpDailyOpenColor = clrPurple;
@@ -121,6 +128,12 @@ bool g_asia_bias_has = false;
 datetime g_last_cross_h13_h = 0, g_last_cross_h13_l = 0;
 datetime g_last_cross_h02_h = 0, g_last_cross_h02_l = 0;
 
+bool g_prev_hammer = false;
+bool g_prev_shoot = false;
+datetime g_prev_hs_time = 0;
+double g_prev_hs_high = 0.0;
+double g_prev_hs_low = 0.0;
+
 datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
 datetime NextLocalMidnightServer(const datetime tServer)
@@ -184,6 +197,16 @@ void DeleteByPrefix(const string pfx)
    {
       string n = ObjectName(0, i);
       if(StringFind(n, pfx) == 0) ObjectDelete(0, n);
+   }
+}
+
+void DeleteByToken(const string token)
+{
+   int total = ObjectsTotal(0, -1, -1);
+   for(int i = total - 1; i >= 0; i--)
+   {
+      string n = ObjectName(0, i);
+      if(StringFind(n, g_prefix) == 0 && StringFind(n, token) >= 0) ObjectDelete(0, n);
    }
 }
 
@@ -422,6 +445,11 @@ void ResetDay(const int dayKey)
    g_last_cross_h13_h = 0; g_last_cross_h13_l = 0; g_last_cross_h02_h = 0; g_last_cross_h02_l = 0;
    g_buy_done = false;
    g_sell_done = false;
+   g_prev_hammer = false;
+   g_prev_shoot = false;
+   g_prev_hs_time = 0;
+   g_prev_hs_high = 0.0;
+   g_prev_hs_low = 0.0;
    DeleteByPrefix(g_prefix + IntegerToString(dayKey) + "_");
 }
 
@@ -536,7 +564,10 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
 
    if(g_daily_has)
    {
-      CreateOrUpdateRay(dayPfx + "D_OPEN", g_day_start_time == 0 ? tBarOpen : g_day_start_time, g_daily_open, InpDailyOpenColor, STYLE_SOLID, 1);
+      if(InpShowDailyOpen)
+         CreateOrUpdateRay(dayPfx + "D_OPEN", g_day_start_time == 0 ? tBarOpen : g_day_start_time, g_daily_open, InpDailyOpenColor, STYLE_SOLID, 1);
+      else
+         DeleteByToken("_D_OPEN");
       if(InpShowDailyHL)
       {
          datetime tStart = (g_day_start_time == 0 ? tBarOpen : g_day_start_time);
@@ -578,17 +609,22 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
       CreateOrUpdateRay(dayPfx + "MID_L", tStart, g_mid_low, InpMidnightColor, STYLE_SOLID, 2);
    }
 
-   if(InpShowAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_bias_has && g_asia_open > 0.0)
+   if(InpShowAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_has)
    {
-      bool asiaBear = (g_asia_close < g_asia_open);
-      string n1 = (g_prefix + IntegerToString(g_day_key) + "_") + "ASIA_BIAS_" + IntegerToString((long)tBarOpen);
-      if(ObjectFind(0, n1) < 0)
+      bool buyBias = (g_asia_high > 0.0 && l > g_asia_high);
+      bool sellBias = (g_asia_low > 0.0 && h < g_asia_low);
+      if(buyBias || sellBias)
       {
-         ObjectCreate(0, n1, asiaBear ? OBJ_ARROW_BUY : OBJ_ARROW_SELL, 0, tBarOpen, l - 12 * _Point);
-         ObjectSetInteger(0, n1, OBJPROP_COLOR, asiaBear ? InpBuyColor : InpSellColor);
-         ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
-         ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
-         ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+         string n1 = (g_prefix + IntegerToString(g_day_key) + "_") + "ASIA_BIAS_" + IntegerToString((long)tBarOpen);
+         if(ObjectFind(0, n1) < 0)
+         {
+            ObjectCreate(0, n1, buyBias ? OBJ_ARROW_BUY : OBJ_ARROW_SELL, 0, tBarOpen, buyBias ? (l - 12 * _Point) : (h + 12 * _Point));
+            ObjectSetInteger(0, n1, OBJPROP_COLOR, buyBias ? InpBuyColor : InpSellColor);
+            ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+            ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+            NotifySignal("ASIA BIAS " + string(buyBias ? "BUY" : "SELL"), tBarOpen);
+         }
       }
    }
 
@@ -602,7 +638,90 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
          ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
          ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+         NotifySignal("SELL 13 (02>London)", tBarOpen);
       }
+   }
+
+   if(InpHammerShootingEnabled)
+   {
+      double candleSize = MathAbs(h - l);
+      bool isGreen = (o < c);
+      bool isRed = (o > c);
+      bool isHammer = (candleSize > 0.0 && (h - InpHammerFibLevel * candleSize) < MathMin(o, c));
+      bool isShoot = (candleSize > 0.0 && (l + InpHammerFibLevel * candleSize) > MathMax(o, c));
+
+      if(!InpHammerConfirmNextCandle)
+      {
+         if(isHammer)
+         {
+            string n1 = dayPfx + "HAMMER_" + IntegerToString((long)tBarOpen);
+            string n2 = n1 + "_T";
+            if(ObjectFind(0, n1) < 0)
+            {
+               ObjectCreate(0, n1, OBJ_ARROW_BUY, 0, tBarOpen, l - 10 * _Point);
+               ObjectSetInteger(0, n1, OBJPROP_COLOR, clrGreen);
+               ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+               ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+               NotifySignal("HAMMER", tBarOpen);
+            }
+            if(InpHammerShowLabels) CreateOrUpdateText(n2, tBarOpen, l - 10 * _Point, "Hammer", clrGreen, ANCHOR_LEFT_LOWER);
+         }
+         if(isShoot)
+         {
+            string n1 = dayPfx + "SHOOT_" + IntegerToString((long)tBarOpen);
+            string n2 = n1 + "_T";
+            if(ObjectFind(0, n1) < 0)
+            {
+               ObjectCreate(0, n1, OBJ_ARROW_SELL, 0, tBarOpen, h + 10 * _Point);
+               ObjectSetInteger(0, n1, OBJPROP_COLOR, clrRed);
+               ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+               ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+               NotifySignal("SHOOTING", tBarOpen);
+            }
+            if(InpHammerShowLabels) CreateOrUpdateText(n2, tBarOpen, h + 10 * _Point, "Shooting", clrRed, ANCHOR_LEFT_UPPER);
+         }
+      }
+      else
+      {
+         if(g_prev_hammer && isGreen && g_prev_hs_time != 0)
+         {
+            string n1 = dayPfx + "HAMMER_" + IntegerToString((long)g_prev_hs_time);
+            string n2 = n1 + "_T";
+            if(ObjectFind(0, n1) < 0)
+            {
+               ObjectCreate(0, n1, OBJ_ARROW_BUY, 0, g_prev_hs_time, g_prev_hs_low - 10 * _Point);
+               ObjectSetInteger(0, n1, OBJPROP_COLOR, clrGreen);
+               ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+               ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+               NotifySignal("HAMMER (confirmed)", tBarOpen);
+            }
+            if(InpHammerShowLabels) CreateOrUpdateText(n2, g_prev_hs_time, g_prev_hs_low - 10 * _Point, "Hammer", clrGreen, ANCHOR_LEFT_LOWER);
+         }
+         if(g_prev_shoot && isRed && g_prev_hs_time != 0)
+         {
+            string n1 = dayPfx + "SHOOT_" + IntegerToString((long)g_prev_hs_time);
+            string n2 = n1 + "_T";
+            if(ObjectFind(0, n1) < 0)
+            {
+               ObjectCreate(0, n1, OBJ_ARROW_SELL, 0, g_prev_hs_time, g_prev_hs_high + 10 * _Point);
+               ObjectSetInteger(0, n1, OBJPROP_COLOR, clrRed);
+               ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+               ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+               NotifySignal("SHOOTING (confirmed)", tBarOpen);
+            }
+            if(InpHammerShowLabels) CreateOrUpdateText(n2, g_prev_hs_time, g_prev_hs_high + 10 * _Point, "Shooting", clrRed, ANCHOR_LEFT_UPPER);
+         }
+      }
+
+      g_prev_hammer = isHammer;
+      g_prev_shoot = isShoot;
+      g_prev_hs_time = tBarOpen;
+      g_prev_hs_high = h;
+      g_prev_hs_low = l;
    }
 
    if(InpShowSignals && g_ib_has && g_h13_has)
@@ -730,12 +849,7 @@ int OnInit()
 {
    CreateOrUpdateStatusLabel("CAP_IND loaded");
    UpdateChartComment("CAP_IND loaded");
-   if(InpShowTestLines)
-   {
-      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      if(bid > 0.0) CreateOrUpdateHLine(g_prefix + "TEST_HLINE", bid, clrMagenta, STYLE_SOLID, 2);
-      CreateOrUpdateVLine(g_prefix + "TEST_VLINE", TimeCurrent(), clrMagenta, STYLE_SOLID, 2);
-   }
+   DeleteByToken("TEST_");
    if(InpDebugOverlay)
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -757,6 +871,7 @@ int OnCalculate(const int rates_total,
                 const int &spread[])
 {
    if(!InpEnabled || rates_total < 10) return rates_total;
+   DeleteByToken("TEST_");
 
    bool isSeries = (time[0] > time[rates_total - 1]);
 

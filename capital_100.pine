@@ -15,6 +15,9 @@ hsEnabled = input.bool(true, "Hammer & Shooting")
 hsFibLevel = input.float(defval=0.382, title="Hammer Fib Level", options=[0.236, 0.382, 0.5])
 hsConfirm = input.bool(defval=true, title="Hammer Confirm next candle")
 hsShowLabels = input.bool(defval=true, title="Hammer Show labels")
+hsFibRetraceEnabled = input.bool(true, "Hammer Fib Retrace (0.5/0.382)")
+hsFibUse05 = input.bool(true, "Fib 0.5")
+hsFibUse0382 = input.bool(true, "Fib 0.382")
 
 useDailyOpenFilter     = input.bool(true, "Filtro Daily Open (Midnight)")
 useIbMidFilter         = input.bool(true, "Filtro IB Mid")
@@ -338,6 +341,93 @@ hsConfirmedShoot = hsConfirm ? hsIsShoot[1] and hsIsRed : hsIsShoot
 hsOffset = hsConfirm ? -1 : 0
 plotshape(hsEnabled and hsConfirmedHammer, title="Hammer", style=shape.arrowup, location=location.belowbar, color=color.green, textcolor=color.green, text="Hammer", offset=hsOffset, display=hsShowLabels ? display.all : display.none)
 plotshape(hsEnabled and hsConfirmedShoot, title="Shooting", style=shape.arrowdown, location=location.abovebar, color=color.red, textcolor=color.red, text="Shooting", offset=hsOffset, display=hsShowLabels ? display.all : display.none)
+
+var line hsFib0 = na
+var line hsFib0382 = na
+var line hsFib05 = na
+var line hsFib1 = na
+var line hsFibDiag = na
+var int hsFibPatternIndex = na
+var float hsFibHigh = na
+var float hsFibLow = na
+var int hsFibDir = 0
+var bool hsFibPending = false
+var int hsFibExpiry = na
+
+hsBuyTouch = false
+hsSellTouch = false
+deleteFibNow = false
+createFibNow = false
+
+if hsEnabled and hsFibRetraceEnabled
+    newHammer = hsConfirmedHammer
+    newShoot = hsConfirmedShoot
+    if newHammer or newShoot
+        createFibNow := true
+        hsFibPatternIndex := hsConfirm ? (bar_index - 1) : bar_index
+        hsFibHigh := hsConfirm ? high[1] : high
+        hsFibLow := hsConfirm ? low[1] : low
+        hsFibDir := newHammer ? 1 : -1
+        hsFibPending := true
+        hsFibExpiry := hsConfirm ? bar_index : (bar_index + 1)
+
+    if hsFibPending and not na(hsFibHigh) and not na(hsFibLow) and not na(hsFibExpiry)
+        if bar_index == hsFibExpiry
+            rr = hsFibHigh - hsFibLow
+            lv0382 = hsFibLow + 0.382 * rr
+            lv05 = hsFibLow + 0.5 * rr
+            touched = (hsFibUse05 and low <= lv05 and high >= lv05) or (hsFibUse0382 and low <= lv0382 and high >= lv0382)
+            if touched
+                hsBuyTouch := hsFibDir == 1
+                hsSellTouch := hsFibDir == -1
+                hsFibPending := false
+            else
+                deleteFibNow := true
+        else if bar_index > hsFibExpiry
+            deleteFibNow := true
+else
+    deleteFibNow := true
+
+if deleteFibNow or createFibNow
+    if not na(hsFib0)
+        line.delete(hsFib0)
+    if not na(hsFib0382)
+        line.delete(hsFib0382)
+    if not na(hsFib05)
+        line.delete(hsFib05)
+    if not na(hsFib1)
+        line.delete(hsFib1)
+    if not na(hsFibDiag)
+        line.delete(hsFibDiag)
+    hsFib0 := na
+    hsFib0382 := na
+    hsFib05 := na
+    hsFib1 := na
+    hsFibDiag := na
+    if deleteFibNow
+        hsFibPatternIndex := na
+        hsFibHigh := na
+        hsFibLow := na
+        hsFibDir := 0
+        hsFibPending := false
+        hsFibExpiry := na
+
+if createFibNow and not na(hsFibPatternIndex) and not na(hsFibHigh) and not na(hsFibLow)
+    r = hsFibHigh - hsFibLow
+    lv0 = hsFibLow
+    lv1 = hsFibHigh
+    lv0382 = hsFibLow + 0.382 * r
+    lv05 = hsFibLow + 0.5 * r
+    hsFib0 := line.new(hsFibPatternIndex, lv0, hsFibPatternIndex + 1, lv0, extend=extend.right, color=color.new(color.gray, 0), width=1)
+    hsFib1 := line.new(hsFibPatternIndex, lv1, hsFibPatternIndex + 1, lv1, extend=extend.right, color=color.new(color.gray, 0), width=1)
+    if hsFibUse0382
+        hsFib0382 := line.new(hsFibPatternIndex, lv0382, hsFibPatternIndex + 1, lv0382, extend=extend.right, color=color.orange, width=2)
+    if hsFibUse05
+        hsFib05 := line.new(hsFibPatternIndex, lv05, hsFibPatternIndex + 1, lv05, extend=extend.right, color=color.green, width=2)
+    hsFibDiag := line.new(hsFibPatternIndex, hsFibHigh, hsFibPatternIndex + 20, hsFibLow, extend=extend.none, color=color.new(color.gray, 30), style=line.style_dashed, width=1)
+
+plotshape(hsBuyTouch, title="Fib Buy (Hammer)", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small, text="BUY")
+plotshape(hsSellTouch, title="Fib Sell (Shooting)", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
 
 canMidLong = midnightSignalsEnabled and midSweepDown and not midLongDone and (bar_index - midSweepDownBar) <= reclaimMaxBars
 canMidShort = midnightSignalsEnabled and midSweepUp and not midShortDone and (bar_index - midSweepUpBar) <= reclaimMaxBars

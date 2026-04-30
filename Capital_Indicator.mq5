@@ -43,6 +43,9 @@ input bool InpHammerShootingEnabled = true;
 input double InpHammerFibLevel = 0.382;
 input bool InpHammerConfirmNextCandle = true;
 input bool InpHammerShowLabels = true;
+input bool InpHammerFibRetraceEnabled = true;
+input bool InpHammerFibUse05 = true;
+input bool InpHammerFibUse0382 = true;
 
 input group "Colors"
 input color InpDailyOpenColor = clrPurple;
@@ -133,6 +136,13 @@ bool g_prev_shoot = false;
 datetime g_prev_hs_time = 0;
 double g_prev_hs_high = 0.0;
 double g_prev_hs_low = 0.0;
+
+bool g_hsfib_pending = false;
+int g_hsfib_dir = 0;
+datetime g_hsfib_pattern_time = 0;
+double g_hsfib_high = 0.0;
+double g_hsfib_low = 0.0;
+datetime g_hsfib_expiry = 0;
 
 datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
@@ -277,6 +287,30 @@ void CreateOrUpdateRay(const string name, const datetime t1, const double price,
    ObjectMove(0, name, 1, t2, price);
    ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
    ObjectSetInteger(0, name, OBJPROP_RAY_LEFT, false);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+}
+
+void CreateOrUpdateTrendSegment(const string name, const datetime t1, const double p1, const datetime t2, const double p2, const color clr, const ENUM_LINE_STYLE style, const int width)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ResetLastError();
+      if(!ObjectCreate(0, name, OBJ_TREND, 0, t1, p1, t2, p2))
+      {
+         g_last_create_err = GetLastError();
+         g_create_fails++;
+         return;
+      }
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, name, OBJPROP_RAY_LEFT, false);
+   }
+   ObjectMove(0, name, 0, t1, p1);
+   ObjectMove(0, name, 1, t2, p2);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
    ObjectSetInteger(0, name, OBJPROP_STYLE, style);
    ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
@@ -450,6 +484,13 @@ void ResetDay(const int dayKey)
    g_prev_hs_time = 0;
    g_prev_hs_high = 0.0;
    g_prev_hs_low = 0.0;
+   g_hsfib_pending = false;
+   g_hsfib_dir = 0;
+   g_hsfib_pattern_time = 0;
+   g_hsfib_high = 0.0;
+   g_hsfib_low = 0.0;
+   g_hsfib_expiry = 0;
+   DeleteByToken("HSFIB_");
    DeleteByPrefix(g_prefix + IntegerToString(dayKey) + "_");
 }
 
@@ -714,6 +755,119 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
                NotifySignal("SHOOTING (confirmed)", tBarOpen);
             }
             if(InpHammerShowLabels) CreateOrUpdateText(n2, g_prev_hs_time, g_prev_hs_high + 10 * _Point, "Shooting", clrRed, ANCHOR_LEFT_UPPER);
+         }
+      }
+
+      if(InpHammerFibRetraceEnabled)
+      {
+         bool createFib = false;
+         int dir = 0;
+         datetime pTime = 0;
+         double pHigh = 0.0;
+         double pLow = 0.0;
+         datetime expiry = 0;
+
+         if(!InpHammerConfirmNextCandle)
+         {
+            if(isHammer || isShoot)
+            {
+               createFib = true;
+               dir = isHammer ? 1 : -1;
+               pTime = tBarOpen;
+               pHigh = h;
+               pLow = l;
+               expiry = tBarOpen + (datetime)PeriodSeconds(_Period);
+            }
+         }
+         else
+         {
+            if(g_prev_hammer && isGreen && g_prev_hs_time != 0)
+            {
+               createFib = true;
+               dir = 1;
+               pTime = g_prev_hs_time;
+               pHigh = g_prev_hs_high;
+               pLow = g_prev_hs_low;
+               expiry = tBarOpen;
+            }
+            else if(g_prev_shoot && isRed && g_prev_hs_time != 0)
+            {
+               createFib = true;
+               dir = -1;
+               pTime = g_prev_hs_time;
+               pHigh = g_prev_hs_high;
+               pLow = g_prev_hs_low;
+               expiry = tBarOpen;
+            }
+         }
+
+         if(createFib && pHigh > pLow && pTime != 0)
+         {
+            DeleteByToken("HSFIB_");
+            double rng = pHigh - pLow;
+            double lv0 = pLow;
+            double lv1 = pHigh;
+            double lv0382 = pLow + 0.382 * rng;
+            double lv05 = pLow + 0.5 * rng;
+
+            string fp = dayPfx + "HSFIB_";
+            CreateOrUpdateRay(fp + "0", pTime, lv0, clrSilver, STYLE_SOLID, 1);
+            CreateOrUpdateRay(fp + "1", pTime, lv1, clrSilver, STYLE_SOLID, 1);
+            if(InpHammerFibUse0382) CreateOrUpdateRay(fp + "0382", pTime, lv0382, clrOrange, STYLE_SOLID, 2);
+            if(InpHammerFibUse05) CreateOrUpdateRay(fp + "05", pTime, lv05, clrLimeGreen, STYLE_SOLID, 2);
+            CreateOrUpdateTrendSegment(fp + "D", pTime, pHigh, pTime + (datetime)PeriodSeconds(_Period) * 20, pLow, clrSilver, STYLE_DASH, 1);
+
+            g_hsfib_pending = true;
+            g_hsfib_dir = dir;
+            g_hsfib_pattern_time = pTime;
+            g_hsfib_high = pHigh;
+            g_hsfib_low = pLow;
+            g_hsfib_expiry = expiry;
+         }
+
+         if(g_hsfib_pending && g_hsfib_expiry != 0 && tBarOpen == g_hsfib_expiry && g_hsfib_high > g_hsfib_low)
+         {
+            double rng = g_hsfib_high - g_hsfib_low;
+            double lv0382 = g_hsfib_low + 0.382 * rng;
+            double lv05 = g_hsfib_low + 0.5 * rng;
+            bool touched = (InpHammerFibUse05 && l <= lv05 && h >= lv05) || (InpHammerFibUse0382 && l <= lv0382 && h >= lv0382);
+            if(touched)
+            {
+               bool isBuySig = (g_hsfib_dir > 0);
+               string n1 = dayPfx + (isBuySig ? "SIG_FIB_BUY_" : "SIG_FIB_SELL_") + IntegerToString((long)tBarOpen);
+               string n2 = n1 + "_T";
+               if(ObjectFind(0, n1) < 0)
+               {
+                  ObjectCreate(0, n1, isBuySig ? OBJ_ARROW_BUY : OBJ_ARROW_SELL, 0, tBarOpen, isBuySig ? (l - 12 * _Point) : (h + 12 * _Point));
+                  ObjectSetInteger(0, n1, OBJPROP_COLOR, isBuySig ? InpBuyColor : InpSellColor);
+                  ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+                  ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+                  ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+               }
+               CreateOrUpdateText(n2, tBarOpen, isBuySig ? (l - 12 * _Point) : (h + 12 * _Point), isBuySig ? "BUY" : "SELL", isBuySig ? InpBuyColor : InpSellColor, isBuySig ? ANCHOR_LEFT_LOWER : ANCHOR_LEFT_UPPER);
+               NotifySignal(isBuySig ? "FIB BUY (Hammer)" : "FIB SELL (Shooting)", tBarOpen);
+               g_hsfib_pending = false;
+            }
+            else
+            {
+               DeleteByToken("HSFIB_");
+               g_hsfib_pending = false;
+               g_hsfib_dir = 0;
+               g_hsfib_pattern_time = 0;
+               g_hsfib_high = 0.0;
+               g_hsfib_low = 0.0;
+               g_hsfib_expiry = 0;
+            }
+         }
+         else if(g_hsfib_pending && g_hsfib_expiry != 0 && tBarOpen > g_hsfib_expiry)
+         {
+            DeleteByToken("HSFIB_");
+            g_hsfib_pending = false;
+            g_hsfib_dir = 0;
+            g_hsfib_pattern_time = 0;
+            g_hsfib_high = 0.0;
+            g_hsfib_low = 0.0;
+            g_hsfib_expiry = 0;
          }
       }
 

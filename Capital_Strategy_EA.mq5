@@ -46,6 +46,12 @@ input int InpSweepBufferPoints = 0;
 input int InpReclaimMaxBars = 6;
 input bool InpMidnightSignalsEnabled = true;
 
+input group "Hammer Fib Retrace"
+input bool InpHammerFibRetraceEnabled = true;
+input bool InpHammerFibConfirmNextCandle = true;
+input bool InpHammerFibUse05 = true;
+input bool InpHammerFibUse0382 = true;
+
 input group "Alerts"
 input bool InpSendAlert = true;
 input bool InpSendPush = false;
@@ -101,6 +107,19 @@ bool g_sell_done = false;
 
 ulong g_partial_ticket_buy_done = 0;
 ulong g_partial_ticket_sell_done = 0;
+
+bool g_hs_prev_hammer = false;
+bool g_hs_prev_shoot = false;
+datetime g_hs_prev_time = 0;
+double g_hs_prev_high = 0.0;
+double g_hs_prev_low = 0.0;
+
+bool g_hsfib_pending = false;
+int g_hsfib_dir = 0;
+datetime g_hsfib_pattern_time = 0;
+double g_hsfib_high = 0.0;
+double g_hsfib_low = 0.0;
+datetime g_hsfib_expiry = 0;
 
 datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
@@ -362,6 +381,25 @@ void CreateOrUpdateRay(const string name, const datetime t1, const double price,
    ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_SOLID);
 }
 
+void CreateOrUpdateTrendSegment(const string name, const datetime t1, const double p1, const datetime t2, const double p2, const color clr, const ENUM_LINE_STYLE style, const int width)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ResetLastError();
+      if(!ObjectCreate(0, name, OBJ_TREND, 0, t1, p1, t2, p2)) return;
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, name, OBJPROP_RAY_LEFT, false);
+   }
+   ObjectMove(0, name, 0, t1, p1);
+   ObjectMove(0, name, 1, t2, p2);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+}
+
 void CreateOrUpdateArrow(const string name, const datetime t, const double price, const bool isBuy)
 {
    if(ObjectFind(0, name) < 0)
@@ -409,6 +447,17 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    g_sell_done = false;
    g_partial_ticket_buy_done = 0;
    g_partial_ticket_sell_done = 0;
+   g_hs_prev_hammer = false;
+   g_hs_prev_shoot = false;
+   g_hs_prev_time = 0;
+   g_hs_prev_high = 0.0;
+   g_hs_prev_low = 0.0;
+   g_hsfib_pending = false;
+   g_hsfib_dir = 0;
+   g_hsfib_pattern_time = 0;
+   g_hsfib_high = 0.0;
+   g_hsfib_low = 0.0;
+   g_hsfib_expiry = 0;
 }
 
 bool HasPosition(const int dir)
@@ -515,6 +564,28 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
    }
 
    DrawMidnightCandleLevels();
+}
+
+bool TryEnterWithSL(const bool isBuy, const datetime tBarOpen, const double barClose, const double slFixed)
+{
+   double entry = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(entry <= 0.0) entry = barClose;
+
+   double sl = 0.0, tp = 0.0;
+   if(InpUseStopLoss)
+   {
+      if(slFixed <= 0.0) return false;
+      double risk = isBuy ? (entry - slFixed) : (slFixed - entry);
+      if(risk <= 0.0) return false;
+      sl = slFixed;
+      if(InpUseTakeProfit && InpRiskReward > 0.0)
+         tp = isBuy ? (entry + InpRiskReward * risk) : (entry - InpRiskReward * risk);
+   }
+
+   trade.SetDeviationInPoints(InpDeviationPoints);
+   bool ok = isBuy ? trade.Buy(InpLots, _Symbol, 0.0, sl, tp) : trade.Sell(InpLots, _Symbol, 0.0, sl, tp);
+   if(ok) Notify(isBuy ? "BUY Fib" : "SELL Fib", tBarOpen);
+   return ok;
 }
 
 bool TryEnter(const bool isBuy, const datetime tBarOpen, const double barClose)
@@ -661,6 +732,146 @@ void ProcessSignalOnNewBar()
             }
          }
       }
+   }
+
+   if(InpHammerFibRetraceEnabled)
+   {
+      string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
+      double candleSize = MathAbs(h - l);
+      bool isGreen = (o < c);
+      bool isRed = (o > c);
+      bool isHammer = (candleSize > 0.0 && (h - InpHammerFibLevel * candleSize) < MathMin(o, c));
+      bool isShoot = (candleSize > 0.0 && (l + InpHammerFibLevel * candleSize) > MathMax(o, c));
+
+      bool createFib = false;
+      int dir = 0;
+      datetime pTime = 0;
+      double pHigh = 0.0;
+      double pLow = 0.0;
+      datetime expiry = 0;
+
+      if(!InpHammerFibConfirmNextCandle)
+      {
+         if(isHammer || isShoot)
+         {
+            createFib = true;
+            dir = isHammer ? 1 : -1;
+            pTime = tBarOpen;
+            pHigh = h;
+            pLow = l;
+            expiry = tBarOpen + (datetime)PeriodSeconds(_Period);
+         }
+      }
+      else
+      {
+         if(g_hs_prev_hammer && isGreen && g_hs_prev_time != 0)
+         {
+            createFib = true;
+            dir = 1;
+            pTime = g_hs_prev_time;
+            pHigh = g_hs_prev_high;
+            pLow = g_hs_prev_low;
+            expiry = tBarOpen;
+         }
+         else if(g_hs_prev_shoot && isRed && g_hs_prev_time != 0)
+         {
+            createFib = true;
+            dir = -1;
+            pTime = g_hs_prev_time;
+            pHigh = g_hs_prev_high;
+            pLow = g_hs_prev_low;
+            expiry = tBarOpen;
+         }
+      }
+
+      if(createFib && pHigh > pLow && pTime != 0)
+      {
+         DeleteByPrefix(dayPfx + "HSFIB_");
+         double rng = pHigh - pLow;
+         double lv0 = pLow;
+         double lv1 = pHigh;
+         double lv0382 = pLow + 0.382 * rng;
+         double lv05 = pLow + 0.5 * rng;
+
+         string fp = dayPfx + "HSFIB_";
+         CreateOrUpdateRay(fp + "0", pTime, lv0, clrSilver, 1);
+         CreateOrUpdateRay(fp + "1", pTime, lv1, clrSilver, 1);
+         if(InpHammerFibUse0382) CreateOrUpdateRay(fp + "0382", pTime, lv0382, clrOrange, 2);
+         if(InpHammerFibUse05) CreateOrUpdateRay(fp + "05", pTime, lv05, clrLimeGreen, 2);
+         CreateOrUpdateTrendSegment(fp + "D", pTime, pHigh, pTime + (datetime)PeriodSeconds(_Period) * 20, pLow, clrSilver, STYLE_DASH, 1);
+
+         g_hsfib_pending = true;
+         g_hsfib_dir = dir;
+         g_hsfib_pattern_time = pTime;
+         g_hsfib_high = pHigh;
+         g_hsfib_low = pLow;
+         g_hsfib_expiry = expiry;
+      }
+
+      if(g_hsfib_pending && g_hsfib_expiry != 0 && tBarOpen == g_hsfib_expiry && g_hsfib_high > g_hsfib_low)
+      {
+         double rng = g_hsfib_high - g_hsfib_low;
+         double lv0382 = g_hsfib_low + 0.382 * rng;
+         double lv05 = g_hsfib_low + 0.5 * rng;
+         bool touched = (InpHammerFibUse05 && l <= lv05 && h >= lv05) || (InpHammerFibUse0382 && l <= lv0382 && h >= lv0382);
+         if(touched)
+         {
+            bool isBuySig = (g_hsfib_dir > 0);
+            string n = dayPfx + (isBuySig ? "SIG_FIB_BUY_" : "SIG_FIB_SELL_") + IntegerToString((long)tBarOpen);
+            CreateOrUpdateArrow(n, tBarOpen, isBuySig ? (l - 12 * _Point) : (h + 12 * _Point), isBuySig);
+
+            if(isBuySig)
+            {
+               if(!(InpMaxOneTradePerDayPerSide && g_buy_done))
+               {
+                  if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+                  if(!HasPosition(+1))
+                  {
+                     if(SpreadOk() && TryEnterWithSL(true, tBarOpen, c, g_hsfib_low)) g_buy_done = true;
+                  }
+               }
+            }
+            else
+            {
+               if(!(InpMaxOneTradePerDayPerSide && g_sell_done))
+               {
+                  if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+                  if(!HasPosition(-1))
+                  {
+                     if(SpreadOk() && TryEnterWithSL(false, tBarOpen, c, g_hsfib_high)) g_sell_done = true;
+                  }
+               }
+            }
+
+            g_hsfib_pending = false;
+         }
+         else
+         {
+            DeleteByPrefix(dayPfx + "HSFIB_");
+            g_hsfib_pending = false;
+            g_hsfib_dir = 0;
+            g_hsfib_pattern_time = 0;
+            g_hsfib_high = 0.0;
+            g_hsfib_low = 0.0;
+            g_hsfib_expiry = 0;
+         }
+      }
+      else if(g_hsfib_pending && g_hsfib_expiry != 0 && tBarOpen > g_hsfib_expiry)
+      {
+         DeleteByPrefix(dayPfx + "HSFIB_");
+         g_hsfib_pending = false;
+         g_hsfib_dir = 0;
+         g_hsfib_pattern_time = 0;
+         g_hsfib_high = 0.0;
+         g_hsfib_low = 0.0;
+         g_hsfib_expiry = 0;
+      }
+
+      g_hs_prev_hammer = isHammer;
+      g_hs_prev_shoot = isShoot;
+      g_hs_prev_time = tBarOpen;
+      g_hs_prev_high = h;
+      g_hs_prev_low = l;
    }
 
    if(g_ib_has && g_h13_has)

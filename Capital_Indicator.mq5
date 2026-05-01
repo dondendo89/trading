@@ -38,6 +38,10 @@ input int InpSweepBufferPoints = 0;
 input int InpReclaimMaxBars = 6;
 input bool InpMidnightSignalsEnabled = true;
 
+input group "Logica Matteo Capital"
+input int InpRetestToleranceTicks = 5;
+input bool InpRequireSweepBeforeKiss = true;
+
 input group "Hammer/Shooting"
 input bool InpHammerShootingEnabled = true;
 input double InpHammerFibLevel = 0.382;
@@ -136,6 +140,11 @@ bool g_prev_shoot = false;
 datetime g_prev_hs_time = 0;
 double g_prev_hs_high = 0.0;
 double g_prev_hs_low = 0.0;
+
+bool g_kiss_swept_h = false;
+bool g_kiss_swept_l = false;
+bool g_kiss_done_b = false;
+bool g_kiss_done_s = false;
 
 bool g_hsfib_pending = false;
 int g_hsfib_dir = 0;
@@ -484,6 +493,10 @@ void ResetDay(const int dayKey)
    g_prev_hs_time = 0;
    g_prev_hs_high = 0.0;
    g_prev_hs_low = 0.0;
+   g_kiss_swept_h = false;
+   g_kiss_swept_l = false;
+   g_kiss_done_b = false;
+   g_kiss_done_s = false;
    g_hsfib_pending = false;
    g_hsfib_dir = 0;
    g_hsfib_pattern_time = 0;
@@ -521,6 +534,10 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
       g_ib_sweep_up_bar = -1;
       g_buy_done = false;
       g_sell_done = false;
+      g_kiss_swept_h = false;
+      g_kiss_swept_l = false;
+      g_kiss_done_b = false;
+      g_kiss_done_s = false;
    }
 
    if(IsLocalTime(tBarOpen, 14, 30)) { g_ny_time = tBarOpen; g_ny_open = o; g_ny_has = true; }
@@ -680,6 +697,69 @@ void UpdateWithBar(const datetime tBarOpen, const double o, const double h, cons
          ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
          NotifySignal("SELL 13 (02>London)", tBarOpen);
+      }
+   }
+
+   if(g_h13_has)
+   {
+      bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
+      if(isKill)
+      {
+         if(!g_kiss_swept_h && h > g_h13_high)
+         {
+            g_kiss_swept_h = true;
+            string n = dayPfx + "KISS_SWEEP_H_" + IntegerToString((long)tBarOpen);
+            CreateOrUpdateText(n, tBarOpen, h + 12 * _Point, "Swept", clrRed, ANCHOR_LEFT_UPPER);
+            NotifySignal("SWEEP HIGH (H13)", tBarOpen);
+         }
+         if(!g_kiss_swept_l && l < g_h13_low)
+         {
+            g_kiss_swept_l = true;
+            string n = dayPfx + "KISS_SWEEP_L_" + IntegerToString((long)tBarOpen);
+            CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "Swept", clrRed, ANCHOR_LEFT_LOWER);
+            NotifySignal("SWEEP LOW (H13)", tBarOpen);
+         }
+      }
+
+      double tol = (double)InpRetestToleranceTicks * _Point;
+      bool validKissBuy = isKill && (!InpRequireSweepBeforeKiss || g_kiss_swept_l) && !g_kiss_done_b && l <= (g_h13_low + tol) && c > g_h13_low;
+      bool validKissSell = isKill && (!InpRequireSweepBeforeKiss || g_kiss_swept_h) && !g_kiss_done_s && h >= (g_h13_high - tol) && c < g_h13_high;
+
+      if(validKissBuy) g_kiss_done_b = true;
+      if(validKissSell) g_kiss_done_s = true;
+
+      if(InpShowSignals)
+      {
+         if(validKissBuy)
+         {
+            string n1 = dayPfx + "KISS_BUY_" + IntegerToString((long)tBarOpen);
+            string n2 = n1 + "_T";
+            if(ObjectFind(0, n1) < 0)
+            {
+               ObjectCreate(0, n1, OBJ_ARROW_BUY, 0, tBarOpen, l - 12 * _Point);
+               ObjectSetInteger(0, n1, OBJPROP_COLOR, InpBuyColor);
+               ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+               ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+            }
+            CreateOrUpdateText(n2, tBarOpen, l - 12 * _Point, "KISS BUY", InpBuyColor, ANCHOR_LEFT_LOWER);
+            NotifySignal("KISS BUY", tBarOpen);
+         }
+         if(validKissSell)
+         {
+            string n1 = dayPfx + "KISS_SELL_" + IntegerToString((long)tBarOpen);
+            string n2 = n1 + "_T";
+            if(ObjectFind(0, n1) < 0)
+            {
+               ObjectCreate(0, n1, OBJ_ARROW_SELL, 0, tBarOpen, h + 12 * _Point);
+               ObjectSetInteger(0, n1, OBJPROP_COLOR, InpSellColor);
+               ObjectSetInteger(0, n1, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, n1, OBJPROP_SELECTABLE, false);
+               ObjectSetInteger(0, n1, OBJPROP_HIDDEN, false);
+            }
+            CreateOrUpdateText(n2, tBarOpen, h + 12 * _Point, "KISS SELL", InpSellColor, ANCHOR_LEFT_UPPER);
+            NotifySignal("KISS SELL", tBarOpen);
+         }
       }
    }
 

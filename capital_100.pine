@@ -26,6 +26,9 @@ sweepBufferTicks       = input.int(0, "Sweep buffer (ticks)", minval=0)
 reclaimMaxBars         = input.int(6, "Reclaim max bars", minval=1)
 midnightSignalsEnabled = input.bool(true, "Segnali Midnight (Sweep & Reclaim)")
 
+retestToleranceTicks = input.int(5, "Tolleranza Bacio (Ticks)", minval=0, group="Logica Matteo Capital")
+requireSweepBeforeKiss = input.bool(true, "Richiedi Sweep prima del Bacio", group="Logica Matteo Capital")
+
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
 
@@ -309,6 +312,32 @@ if is_0000
     bDone := false
     sDone := false
 
+var bool sweptH = false
+var bool sweptL = false
+var bool bacioDoneB = false
+var bool bacioDoneS = false
+
+if is_0000
+    sweptH := false
+    sweptL := false
+    bacioDoneB := false
+    bacioDoneS := false
+
+if isKill
+    if high > orangeH
+        sweptH := true
+    if low < orangeL
+        sweptL := true
+
+tol = retestToleranceTicks * syminfo.mintick
+validKISS_BUY = isKill and (not requireSweepBeforeKiss or sweptL) and not bacioDoneB and low <= (orangeL + tol) and close > orangeL
+validKISS_SELL = isKill and (not requireSweepBeforeKiss or sweptH) and not bacioDoneS and high >= (orangeH - tol) and close < orangeH
+
+if validKISS_BUY
+    bacioDoneB := true
+if validKISS_SELL
+    bacioDoneS := true
+
 dailyOkB = (not useDailyOpenFilter) or (close > dailyOpen)
 dailyOkS = (not useDailyOpenFilter) or (close < dailyOpen)
 ibOkB = (not useIbMidFilter) or (close > ibMid)
@@ -323,6 +352,11 @@ if validB
     bDone := true
 if validS
     sDone := true
+
+plotshape(validKISS_BUY, "KISS BUY", shape.labelup, location.belowbar, color.green, size=size.small, text="KISS\nBUY", textcolor=color.white)
+plotshape(validKISS_SELL, "KISS SELL", shape.labeldown, location.abovebar, color.red, size=size.small, text="KISS\nSELL", textcolor=color.white)
+plotshape(sweptL and not sweptL[1], "Sweep Low", shape.xcross, location.belowbar, color.red, size=size.tiny, text="Swept")
+plotshape(sweptH and not sweptH[1], "Sweep High", shape.xcross, location.abovebar, color.red, size=size.tiny, text="Swept")
 
 plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY")
 plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")

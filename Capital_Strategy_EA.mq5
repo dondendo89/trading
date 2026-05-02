@@ -121,6 +121,21 @@ double g_hsfib_high = 0.0;
 double g_hsfib_low = 0.0;
 datetime g_hsfib_expiry = 0;
 
+enum { EA_INST_CAP = 300 };
+datetime g_inst_time[EA_INST_CAP];
+double g_inst_high[EA_INST_CAP];
+double g_inst_low[EA_INST_CAP];
+int g_inst_head = -1;
+int g_inst_count = 0;
+double g_inst_swing_high = 0.0;
+bool g_inst_swing_high_has = false;
+double g_inst_swing_low = 0.0;
+bool g_inst_swing_low_has = false;
+datetime g_inst_touch_buy_time = 0;
+datetime g_inst_touch_sell_time = 0;
+datetime g_inst_last_touch_high_time = 0;
+datetime g_inst_last_touch_low_time = 0;
+
 datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
 datetime NextLocalMidnightServer(const datetime tServer)
@@ -132,6 +147,88 @@ datetime NextLocalMidnightServer(const datetime tServer)
    datetime localMid = StructToTime(dt);
    datetime serverMid = localMid - (datetime)InpItalyOffsetHours * 3600;
    return serverMid + 86400;
+}
+
+void EaInstReset()
+{
+   g_inst_head = -1;
+   g_inst_count = 0;
+   g_inst_swing_high = 0.0;
+   g_inst_swing_high_has = false;
+   g_inst_swing_low = 0.0;
+   g_inst_swing_low_has = false;
+   g_inst_touch_buy_time = 0;
+   g_inst_touch_sell_time = 0;
+   g_inst_last_touch_high_time = 0;
+   g_inst_last_touch_low_time = 0;
+}
+
+int EaInstIdx(const int offsetFromNewest)
+{
+   int idx = g_inst_head - offsetFromNewest;
+   while(idx < 0) idx += EA_INST_CAP;
+   return (idx % EA_INST_CAP);
+}
+
+void EaInstPushBar(const datetime t, const double h, const double l)
+{
+   g_inst_head = (g_inst_head + 1) % EA_INST_CAP;
+   g_inst_time[g_inst_head] = t;
+   g_inst_high[g_inst_head] = h;
+   g_inst_low[g_inst_head] = l;
+   if(g_inst_count < EA_INST_CAP) g_inst_count++;
+}
+
+void EaInstUpdate(const datetime tBarOpen, const double h, const double l)
+{
+   const int lbLeft = 20;
+   const int lbRight = 20;
+   const int win = lbLeft + lbRight + 1;
+   if(win >= EA_INST_CAP) return;
+
+   EaInstPushBar(tBarOpen, h, l);
+   if(g_inst_count < win) return;
+
+   int centerOff = lbRight;
+   int centerIdx = EaInstIdx(centerOff);
+   double lowC = g_inst_low[centerIdx];
+   double highC = g_inst_high[centerIdx];
+
+   bool pLow = true;
+   for(int off = 0; off < win; off++)
+   {
+      if(off == centerOff) continue;
+      if(g_inst_low[EaInstIdx(off)] <= lowC) { pLow = false; break; }
+   }
+   bool pHigh = true;
+   for(int off = 0; off < win; off++)
+   {
+      if(off == centerOff) continue;
+      if(g_inst_high[EaInstIdx(off)] >= highC) { pHigh = false; break; }
+   }
+
+   if(pLow) { g_inst_swing_low = lowC; g_inst_swing_low_has = true; }
+   if(pHigh) { g_inst_swing_high = highC; g_inst_swing_high_has = true; }
+
+   double epsTouch = _Point * 0.1;
+   double prevH = h;
+   double prevL = l;
+   if(g_inst_count >= 2)
+   {
+      prevH = g_inst_high[EaInstIdx(1)];
+      prevL = g_inst_low[EaInstIdx(1)];
+   }
+
+   if(g_inst_swing_high_has && prevH < (g_inst_swing_high - epsTouch) && h >= (g_inst_swing_high - epsTouch) && g_inst_last_touch_high_time != tBarOpen)
+   {
+      g_inst_touch_sell_time = tBarOpen;
+      g_inst_last_touch_high_time = tBarOpen;
+   }
+   if(g_inst_swing_low_has && prevL > (g_inst_swing_low + epsTouch) && l <= (g_inst_swing_low + epsTouch) && g_inst_last_touch_low_time != tBarOpen)
+   {
+      g_inst_touch_buy_time = tBarOpen;
+      g_inst_last_touch_low_time = tBarOpen;
+   }
 }
 
 void ManageBreakEven()
@@ -458,6 +555,7 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    g_hsfib_high = 0.0;
    g_hsfib_low = 0.0;
    g_hsfib_expiry = 0;
+   EaInstReset();
 }
 
 bool HasPosition(const int dir)
@@ -563,6 +661,7 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
       if(!g_ib_sweep_up && h > (g_ib_high + sweepBuf)) { g_ib_sweep_up = true; g_ib_sweep_up_bar = g_update_calls; }
    }
 
+   EaInstUpdate(tBarOpen, h, l);
    DrawMidnightCandleLevels();
 }
 
@@ -872,6 +971,31 @@ void ProcessSignalOnNewBar()
       g_hs_prev_time = tBarOpen;
       g_hs_prev_high = h;
       g_hs_prev_low = l;
+   }
+
+   bool instBuyTouch = (g_inst_touch_buy_time == tBarOpen);
+   bool instSellTouch = (g_inst_touch_sell_time == tBarOpen);
+   if(instBuyTouch)
+   {
+      if(!(InpMaxOneTradePerDayPerSide && g_buy_done))
+      {
+         if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+         if(!HasPosition(+1))
+         {
+            if(SpreadOk() && TryEnter(true, tBarOpen, c)) g_buy_done = true;
+         }
+      }
+   }
+   if(instSellTouch)
+   {
+      if(!(InpMaxOneTradePerDayPerSide && g_sell_done))
+      {
+         if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+         if(!HasPosition(-1))
+         {
+            if(SpreadOk() && TryEnter(false, tBarOpen, c)) g_sell_done = true;
+         }
+      }
    }
 
    if(g_ib_has && g_h13_has)

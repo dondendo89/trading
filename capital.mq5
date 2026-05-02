@@ -160,14 +160,20 @@ double AvgTickVolTf(const ENUM_TIMEFRAMES tf, const datetime tBarOpen, const int
    ENUM_TIMEFRAMES n = NormalizeTf(tf);
    int shift = iBarShift(_Symbol, n, tBarOpen, true);
    if(shift < 0) return 0.0;
-   long vols[];
-   ArrayResize(vols, len);
-   ArraySetAsSeries(vols, true);
-   int copied = CopyTickVolume(_Symbol, n, shift, len, vols);
-   if(copied <= 0) return 0.0;
+   int bars = Bars(_Symbol, n);
+   if(bars <= 0) return 0.0;
+   int maxLen = len;
+   if(shift + maxLen > bars) maxLen = bars - shift;
+   if(maxLen <= 0) return 0.0;
    double sum = 0.0;
-   for(int i = 0; i < copied; i++) sum += (double)vols[i];
-   return (copied > 0) ? (sum / (double)copied) : 0.0;
+   int counted = 0;
+   for(int i = 0; i < maxLen; i++)
+   {
+      long v = (long)iVolume(_Symbol, n, shift + i);
+      sum += (double)v;
+      counted++;
+   }
+   return (counted > 0) ? (sum / (double)counted) : 0.0;
 }
 
 bool HasPosition(const int direction, ulong &ticketOut)

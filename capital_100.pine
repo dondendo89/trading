@@ -1,5 +1,5 @@
 //@version=5
-indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500)
+indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500, max_lines_count=500)
 
 // --- INPUT ---
 showSessions = input.bool(false, "Mostra Box Sessioni (Asia, London, NY)")
@@ -28,9 +28,31 @@ midnightSignalsEnabled = input.bool(true, "Segnali Midnight (Sweep & Reclaim)")
 
 retestToleranceTicks = input.int(5, "Tolleranza Bacio (Ticks)", minval=0, group="Logica Matteo Capital")
 requireSweepBeforeKiss = input.bool(true, "Richiedi Sweep prima del Bacio", group="Logica Matteo Capital")
+sweepOutsideKillzone = input.bool(false, "Sweep fuori Killzone", group="Logica Matteo Capital")
+kissOutsideKillzone = input.bool(false, "KISS fuori Killzone", group="Logica Matteo Capital")
+
+luxEnabled = input.bool(true, "Swing Patterns Lux", group="Lux Swing")
+luxLen = input.int(21, "Length", minval=1, group="Lux Swing")
+luxShowLabels = input.bool(true, "Show Labels", group="Lux Swing")
+luxSwingHColor = input.color(color.red, "Swing High", group="Lux Swing")
+luxSwingLColor = input.color(color.teal, "Swing Low", group="Lux Swing")
+
+instEnabled = input.bool(true, "Sweep institutional", group="Sweep institutional")
+instCooldownPeriod = input.int(10, title="Cooldown Period", minval=0, group="Sweep institutional")
+instShowSwing = input.bool(true, title="Show Swings?", inline="s_1", group="Sweep institutional")
+instSwingClr = input.color(color.new(color.black, 0), title="", inline="s_1", group="Sweep institutional")
+instBullWidth = input.int(1, title="Line Width:", group="Sweep institutional Bullish")
+instBullStyle = input.string("Dashed", title="Line Style:", options=["Solid", "Dotted", "Dashed"], group="Sweep institutional Bullish")
+instBullColor = input.color(color.new(color.teal, 0), title="Bullish Color:", group="Sweep institutional Bullish")
+instBearWidth = input.int(1, title="Line Width:", group="Sweep institutional Bearish")
+instBearStyle = input.string("Dashed", title="Line Style:", options=["Solid", "Dotted", "Dashed"], group="Sweep institutional Bearish")
+instBearColor = input.color(color.new(color.maroon, 0), title="Bearish Color:", group="Sweep institutional Bearish")
 
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
+
+instLineStyle(s) =>
+    s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
 
 // --- 1. DAILY OPEN, HIGH, LOW ---
 is_0000 = hour(time, tz) == 0 and minute(time, tz) == 0
@@ -178,8 +200,6 @@ ibMid = (ibH + ibL) / 2
 plot(ibH, "IB High", color.new(color.blue, 40), 1, plot.style_linebr)
 plot(ibL, "IB Low", color.new(color.blue, 40), 1, plot.style_linebr)
 
-// --- 5. SETUP 13:00 (LINEE ARANCIONI - START DALLE 13:00) ---
-is_1300_range = not na(time(timeframe.period, "1300-1400", tz))
 var float orangeH = na
 var float orangeL = na
 
@@ -187,17 +207,14 @@ if is_0000
     orangeH := na
     orangeL := na
 
-if is_1300_range
-    if not is_1300_range[1]
-        orangeH := high
-        orangeL := low
-    else
-        orangeH := math.max(orangeH, high)
-        orangeL := math.min(orangeL, low)
+orangeH60 = request.security(syminfo.tickerid, "60", ta.valuewhen(hour(time, tz) == 13 and minute(time, tz) == 0, high, 0), barmerge.gaps_off, barmerge.lookahead_off)
+orangeL60 = request.security(syminfo.tickerid, "60", ta.valuewhen(hour(time, tz) == 13 and minute(time, tz) == 0, low, 0), barmerge.gaps_off, barmerge.lookahead_off)
+if not na(orangeH60) and not na(orangeL60)
+    orangeH := orangeH60
+    orangeL := orangeL60
 
-// Modifica: ora le linee partono dalle 13:00 (appena iniziano a esistere)
-plot(hour(time, tz) >= 13 ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
-plot(hour(time, tz) >= 13 ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
+plot(not na(orangeH) ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
+plot(not na(orangeL) ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
 
 is_0200 = hour(time, tz) == 2 and minute(time, tz) == 0
 var float c02H = na
@@ -323,15 +340,16 @@ if is_0000
     bacioDoneB := false
     bacioDoneS := false
 
-if isKill
-    if high > orangeH
+if isKill or sweepOutsideKillzone
+    if not na(orangeH) and high > orangeH
         sweptH := true
-    if low < orangeL
+    if not na(orangeL) and low < orangeL
         sweptL := true
 
 tol = retestToleranceTicks * syminfo.mintick
-validKISS_BUY = isKill and (not requireSweepBeforeKiss or sweptL) and not bacioDoneB and low <= (orangeL + tol) and close > orangeL
-validKISS_SELL = isKill and (not requireSweepBeforeKiss or sweptH) and not bacioDoneS and high >= (orangeH - tol) and close < orangeH
+kissWindowOk = isKill or kissOutsideKillzone
+validKISS_BUY = kissWindowOk and not na(orangeL) and (not requireSweepBeforeKiss or sweptL) and not bacioDoneB and low <= (orangeL + tol) and close > orangeL
+validKISS_SELL = kissWindowOk and not na(orangeH) and (not requireSweepBeforeKiss or sweptH) and not bacioDoneS and high >= (orangeH - tol) and close < orangeH
 
 if validKISS_BUY
     bacioDoneB := true
@@ -476,3 +494,167 @@ if midShort
 
 plotshape(midLong, "BUY Mid", shape.triangleup, location.belowbar, color.aqua, size=size.small, text="BUY Mid")
 plotshape(midShort, "SELL Mid", shape.triangledown, location.abovebar, color.fuchsia, size=size.small, text="SELL Mid")
+
+var float lux_phy = na
+var float lux_ply = na
+
+lux_o = open[luxLen]
+lux_h = high[luxLen]
+lux_l = low[luxLen]
+lux_c = close[luxLen]
+lux_d = math.abs(lux_c - lux_o)
+lux_ph = ta.pivothigh(luxLen, luxLen)
+lux_pl = ta.pivotlow(luxLen, luxLen)
+
+lux_hammer = lux_pl and math.min(lux_o, lux_c) - lux_l > lux_d and lux_h - math.max(lux_c, lux_o) < lux_d
+lux_ihammer = lux_pl and lux_h - math.max(lux_c, lux_o) > lux_d and math.min(lux_c, lux_o) - lux_l < lux_d
+lux_bulleng = lux_c > lux_o and lux_c[1] < lux_o[1] and lux_c > lux_o[1] and lux_o < lux_c[1]
+lux_hanging = lux_ph and math.min(lux_c, lux_o) - lux_l > lux_d and lux_h - math.max(lux_o, lux_c) < lux_d
+lux_shooting = lux_ph and lux_h - math.max(lux_o, lux_c) > lux_d and math.min(lux_c, lux_o) - lux_l < lux_d
+lux_beareng = lux_c > lux_o and lux_c[1] < lux_o[1] and lux_c > lux_o[1] and lux_o < lux_c[1]
+
+lux_code = lux_hammer ? 1 : lux_ihammer ? 2 : lux_bulleng ? 3 : lux_hanging ? 4 : lux_shooting ? 5 : lux_beareng ? 6 : 0
+lux_title = lux_code == 1 ? "Hammer" : lux_code == 2 ? "Inverted Hammer" : lux_code == 3 ? "Bullish Engulfing" : lux_code == 4 ? "Hanging Man" : lux_code == 5 ? "Shooting Star" : lux_code == 6 ? "Bearish Engulfing" : "None"
+
+if luxEnabled and (lux_ph or lux_pl)
+    if lux_ph
+        H = na(lux_phy) ? "HH" : (lux_ph > lux_phy ? "HH" : "LH")
+        lux_phy := lux_ph
+        if luxShowLabels
+            label.new(bar_index[luxLen], lux_ph, H + "\n" + lux_title, color=color.new(color.white, 100), style=label.style_label_down, textcolor=luxSwingHColor, size=size.small)
+    else if lux_pl
+        L = na(lux_ply) ? "HL" : (lux_pl < lux_ply ? "LL" : "HL")
+        lux_ply := lux_pl
+        if luxShowLabels
+            label.new(bar_index[luxLen], lux_pl, L + "\n" + lux_title, color=color.new(color.white, 100), style=label.style_label_up, textcolor=luxSwingLColor, size=size.small)
+
+alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 1, title="Lux Hammer", message="Lux Hammer on {{ticker}} TF={{interval}}")
+alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 2, title="Lux Inverted Hammer", message="Lux Inverted Hammer on {{ticker}} TF={{interval}}")
+alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 3, title="Lux Bullish Engulfing", message="Lux Bullish Engulfing on {{ticker}} TF={{interval}}")
+alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 4, title="Lux Hanging Man", message="Lux Hanging Man on {{ticker}} TF={{interval}}")
+alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 5, title="Lux Shooting Star", message="Lux Shooting Star on {{ticker}} TF={{interval}}")
+alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 6, title="Lux Bearish Engulfing", message="Lux Bearish Engulfing on {{ticker}} TF={{interval}}")
+
+instLbLeft = 20
+instLbRight = 20
+var int instBullSignalIndex = 0
+var int instBearSignalIndex = 0
+
+var line instBullLine = na
+var line instBearLine = na
+
+var line instHighLine = na
+var line instLowLine = na
+
+var label instSwingHighLbl = na
+var label instSwingLowLbl = na
+var label instSwingHighLblTxt = na
+var label instSwingLowLblTxt = na
+
+var float instSwingLowVal = na
+var float instSwingHighVal = na
+
+var int instSwingLowCounter = 0
+var int instSwingHighCounter = 0
+var bool instIsSwingLowCheck = false
+var bool instIsSwingHighCheck = false
+var bool instStopPrintingLow = false
+var bool instStopPrintingHigh = false
+
+var instSwingHighArr = array.new_label(0)
+var instSwingHighTextArr = array.new_label(0)
+var instSwingLowArr = array.new_label(0)
+var instSwingLowTextArr = array.new_label(0)
+
+instPL = ta.pivotlow(low, instLbLeft, instLbRight)
+instPH = ta.pivothigh(high, instLbLeft, instLbRight)
+instPLVal = ta.valuewhen(not na(instPL), low[instLbRight], 0)
+instPHVal = ta.valuewhen(not na(instPH), high[instLbRight], 0)
+instPrevLowIndex = ta.valuewhen(not na(instPL), bar_index[instLbRight], 0)
+instPrevHighIndex = ta.valuewhen(not na(instPH), bar_index[instLbRight], 0)
+instLP = ta.lowest(low, instLbLeft)
+instHP = ta.highest(high, instLbLeft)
+instHighestClose = ta.highest(close, instLbLeft)
+instLowestClose = ta.lowest(close, instLbLeft)
+
+instBullishSFP = low < instPLVal and close > instPLVal and open > instPLVal and low == instLP and instLowestClose >= instPLVal
+instBearishSFP = high > instPHVal and close < instPHVal and open < instPHVal and high == instHP and instHighestClose <= instPHVal
+
+instBullCond = instBullishSFP[3] and close > instPLVal and close[1] > instPLVal[1] and close[2] > instPLVal[2] and bar_index >= instBullSignalIndex + instCooldownPeriod
+instBearCond = instBearishSFP[3] and close < instPHVal and close[1] < instPHVal[1] and close[2] < instPHVal[2] and bar_index >= instBearSignalIndex + instCooldownPeriod
+
+if instEnabled
+    if high < instSwingLowVal and instIsSwingLowCheck
+        instSwingLowCounter := instSwingLowCounter + 1
+
+    if low > instSwingHighVal and instIsSwingHighCheck
+        instSwingHighCounter := instSwingHighCounter + 1
+
+    if ta.crossunder(close, instSwingLowVal) and instIsSwingLowCheck == false
+        instIsSwingLowCheck := true
+        instSwingLowCounter := 1
+
+    if ta.crossover(close, instSwingHighVal) and instIsSwingHighCheck == false
+        instIsSwingHighCheck := true
+        instSwingHighCounter := 1
+
+    if instSwingLowCounter == 5 and instIsSwingLowCheck
+        instStopPrintingLow := true
+        instIsSwingLowCheck := false
+        line.set_x2(instLowLine, bar_index[4])
+
+    if instSwingHighCounter == 5 and instIsSwingHighCheck
+        instStopPrintingHigh := true
+        instIsSwingHighCheck := false
+        line.set_x2(instHighLine, bar_index[4])
+
+if instEnabled and instBullCond
+    instBullSignalIndex := bar_index
+    instBullLine := line.new(instPrevLowIndex, instPLVal, bar_index - 3, instPLVal, color=instBullColor, width=instBullWidth, style=instLineStyle(instBullStyle))
+
+if instEnabled and instBearCond
+    instBearSignalIndex := bar_index
+    instBearLine := line.new(instPrevHighIndex, instPHVal, bar_index - 3, instPHVal, color=instBearColor, width=instBearWidth, style=instLineStyle(instBearStyle))
+
+if instEnabled
+    if array.size(instSwingHighArr) >= 3
+        label.delete(array.shift(instSwingHighArr))
+        label.delete(array.shift(instSwingHighTextArr))
+
+    if array.size(instSwingLowArr) >= 3
+        label.delete(array.shift(instSwingLowArr))
+        label.delete(array.shift(instSwingLowTextArr))
+
+    if instShowSwing
+        if instStopPrintingHigh == false
+            line.set_x2(instHighLine, bar_index + 5)
+        if instStopPrintingLow == false
+            line.set_x2(instLowLine, bar_index + 5)
+
+    if instShowSwing and not na(instPH) and instBearishSFP[instLbRight] == false
+        instStopPrintingHigh := false
+        instSwingHighVal := high[instLbRight]
+        line.delete(instHighLine)
+        instHighLine := line.new(bar_index[instLbRight], high[instLbRight], bar_index + 10, high[instLbRight], color=instSwingClr, width=2)
+
+        instSwingHighLbl := label.new(bar_index[instLbRight], high[instLbRight], text="", yloc=yloc.abovebar, color=instSwingClr, textcolor=instSwingClr, style=label.style_triangledown, size=size.auto)
+        instSwingHighLblTxt := label.new(bar_index[instLbRight], high[instLbRight], text="Swing\nH", yloc=yloc.abovebar, color=instSwingClr, textcolor=instSwingClr, style=label.style_none, size=size.small)
+        array.push(instSwingHighArr, instSwingHighLbl)
+        array.push(instSwingHighTextArr, instSwingHighLblTxt)
+
+    if instShowSwing and not na(instPL) and instBullishSFP[instLbRight] == false
+        instStopPrintingLow := false
+        instSwingLowVal := low[instLbRight]
+        line.delete(instLowLine)
+        instLowLine := line.new(bar_index[instLbRight], low[instLbRight], bar_index + 10, low[instLbRight], color=instSwingClr, width=2)
+
+        instSwingLowLbl := label.new(bar_index[instLbRight], low[instLbRight], text="", yloc=yloc.belowbar, color=instSwingClr, textcolor=instSwingClr, style=label.style_triangleup, size=size.auto)
+        instSwingLowLblTxt := label.new(bar_index[instLbRight], low[instLbRight], text="Swing\nL", yloc=yloc.belowbar, color=instSwingClr, textcolor=instSwingClr, style=label.style_none, size=size.small)
+        array.push(instSwingLowArr, instSwingLowLbl)
+        array.push(instSwingLowTextArr, instSwingLowLblTxt)
+
+plotshape(instEnabled and instBullCond, text="Sweep", color=instBullColor, textcolor=instBullColor, location=location.belowbar, offset=-3)
+plotshape(instEnabled and instBearCond, text="Sweep", color=instBearColor, textcolor=instBearColor, location=location.abovebar, offset=-3)
+
+alertcondition(instEnabled and instBullishSFP, title="Bullish Sweep", message="{{ticker}} Bullish Sweep, Price:{{close}}")
+alertcondition(instEnabled and instBearishSFP, title="Bearish Sweep", message="{{ticker}} Bearish Sweep, Price:{{close}}")

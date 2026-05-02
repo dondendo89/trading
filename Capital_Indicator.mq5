@@ -1517,15 +1517,15 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             if(pLow && g_es_last_conf_low_time != tPivot)
             {
                string n = dayPfx + "ES_CONF_SWL_" + IntegerToString((long)tPivot);
-               if(InpEarlyShowLabels) CreateOrUpdateText(n, tPivot, lowC - 10 * _Point, "SWL", clrLimeGreen, ANCHOR_LEFT_LOWER);
-               NotifySignal("Confirmed Swing Low", tBarOpen);
+               if(InpEarlyShowLabels) CreateOrUpdateText(n, tPivot, lowC - 10 * _Point, "C", clrLimeGreen, ANCHOR_LEFT_LOWER);
+               NotifySignal("C Swing Low", tBarOpen);
                g_es_last_conf_low_time = tPivot;
             }
             if(pHigh && g_es_last_conf_high_time != tPivot)
             {
                string n = dayPfx + "ES_CONF_SWH_" + IntegerToString((long)tPivot);
-               if(InpEarlyShowLabels) CreateOrUpdateText(n, tPivot, highC + 10 * _Point, "SWH", clrRed, ANCHOR_LEFT_UPPER);
-               NotifySignal("Confirmed Swing High", tBarOpen);
+               if(InpEarlyShowLabels) CreateOrUpdateText(n, tPivot, highC + 10 * _Point, "C", clrRed, ANCHOR_LEFT_UPPER);
+               NotifySignal("C Swing High", tBarOpen);
                g_es_last_conf_high_time = tPivot;
             }
          }

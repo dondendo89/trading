@@ -64,6 +64,13 @@ input int InpInstCooldownPeriod = 10;
 input color InpInstBullColor = clrTeal;
 input color InpInstBearColor = clrMaroon;
 
+input group "Early Swing"
+input bool InpEarlySwingEnabled = true;
+input int InpEarlyLeftBars = 2;
+input int InpEarlyRightBars = 2;
+input bool InpEarlyVolFilter = true;
+input bool InpEarlyShowLabels = true;
+
    input group "Colors"
    input color InpDailyOpenColor = clrPurple;
    input color InpDailyHLColor = clrWhite;
@@ -200,6 +207,20 @@ input color InpInstBearColor = clrMaroon;
    datetime g_inst_last_touch_high_time = 0;
    datetime g_inst_last_touch_low_time = 0;
 
+   enum { ES_CAP = 220 };
+   datetime g_es_time[ES_CAP];
+   double g_es_open[ES_CAP];
+   double g_es_high[ES_CAP];
+   double g_es_low[ES_CAP];
+   double g_es_close[ES_CAP];
+   long g_es_vol[ES_CAP];
+   int g_es_head = -1;
+   int g_es_count = 0;
+   datetime g_es_last_early_low_time = 0;
+   datetime g_es_last_early_high_time = 0;
+   datetime g_es_last_conf_low_time = 0;
+   datetime g_es_last_conf_high_time = 0;
+
    datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
    datetime NextLocalMidnightServer(const datetime tServer)
@@ -322,6 +343,35 @@ void InstReset()
    g_inst_swing_low_has = false;
    g_inst_last_touch_high_time = 0;
    g_inst_last_touch_low_time = 0;
+}
+
+void EsReset()
+{
+   g_es_head = -1;
+   g_es_count = 0;
+   g_es_last_early_low_time = 0;
+   g_es_last_early_high_time = 0;
+   g_es_last_conf_low_time = 0;
+   g_es_last_conf_high_time = 0;
+}
+
+int EsIdx(const int offsetFromNewest)
+{
+   int idx = g_es_head - offsetFromNewest;
+   while(idx < 0) idx += ES_CAP;
+   return (idx % ES_CAP);
+}
+
+void EsPushBar(const datetime t, const double o, const double h, const double l, const double c, const long v)
+{
+   g_es_head = (g_es_head + 1) % ES_CAP;
+   g_es_time[g_es_head] = t;
+   g_es_open[g_es_head] = o;
+   g_es_high[g_es_head] = h;
+   g_es_low[g_es_head] = l;
+   g_es_close[g_es_head] = c;
+   g_es_vol[g_es_head] = v;
+   if(g_es_count < ES_CAP) g_es_count++;
 }
 
 int InstIdx(const int offsetFromNewest)
@@ -618,6 +668,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       g_hsfib_expiry = 0;
       DeleteByToken("HSFIB_");
       DeleteByPrefix(g_prefix + IntegerToString(dayKey) + "_");
+      EsReset();
    }
 
    void UpdateWithBar(const datetime tBarOpen, const double o, const double h, const double l, const double c)
@@ -1378,6 +1429,112 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          InstReset();
       }
 
+      if(InpEarlySwingEnabled)
+      {
+         int shift = iBarShift(_Symbol, _Period, tBarOpen, true);
+         long vCur = 0;
+         if(shift >= 0) vCur = (long)iVolume(_Symbol, _Period, shift);
+
+         EsPushBar(tBarOpen, o, h, l, c, vCur);
+
+         int lbLeft = InpEarlyLeftBars;
+         int lbRight = InpEarlyRightBars;
+         if(lbLeft < 1) lbLeft = 1;
+         if(lbRight < 1) lbRight = 1;
+
+         int volLen = 20;
+         int nVol = MathMin(volLen, g_es_count);
+         double avgVol = 0.0;
+         for(int i = 0; i < nVol; i++) avgVol += (double)g_es_vol[EsIdx(i)];
+         if(nVol > 0) avgVol /= (double)nVol;
+         bool strongVol = ((double)vCur > avgVol);
+
+         double eps = _Point * 0.1;
+         double prevLow = (g_es_count >= 2 ? g_es_low[EsIdx(1)] : l);
+         double prevHigh = (g_es_count >= 2 ? g_es_high[EsIdx(1)] : h);
+
+         int look = MathMin(lbLeft + 1, g_es_count);
+         double minLow = l;
+         double maxHigh = h;
+         for(int i = 0; i < look; i++)
+         {
+            double lo2 = g_es_low[EsIdx(i)];
+            double hi2 = g_es_high[EsIdx(i)];
+            if(lo2 < minLow) minLow = lo2;
+            if(hi2 > maxHigh) maxHigh = hi2;
+         }
+
+         bool potentialLow = (l <= (minLow + eps));
+         bool liquiditySweepLow = (l < prevLow && c > prevLow);
+         bool bullReaction = (c > o);
+         bool earlyLow = (potentialLow && liquiditySweepLow && bullReaction && (!InpEarlyVolFilter || strongVol));
+
+         bool potentialHigh = (h >= (maxHigh - eps));
+         bool liquiditySweepHigh = (h > prevHigh && c < prevHigh);
+         bool bearReaction = (c < o);
+         bool earlyHigh = (potentialHigh && liquiditySweepHigh && bearReaction && (!InpEarlyVolFilter || strongVol));
+
+         int dk = DayKeyLocal(tBarOpen);
+         string dayPfx = g_prefix + IntegerToString(dk) + "_";
+
+         if(earlyLow && g_es_last_early_low_time != tBarOpen)
+         {
+            string n = dayPfx + "ES_EARLY_SWL_" + IntegerToString((long)tBarOpen);
+            CreateOrUpdateText(n, tBarOpen, l - 10 * _Point, "Possible SWL", clrYellow, ANCHOR_LEFT_LOWER);
+            NotifySignal("Early Swing Low", tBarOpen);
+            g_es_last_early_low_time = tBarOpen;
+         }
+         if(earlyHigh && g_es_last_early_high_time != tBarOpen)
+         {
+            string n = dayPfx + "ES_EARLY_SWH_" + IntegerToString((long)tBarOpen);
+            CreateOrUpdateText(n, tBarOpen, h + 10 * _Point, "Possible SWH", clrYellow, ANCHOR_LEFT_UPPER);
+            NotifySignal("Early Swing High", tBarOpen);
+            g_es_last_early_high_time = tBarOpen;
+         }
+
+         int win = lbLeft + lbRight + 1;
+         if(win < ES_CAP && g_es_count >= win)
+         {
+            int centerOff = lbRight;
+            int centerIdx = EsIdx(centerOff);
+            double lowC = g_es_low[centerIdx];
+            double highC = g_es_high[centerIdx];
+
+            bool pLow = true;
+            for(int off = 0; off < win; off++)
+            {
+               if(off == centerOff) continue;
+               if(g_es_low[EsIdx(off)] <= lowC) { pLow = false; break; }
+            }
+            bool pHigh = true;
+            for(int off = 0; off < win; off++)
+            {
+               if(off == centerOff) continue;
+               if(g_es_high[EsIdx(off)] >= highC) { pHigh = false; break; }
+            }
+
+            datetime tPivot = g_es_time[centerIdx];
+            if(pLow && g_es_last_conf_low_time != tPivot)
+            {
+               string n = dayPfx + "ES_CONF_SWL_" + IntegerToString((long)tPivot);
+               if(InpEarlyShowLabels) CreateOrUpdateText(n, tPivot, lowC - 10 * _Point, "SWL", clrLimeGreen, ANCHOR_LEFT_LOWER);
+               NotifySignal("Confirmed Swing Low", tBarOpen);
+               g_es_last_conf_low_time = tPivot;
+            }
+            if(pHigh && g_es_last_conf_high_time != tPivot)
+            {
+               string n = dayPfx + "ES_CONF_SWH_" + IntegerToString((long)tPivot);
+               if(InpEarlyShowLabels) CreateOrUpdateText(n, tPivot, highC + 10 * _Point, "SWH", clrRed, ANCHOR_LEFT_UPPER);
+               NotifySignal("Confirmed Swing High", tBarOpen);
+               g_es_last_conf_high_time = tPivot;
+            }
+         }
+      }
+      else
+      {
+         EsReset();
+      }
+
       string st = "CAP_IND | it " + IntegerToString(MinuteOfDayLocal(tBarOpen) / 60) + ":" + IntegerToString(MinuteOfDayLocal(tBarOpen) % 60) +
                   " | daily " + (g_daily_has ? "Y" : "N") + " | h02 " + (g_h02_has ? "Y" : "N") + " | h13 " + (g_h13_has ? "Y" : "N");
       CreateOrUpdateStatusLabel(st);
@@ -1392,6 +1549,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       LuxReset();
    DeleteByToken("INST_");
    InstReset();
+      DeleteByToken("ES_");
+      EsReset();
       if(InpDebugOverlay)
       {
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -1452,6 +1611,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          LuxReset();
         DeleteByToken("INST_");
         InstReset();
+         DeleteByToken("ES_");
+         EsReset();
 
          int histDays = InpHistoryDays;
          if(histDays < 1) histDays = 1;

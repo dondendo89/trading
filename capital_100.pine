@@ -48,6 +48,12 @@ instBearWidth = input.int(1, title="Line Width:", group="Sweep institutional Bea
 instBearStyle = input.string("Dashed", title="Line Style:", options=["Solid", "Dotted", "Dashed"], group="Sweep institutional Bearish")
 instBearColor = input.color(color.new(color.maroon, 0), title="Bearish Color:", group="Sweep institutional Bearish")
 
+earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
+earlyLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Early Swing")
+earlyRightBars = input.int(2, "Candele Destra Conferma", minval=1, group="Early Swing")
+earlyVolFilter = input.bool(true, "Filtro Volume", group="Early Swing")
+earlyShowLabels = input.bool(true, "Mostra Etichette", group="Early Swing")
+
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
 
@@ -658,3 +664,41 @@ plotshape(instEnabled and instBearCond, text="Sweep", color=instBearColor, textc
 
 alertcondition(instEnabled and instBullishSFP, title="Bullish Sweep", message="{{ticker}} Bullish Sweep, Price:{{close}}")
 alertcondition(instEnabled and instBearishSFP, title="Bearish Sweep", message="{{ticker}} Bearish Sweep, Price:{{close}}")
+
+earlyAvgVol = ta.sma(volume, 20)
+earlyStrongVol = volume > earlyAvgVol
+
+earlyPotentialLow = low <= ta.lowest(low, earlyLeftBars + 1)
+earlyLiquiditySweepLow = low < low[1] and close > low[1]
+earlyBullReaction = close > open
+earlySwingLow = earlySwingEnabled and earlyPotentialLow and earlyLiquiditySweepLow and earlyBullReaction and (not earlyVolFilter or earlyStrongVol)
+earlyConfirmedLow = ta.pivotlow(low, earlyLeftBars, earlyRightBars)
+
+earlyPotentialHigh = high >= ta.highest(high, earlyLeftBars + 1)
+earlyLiquiditySweepHigh = high > high[1] and close < high[1]
+earlyBearReaction = close < open
+earlySwingHigh = earlySwingEnabled and earlyPotentialHigh and earlyLiquiditySweepHigh and earlyBearReaction and (not earlyVolFilter or earlyStrongVol)
+earlyConfirmedHigh = ta.pivothigh(high, earlyLeftBars, earlyRightBars)
+
+plotshape(earlySwingLow, title="Anticipo Swing Low", location=location.belowbar, style=shape.triangleup, color=color.yellow, size=size.small)
+plotshape(not na(earlyConfirmedLow), title="Swing Low Confermato", location=location.belowbar, style=shape.labelup, color=color.new(color.green, 0), text="C", offset=-earlyRightBars)
+
+plotshape(earlySwingHigh, title="Anticipo Swing High", location=location.abovebar, style=shape.triangledown, color=color.yellow, size=size.small)
+plotshape(not na(earlyConfirmedHigh), title="Swing High Confermato", location=location.abovebar, style=shape.labeldown, color=color.new(color.red, 0), text="C", offset=-earlyRightBars)
+
+if earlyShowLabels and earlySwingLow
+    label.new(bar_index, low, "Possible SWL", style=label.style_label_up, color=color.yellow, textcolor=color.black)
+
+if earlyShowLabels and not na(earlyConfirmedLow)
+    label.new(bar_index - earlyRightBars, low[earlyRightBars], "C", style=label.style_label_up, color=color.new(color.green, 0))
+
+if earlyShowLabels and earlySwingHigh
+    label.new(bar_index, high, "Possible SWH", style=label.style_label_down, color=color.yellow, textcolor=color.black)
+
+if earlyShowLabels and not na(earlyConfirmedHigh)
+    label.new(bar_index - earlyRightBars, high[earlyRightBars], "C", style=label.style_label_down, color=color.new(color.red, 0))
+
+alertcondition(earlySwingLow, title="Early Swing Low Alert", message="Possibile Swing Low in formazione")
+alertcondition(not na(earlyConfirmedLow), title="Confirmed Swing Low Alert", message="Swing Low confermato")
+alertcondition(earlySwingHigh, title="Early Swing High Alert", message="Possibile Swing High in formazione")
+alertcondition(not na(earlyConfirmedHigh), title="Confirmed Swing High Alert", message="Swing High confermato")

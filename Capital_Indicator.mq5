@@ -238,6 +238,10 @@ input bool InpSwingShowDiv = true;
    double g_swing_last_sl_price = 0.0;
    double g_swing_last_sl_rsi = 0.0;
    datetime g_swing_last_sl_time = 0;
+   bool g_swing_last_sh_has = false;
+   double g_swing_last_sh_price = 0.0;
+   double g_swing_last_sh_rsi = 0.0;
+   datetime g_swing_last_sh_time = 0;
 
    datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
@@ -388,6 +392,11 @@ void EsReset()
    g_swing_last_sl_has = false;
    g_swing_last_sl_price = 0.0;
    g_swing_last_sl_rsi = 0.0;
+   g_swing_last_sl_time = 0;
+   g_swing_last_sh_has = false;
+   g_swing_last_sh_price = 0.0;
+   g_swing_last_sh_rsi = 0.0;
+   g_swing_last_sh_time = 0;
 }
 
 int EsIdx(const int offsetFromNewest)
@@ -1540,6 +1549,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             int win = left + right + 1;
             if(win < ES_CAP && g_es_count >= win)
             {
+               double epsSwing = _Point * 0.1;
                int centerOff = right;
                int centerIdx = EsIdx(centerOff);
                double hC = g_es_high[centerIdx];
@@ -1563,6 +1573,9 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                {
                   int reactIdx = EsIdx(centerOff - 1);
                   if(!(g_es_close[reactIdx] < g_es_open[reactIdx])) sh = false;
+                  if(sh && !(g_es_high[reactIdx] < (hC - epsSwing))) sh = false;
+                  if(sh && !(g_es_open[reactIdx] < (hC - epsSwing))) sh = false;
+                  if(sh && !(g_es_close[reactIdx] < (hC - epsSwing))) sh = false;
                }
 
                bool sl = true;
@@ -1583,11 +1596,45 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                {
                   int reactIdx = EsIdx(centerOff - 1);
                   if(!(g_es_close[reactIdx] > g_es_open[reactIdx])) sl = false;
+                  if(sl && !(g_es_low[reactIdx] > (lC + epsSwing))) sl = false;
+                  if(sl && !(g_es_open[reactIdx] > (lC + epsSwing))) sl = false;
+                  if(sl && !(g_es_close[reactIdx] > (lC + epsSwing))) sl = false;
                }
 
                datetime tPivot = g_es_time[centerIdx];
                if(sh && g_es_last_sp_sh_time != tPivot)
                {
+                  datetime prevShTime = g_swing_last_sh_time;
+                  double prevShPrice = g_swing_last_sh_price;
+                  double prevShRsi = g_swing_last_sh_rsi;
+                  bool prevShHas = g_swing_last_sh_has;
+
+                  double rsiPivot = 0.0;
+                  bool hasRsi = (InpSwingBullDivEnabled && GetRsiAtTime(tPivot, rsiPivot));
+                  bool bearDiv = false;
+                  if(hasRsi && prevShHas && hC > prevShPrice && rsiPivot < prevShRsi)
+                     bearDiv = true;
+
+                  if(hasRsi)
+                  {
+                     g_swing_last_sh_has = true;
+                     g_swing_last_sh_price = hC;
+                     g_swing_last_sh_rsi = rsiPivot;
+                     g_swing_last_sh_time = tPivot;
+                  }
+
+                  if(bearDiv && InpSwingShowDiv)
+                  {
+                     string nDiv = dayPfx + "SP_DIVH_" + IntegerToString((long)tPivot);
+                     CreateOrUpdateText(nDiv, tPivot, hC + 20 * _Point, "DIV", clrFuchsia, ANCHOR_LEFT_UPPER);
+                  }
+                  if(bearDiv && prevShHas && prevShTime != 0)
+                  {
+                     string nLn = dayPfx + "SP_DIVH_LN_" + IntegerToString((long)tPivot);
+                     CreateOrUpdateTrendSegment(nLn, prevShTime, prevShPrice, tPivot, hC, clrFuchsia, STYLE_SOLID, 2);
+                     NotifySignal("DIV", tBarOpen);
+                  }
+
                   if(InpSwingShowLabels)
                   {
                      string n = dayPfx + "SP_SH_" + IntegerToString((long)tPivot);
@@ -1598,10 +1645,15 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                }
                if(sl && g_es_last_sp_sl_time != tPivot)
                {
+                  datetime prevSlTime = g_swing_last_sl_time;
+                  double prevSlPrice = g_swing_last_sl_price;
+                  double prevSlRsi = g_swing_last_sl_rsi;
+                  bool prevSlHas = g_swing_last_sl_has;
+
                   double rsiPivot = 0.0;
                   bool hasRsi = (InpSwingBullDivEnabled && GetRsiAtTime(tPivot, rsiPivot));
                   bool bullDiv = false;
-                  if(hasRsi && g_swing_last_sl_has && lC < g_swing_last_sl_price && rsiPivot > g_swing_last_sl_rsi)
+                  if(hasRsi && prevSlHas && lC < prevSlPrice && rsiPivot > prevSlRsi)
                      bullDiv = true;
 
                   if(hasRsi)
@@ -1617,10 +1669,10 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                      string nDiv = dayPfx + "SP_DIV_" + IntegerToString((long)tPivot);
                      CreateOrUpdateText(nDiv, tPivot, lC - 20 * _Point, "DIV", clrAqua, ANCHOR_LEFT_LOWER);
                   }
-                  if(bullDiv && g_swing_last_sl_has && g_swing_last_sl_time != 0)
+                  if(bullDiv && prevSlHas && prevSlTime != 0)
                   {
                      string nLn = dayPfx + "SP_DIV_LN_" + IntegerToString((long)tPivot);
-                     CreateOrUpdateTrendSegment(nLn, g_swing_last_sl_time, g_swing_last_sl_price, tPivot, lC, clrAqua, STYLE_SOLID, 2);
+                     CreateOrUpdateTrendSegment(nLn, prevSlTime, prevSlPrice, tPivot, lC, clrAqua, STYLE_SOLID, 2);
                      NotifySignal("DIV", tBarOpen);
                   }
 

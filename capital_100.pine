@@ -704,9 +704,14 @@ swingCenter = swingPatternRightBars
 hasSwingWindow = bar_index >= swingWin
 
 swingRsi = ta.rsi(close, swingBullDivRsiLen)
+swingEps = syminfo.mintick * 0.1
+swingSep = syminfo.mintick
 var float swingLastLowPrice = na
 var float swingLastLowRsi = na
 var int swingLastLowBarIndex = na
+var float swingLastHighPrice = na
+var float swingLastHighRsi = na
+var int swingLastHighBarIndex = na
 var swingDivLines = array.new_line(0)
 
 swingHighOk = hasSwingWindow
@@ -720,7 +725,7 @@ if swingHighOk
     for j = 1 to swingPatternRightBars
         if high[swingCenter - j + 1] <= high[swingCenter - j]
             swingHighOk := false
-    swingHighOk := swingHighOk and close[swingCenter - 1] < open[swingCenter - 1]
+    swingHighOk := swingHighOk and close[swingCenter - 1] < open[swingCenter - 1] and high[swingCenter - 1] < (high[swingCenter] - swingSep) and open[swingCenter - 1] < (high[swingCenter] - swingSep) and close[swingCenter - 1] < (high[swingCenter] - swingSep)
 
 swingLowOk = hasSwingWindow
 if swingLowOk
@@ -733,7 +738,7 @@ if swingLowOk
     for j = 1 to swingPatternRightBars
         if low[swingCenter - j + 1] >= low[swingCenter - j]
             swingLowOk := false
-    swingLowOk := swingLowOk and close[swingCenter - 1] > open[swingCenter - 1]
+    swingLowOk := swingLowOk and close[swingCenter - 1] > open[swingCenter - 1] and low[swingCenter - 1] > (low[swingCenter] + swingSep) and open[swingCenter - 1] > (low[swingCenter] + swingSep) and close[swingCenter - 1] > (low[swingCenter] + swingSep)
 
 swingBullDiv = swingPatternEnabled and swingBullDivEnabled and swingLowOk and not na(swingLastLowPrice) and low[swingCenter] < swingLastLowPrice and swingRsi[swingCenter] > swingLastLowRsi
 if swingBullDiv and not na(swingLastLowBarIndex)
@@ -748,10 +753,25 @@ if swingPatternEnabled and swingLowOk
     swingLastLowRsi := swingRsi[swingCenter]
     swingLastLowBarIndex := bar_index - swingCenter
 
+swingBearDiv = swingPatternEnabled and swingBullDivEnabled and swingHighOk and not na(swingLastHighPrice) and high[swingCenter] > swingLastHighPrice and swingRsi[swingCenter] < swingLastHighRsi
+if swingBearDiv and not na(swingLastHighBarIndex)
+    newXh = bar_index - swingCenter
+    newYh = high[swingCenter]
+    lnh = line.new(swingLastHighBarIndex, swingLastHighPrice, newXh, newYh, color=color.new(color.fuchsia, 0), width=2)
+    array.push(swingDivLines, lnh)
+    if array.size(swingDivLines) > 10
+        line.delete(array.shift(swingDivLines))
+if swingPatternEnabled and swingHighOk
+    swingLastHighPrice := high[swingCenter]
+    swingLastHighRsi := swingRsi[swingCenter]
+    swingLastHighBarIndex := bar_index - swingCenter
+
 plotshape(swingPatternEnabled and swingHighOk, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
 plotshape(swingPatternEnabled and swingLowOk, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
 plotshape(swingBullDiv, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
+plotshape(swingBearDiv, title="Bearish Divergence", location=location.abovebar, style=shape.labeldown, color=color.new(color.fuchsia, 0), text="DIV", textcolor=color.white, size=size.tiny, offset=-swingCenter)
 
 alertcondition(swingPatternOnlyAlerts and swingPatternEnabled and swingHighOk, title="Swing High", message="{{ticker}} Swing High")
 alertcondition(swingPatternOnlyAlerts and swingPatternEnabled and swingLowOk, title="Swing Low", message="{{ticker}} Swing Low")
 alertcondition(swingPatternOnlyAlerts and swingBullDiv, title="Bullish Divergence", message="{{ticker}} Bullish Divergence (RSI)")
+alertcondition(swingPatternOnlyAlerts and swingBearDiv, title="Bearish Divergence", message="{{ticker}} Bearish Divergence (RSI)")

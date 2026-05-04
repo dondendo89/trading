@@ -49,10 +49,18 @@ instBearStyle = input.string("Dashed", title="Line Style:", options=["Solid", "D
 instBearColor = input.color(color.new(color.maroon, 0), title="Bearish Color:", group="Sweep institutional Bearish")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
+earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
 earlyLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Early Swing")
 earlyRightBars = input.int(2, "Candele Destra Conferma", minval=1, group="Early Swing")
 earlyVolFilter = input.bool(true, "Filtro Volume", group="Early Swing")
 earlyShowLabels = input.bool(true, "Mostra Etichette", group="Early Swing")
+
+swingPatternEnabled = input.bool(true, "Swing Pattern (Swing High/Low)", group="Swing Pattern")
+swingPatternLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Swing Pattern")
+swingPatternRightBars = input.int(2, "Candele Destra", minval=1, group="Swing Pattern")
+swingPatternOnlyAlerts = input.bool(true, "Solo notifica Swing Pattern", group="Swing Pattern")
+swingBullDivEnabled = input.bool(true, "Divergenza Bullish (RSI)", group="Swing Pattern")
+swingBullDivRsiLen = input.int(14, "RSI Length", minval=2, group="Swing Pattern")
 
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
@@ -534,12 +542,12 @@ if luxEnabled and (lux_ph or lux_pl)
         if luxShowLabels
             label.new(bar_index[luxLen], lux_pl, L + "\n" + lux_title, color=color.new(color.white, 100), style=label.style_label_up, textcolor=luxSwingLColor, size=size.small)
 
-alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 1, title="Lux Hammer", message="Lux Hammer on {{ticker}} TF={{interval}}")
-alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 2, title="Lux Inverted Hammer", message="Lux Inverted Hammer on {{ticker}} TF={{interval}}")
-alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 3, title="Lux Bullish Engulfing", message="Lux Bullish Engulfing on {{ticker}} TF={{interval}}")
-alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 4, title="Lux Hanging Man", message="Lux Hanging Man on {{ticker}} TF={{interval}}")
-alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 5, title="Lux Shooting Star", message="Lux Shooting Star on {{ticker}} TF={{interval}}")
-alertcondition(luxEnabled and (lux_ph or lux_pl) and lux_code == 6, title="Lux Bearish Engulfing", message="Lux Bearish Engulfing on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 1, title="Lux Hammer", message="Lux Hammer on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 2, title="Lux Inverted Hammer", message="Lux Inverted Hammer on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 3, title="Lux Bullish Engulfing", message="Lux Bullish Engulfing on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 4, title="Lux Hanging Man", message="Lux Hanging Man on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 5, title="Lux Shooting Star", message="Lux Shooting Star on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 6, title="Lux Bearish Engulfing", message="Lux Bearish Engulfing on {{ticker}} TF={{interval}}")
 
 instLbLeft = 20
 instLbRight = 20
@@ -662,8 +670,8 @@ if instEnabled
 plotshape(instEnabled and instBullCond, text="Sweep", color=instBullColor, textcolor=instBullColor, location=location.belowbar, offset=-3)
 plotshape(instEnabled and instBearCond, text="Sweep", color=instBearColor, textcolor=instBearColor, location=location.abovebar, offset=-3)
 
-alertcondition(instEnabled and instBullishSFP, title="Bullish Sweep", message="{{ticker}} Bullish Sweep, Price:{{close}}")
-alertcondition(instEnabled and instBearishSFP, title="Bearish Sweep", message="{{ticker}} Bearish Sweep, Price:{{close}}")
+alertcondition(not swingPatternOnlyAlerts and instEnabled and instBullishSFP, title="Bullish Sweep", message="{{ticker}} Bullish Sweep, Price:{{close}}")
+alertcondition(not swingPatternOnlyAlerts and instEnabled and instBearishSFP, title="Bearish Sweep", message="{{ticker}} Bearish Sweep, Price:{{close}}")
 
 earlyAvgVol = ta.sma(volume, 20)
 earlyStrongVol = volume > earlyAvgVol
@@ -672,33 +680,78 @@ earlyPotentialLow = low <= ta.lowest(low, earlyLeftBars + 1)
 earlyLiquiditySweepLow = low < low[1] and close > low[1]
 earlyBullReaction = close > open
 earlySwingLow = earlySwingEnabled and earlyPotentialLow and earlyLiquiditySweepLow and earlyBullReaction and (not earlyVolFilter or earlyStrongVol)
-earlyConfirmedLow = ta.pivotlow(low, earlyLeftBars, earlyRightBars)
 
 earlyPotentialHigh = high >= ta.highest(high, earlyLeftBars + 1)
 earlyLiquiditySweepHigh = high > high[1] and close < high[1]
 earlyBearReaction = close < open
 earlySwingHigh = earlySwingEnabled and earlyPotentialHigh and earlyLiquiditySweepHigh and earlyBearReaction and (not earlyVolFilter or earlyStrongVol)
-earlyConfirmedHigh = ta.pivothigh(high, earlyLeftBars, earlyRightBars)
 
 plotshape(earlySwingLow, title="Anticipo Swing Low", location=location.belowbar, style=shape.triangleup, color=color.yellow, size=size.small)
-plotshape(not na(earlyConfirmedLow), title="Swing Low Confermato", location=location.belowbar, style=shape.labelup, color=color.new(color.green, 0), text="C", offset=-earlyRightBars)
 
-plotshape(earlySwingHigh, title="Anticipo Swing High", location=location.abovebar, style=shape.triangledown, color=color.yellow, size=size.small)
-plotshape(not na(earlyConfirmedHigh), title="Swing High Confermato", location=location.abovebar, style=shape.labeldown, color=color.new(color.red, 0), text="C", offset=-earlyRightBars)
+plotshape(earlyShowPossibleSWH and earlySwingHigh, title="Anticipo Swing High", location=location.abovebar, style=shape.triangledown, color=color.yellow, size=size.small)
 
 if earlyShowLabels and earlySwingLow
     label.new(bar_index, low, "Possible SWL", style=label.style_label_up, color=color.yellow, textcolor=color.black)
 
-if earlyShowLabels and not na(earlyConfirmedLow)
-    label.new(bar_index - earlyRightBars, low[earlyRightBars], "C", style=label.style_label_up, color=color.new(color.green, 0))
-
-if earlyShowLabels and earlySwingHigh
+if earlyShowPossibleSWH and earlyShowLabels and earlySwingHigh
     label.new(bar_index, high, "Possible SWH", style=label.style_label_down, color=color.yellow, textcolor=color.black)
 
-if earlyShowLabels and not na(earlyConfirmedHigh)
-    label.new(bar_index - earlyRightBars, high[earlyRightBars], "C", style=label.style_label_down, color=color.new(color.red, 0))
+alertcondition(not swingPatternOnlyAlerts and earlySwingLow, title="Early Swing Low Alert", message="Possibile Swing Low in formazione")
+alertcondition(not swingPatternOnlyAlerts and earlyShowPossibleSWH and earlySwingHigh, title="Early Swing High Alert", message="Possibile Swing High in formazione")
 
-alertcondition(earlySwingLow, title="Early Swing Low Alert", message="Possibile Swing Low in formazione")
-alertcondition(not na(earlyConfirmedLow), title="Confirmed Swing Low Alert", message="Swing Low confermato")
-alertcondition(earlySwingHigh, title="Early Swing High Alert", message="Possibile Swing High in formazione")
-alertcondition(not na(earlyConfirmedHigh), title="Confirmed Swing High Alert", message="Swing High confermato")
+swingWin = swingPatternLeftBars + swingPatternRightBars
+swingCenter = swingPatternRightBars
+hasSwingWindow = bar_index >= swingWin
+
+swingRsi = ta.rsi(close, swingBullDivRsiLen)
+var float swingLastLowPrice = na
+var float swingLastLowRsi = na
+var int swingLastLowBarIndex = na
+var swingDivLines = array.new_line(0)
+
+swingHighOk = hasSwingWindow
+if swingHighOk
+    for i = 0 to swingWin
+        if i != swingCenter and high[i] >= high[swingCenter]
+            swingHighOk := false
+    for j = swingPatternLeftBars to 1
+        if high[swingCenter + j] >= high[swingCenter + j - 1]
+            swingHighOk := false
+    for j = 1 to swingPatternRightBars
+        if high[swingCenter - j + 1] <= high[swingCenter - j]
+            swingHighOk := false
+    swingHighOk := swingHighOk and close[swingCenter - 1] < open[swingCenter - 1]
+
+swingLowOk = hasSwingWindow
+if swingLowOk
+    for i = 0 to swingWin
+        if i != swingCenter and low[i] <= low[swingCenter]
+            swingLowOk := false
+    for j = swingPatternLeftBars to 1
+        if low[swingCenter + j] <= low[swingCenter + j - 1]
+            swingLowOk := false
+    for j = 1 to swingPatternRightBars
+        if low[swingCenter - j + 1] >= low[swingCenter - j]
+            swingLowOk := false
+    swingLowOk := swingLowOk and close[swingCenter - 1] > open[swingCenter - 1]
+
+swingBullDiv = swingPatternEnabled and swingBullDivEnabled and swingLowOk and not na(swingLastLowPrice) and low[swingCenter] < swingLastLowPrice and swingRsi[swingCenter] > swingLastLowRsi
+if swingBullDiv and not na(swingLastLowBarIndex)
+    newX = bar_index - swingCenter
+    newY = low[swingCenter]
+    ln = line.new(swingLastLowBarIndex, swingLastLowPrice, newX, newY, color=color.new(color.aqua, 0), width=2)
+    array.push(swingDivLines, ln)
+    if array.size(swingDivLines) > 10
+        line.delete(array.shift(swingDivLines))
+if swingPatternEnabled and swingLowOk
+    swingLastLowPrice := low[swingCenter]
+    swingLastLowRsi := swingRsi[swingCenter]
+    swingLastLowBarIndex := bar_index - swingCenter
+
+plotshape(swingPatternEnabled and swingHighOk, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
+plotshape(swingPatternEnabled and swingLowOk, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
+plotshape(swingBullDiv, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
+
+alertcondition(swingPatternOnlyAlerts and swingPatternEnabled and swingHighOk, title="Swing High", message="{{ticker}} Swing High")
+alertcondition(swingPatternOnlyAlerts and swingPatternEnabled and swingLowOk, title="Swing Low", message="{{ticker}} Swing Low")
+alertcondition(swingPatternOnlyAlerts and swingBullDiv, title="Bullish Divergence", message="{{ticker}} Bullish Divergence (RSI)")

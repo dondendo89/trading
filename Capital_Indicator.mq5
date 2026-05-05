@@ -17,6 +17,7 @@
    input bool InpShowMidnightHL = true;
    input bool InpShowAsiaBiasArrow = true;
    input bool InpShowSignals = true;
+   input bool InpShowOnlySwingSignals = true;
    input bool InpShowStatusLabel = true;
    input bool InpShowChartComment = true;
    input bool InpShowTestLines = false;
@@ -78,9 +79,18 @@ input bool InpSwingPatternEnabled = true;
 input int InpSwingLeftBars = 2;
 input int InpSwingRightBars = 2;
 input bool InpSwingShowLabels = true;
+input bool InpSwingUseInstitutionalSwings = false;
+input bool InpSwingRequireReclaimAfterSweep = false;
+input int InpSwingMinSwingRangePoints = 0;
+input int InpSwingMinReactionSepPoints = 1;
+input bool InpSwingConfirmBos = true;
 input bool InpSwingBullDivEnabled = true;
 input int InpSwingRsiLen = 14;
 input bool InpSwingShowDiv = true;
+input bool InpSwingDivUseRsiThresholds = true;
+input double InpSwingDivBullPrevRsiMax = 40.0;
+input double InpSwingDivBearPrevRsiMin = 60.0;
+input double InpSwingDivMinRsiDelta = 0.0;
 
    input group "Colors"
    input color InpDailyOpenColor = clrPurple;
@@ -242,6 +252,10 @@ input bool InpSwingShowDiv = true;
    double g_swing_last_sh_price = 0.0;
    double g_swing_last_sh_rsi = 0.0;
    datetime g_swing_last_sh_time = 0;
+   double g_swing_last_bull_sweep_level = 0.0;
+   double g_swing_last_bear_sweep_level = 0.0;
+   bool g_swing_allow_sl = true;
+   bool g_swing_allow_sh = true;
 
    datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
@@ -397,6 +411,10 @@ void EsReset()
    g_swing_last_sh_price = 0.0;
    g_swing_last_sh_rsi = 0.0;
    g_swing_last_sh_time = 0;
+   g_swing_last_bull_sweep_level = 0.0;
+   g_swing_last_bear_sweep_level = 0.0;
+   g_swing_allow_sl = true;
+   g_swing_allow_sh = true;
 }
 
 int EsIdx(const int offsetFromNewest)
@@ -646,6 +664,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
    void UpdateRightSideLabels(const datetime tLastBar)
    {
       if(g_day_key == 0) return;
+      if(InpShowOnlySwingSignals)
+      {
+         DeleteByToken("LBL_");
+         return;
+      }
       datetime tAnchor = tLastBar + (datetime)PeriodSeconds(_Period) * 2;
       string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
 
@@ -778,6 +801,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       }
 
       string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
+      bool showOther = !InpShowOnlySwingSignals;
       bool inAsia = InWindowLocal(tBarOpen, 0, 0, 8, 0);
       bool inLondon = InWindowLocal(tBarOpen, 9, 0, 17, 30);
       bool inNy = InWindowLocal(tBarOpen, 14, 30, 21, 0);
@@ -810,7 +834,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       }
       else { g_ny_sess_has = false; g_ny_start = 0; }
 
-      if(InpShowSessions)
+      if(showOther && InpShowSessions)
       {
          if(inAsia)
          {
@@ -831,11 +855,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
       if(g_daily_has)
       {
-         if(InpShowDailyOpen)
+         if(showOther && InpShowDailyOpen)
             CreateOrUpdateRay(dayPfx + "D_OPEN", g_day_start_time == 0 ? tBarOpen : g_day_start_time, g_daily_open, InpDailyOpenColor, STYLE_SOLID, 1);
          else
             DeleteByToken("_D_OPEN");
-         if(InpShowDailyHL)
+         if(showOther && InpShowDailyHL)
          {
             datetime tStart = (g_day_start_time == 0 ? tBarOpen : g_day_start_time);
             CreateOrUpdateRay(dayPfx + "D_HIGH", tStart, g_daily_high, InpDailyHLColor, STYLE_SOLID, 1);
@@ -843,40 +867,40 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
       }
 
-      if(InpShowNYOpen && g_ny_has)
+      if(showOther && InpShowNYOpen && g_ny_has)
       {
          CreateOrUpdateRay(dayPfx + "NY_OPEN", g_ny_time == 0 ? tBarOpen : g_ny_time, g_ny_open, InpNyOpenColor, STYLE_SOLID, 2);
       }
 
-      if(InpShowIB && g_ib_has)
+      if(showOther && InpShowIB && g_ib_has)
       {
          datetime tStart = (g_ib_time == 0 ? tBarOpen : g_ib_time);
          CreateOrUpdateRay(dayPfx + "IB_H", tStart, g_ib_high, InpIbColor, STYLE_DOT, 1);
          CreateOrUpdateRay(dayPfx + "IB_L", tStart, g_ib_low, InpIbColor, STYLE_DOT, 1);
       }
 
-      if(InpShowH13 && g_h13_has && MinuteOfDayLocal(tBarOpen) >= 13 * 60)
+      if(showOther && InpShowH13 && g_h13_has && MinuteOfDayLocal(tBarOpen) >= 13 * 60)
       {
          datetime tStart = (g_h13_time == 0 ? tBarOpen : g_h13_time);
          CreateOrUpdateRay(dayPfx + "H13_H", tStart, g_h13_high, InpH13Color, STYLE_SOLID, 2);
          CreateOrUpdateRay(dayPfx + "H13_L", tStart, g_h13_low, InpH13Color, STYLE_SOLID, 2);
       }
 
-      if(InpShow02 && g_h02_has && MinuteOfDayLocal(tBarOpen) >= 2 * 60)
+      if(showOther && InpShow02 && g_h02_has && MinuteOfDayLocal(tBarOpen) >= 2 * 60)
       {
          datetime tStart = (g_h02_time == 0 ? tBarOpen : g_h02_time);
          CreateOrUpdateRay(dayPfx + "H02_H", tStart, g_h02_high, InpH02Color, STYLE_SOLID, 2);
          CreateOrUpdateRay(dayPfx + "H02_L", tStart, g_h02_low, InpH02Color, STYLE_SOLID, 2);
       }
 
-      if(InpShowMidnightHL && g_mid_has)
+      if(showOther && InpShowMidnightHL && g_mid_has)
       {
          datetime tStart = (g_mid_time == 0 ? tBarOpen : g_mid_time);
          CreateOrUpdateRay(dayPfx + "MID_H", tStart, g_mid_high, InpMidnightColor, STYLE_SOLID, 2);
          CreateOrUpdateRay(dayPfx + "MID_L", tStart, g_mid_low, InpMidnightColor, STYLE_SOLID, 2);
       }
 
-      if(InpShowAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_has)
+      if(showOther && InpShowAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_has)
       {
          bool buyBias = (g_asia_high > 0.0 && l > g_asia_high);
          bool sellBias = (g_asia_low > 0.0 && h < g_asia_low);
@@ -895,7 +919,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
       }
 
-      if(InpUseAsiaLondonSell13 && IsLocalTime(tBarOpen, 13, 0) && g_london_has && g_h02_has && g_h02_high > g_london_high && g_h02_low > g_london_high)
+      if(showOther && InpUseAsiaLondonSell13 && IsLocalTime(tBarOpen, 13, 0) && g_london_has && g_h02_has && g_h02_high > g_london_high && g_h02_low > g_london_high)
       {
          string n1 = (g_prefix + IntegerToString(g_day_key) + "_") + "ASIA_LONDON_SELL13_" + IntegerToString((long)tBarOpen);
          if(ObjectFind(0, n1) < 0)
@@ -917,16 +941,32 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             if(!g_kiss_swept_h && h > g_h13_high)
             {
                g_kiss_swept_h = true;
-               string n = dayPfx + "KISS_SWEEP_H_" + IntegerToString((long)tBarOpen);
-               CreateOrUpdateText(n, tBarOpen, h + 12 * _Point, "Swept", clrRed, ANCHOR_LEFT_UPPER);
-               NotifySignal("SWEEP HIGH (H13)", tBarOpen);
+               if(InpSwingRequireReclaimAfterSweep)
+               {
+                  g_swing_last_bear_sweep_level = g_h13_high;
+                  g_swing_allow_sh = false;
+               }
+               if(showOther && InpShowSignals)
+               {
+                  string n = dayPfx + "KISS_SWEEP_H_" + IntegerToString((long)tBarOpen);
+                  CreateOrUpdateText(n, tBarOpen, h + 12 * _Point, "Swept", clrRed, ANCHOR_LEFT_UPPER);
+                  NotifySignal("SWEEP HIGH (H13)", tBarOpen);
+               }
             }
             if(!g_kiss_swept_l && l < g_h13_low)
             {
                g_kiss_swept_l = true;
-               string n = dayPfx + "KISS_SWEEP_L_" + IntegerToString((long)tBarOpen);
-               CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "Swept", clrRed, ANCHOR_LEFT_LOWER);
-               NotifySignal("SWEEP LOW (H13)", tBarOpen);
+               if(InpSwingRequireReclaimAfterSweep)
+               {
+                  g_swing_last_bull_sweep_level = g_h13_low;
+                  g_swing_allow_sl = false;
+               }
+               if(showOther && InpShowSignals)
+               {
+                  string n = dayPfx + "KISS_SWEEP_L_" + IntegerToString((long)tBarOpen);
+                  CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "Swept", clrRed, ANCHOR_LEFT_LOWER);
+                  NotifySignal("SWEEP LOW (H13)", tBarOpen);
+               }
             }
          }
 
@@ -937,7 +977,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          if(validKissBuy) g_kiss_done_b = true;
          if(validKissSell) g_kiss_done_s = true;
 
-         if(InpShowSignals)
+         if(showOther && InpShowSignals)
          {
             if(validKissBuy)
             {
@@ -972,7 +1012,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
       }
 
-      if(InpHammerShootingEnabled)
+      if(showOther && InpHammerShootingEnabled)
       {
          double candleSize = MathAbs(h - l);
          bool isGreen = (o < c);
@@ -1167,7 +1207,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          g_prev_hs_low = l;
       }
 
-      if(InpShowSignals && g_ib_has && g_h13_has)
+      if(showOther && InpShowSignals && g_ib_has && g_h13_has)
       {
          double mid = (g_ib_high + g_ib_low) / 2.0;
          bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
@@ -1213,7 +1253,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
       }
 
-      if(InpShowSignals && InpMidnightSignalsEnabled && g_mid_has && g_ib_has)
+      if(showOther && InpShowSignals && InpMidnightSignalsEnabled && g_mid_has && g_ib_has)
       {
          double ibMid = (g_ib_high + g_ib_low) / 2.0;
          bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
@@ -1272,18 +1312,18 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
       bool isStar13 = (_Period == PERIOD_M1) ? IsLocalTime(tBarOpen, 12, 59) : IsLocalTime(tBarOpen, 13, 0);
       bool isStar16 = (_Period == PERIOD_M1) ? IsLocalTime(tBarOpen, 15, 59) : IsLocalTime(tBarOpen, 16, 0);
-      if(isStar13)
+      if(showOther && isStar13)
       {
          string n = (g_prefix + IntegerToString(g_day_key) + "_") + "STAR_13_" + IntegerToString((long)tBarOpen);
          CreateOrUpdateText(n, tBarOpen, l - 14 * _Point, "★", clrYellow, ANCHOR_LEFT_LOWER);
       }
-      if(isStar16)
+      if(showOther && isStar16)
       {
          string n = (g_prefix + IntegerToString(g_day_key) + "_") + "STAR_16_" + IntegerToString((long)tBarOpen);
          CreateOrUpdateText(n, tBarOpen, l - 14 * _Point, "★", clrYellow, ANCHOR_LEFT_LOWER);
       }
 
-      if(InpLuxSwingEnabled)
+      if(showOther && InpLuxSwingEnabled)
       {
          int len = InpLuxSwingLength;
          if(len < 1) len = 1;
@@ -1368,7 +1408,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          LuxReset();
       }
 
-      if(InpInstSweepEnabled)
+      if(showOther && InpInstSweepEnabled)
       {
          const int lbLeft = 20;
          const int lbRight = 20;
@@ -1481,10 +1521,20 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          if(shift >= 0) vCur = (long)iVolume(_Symbol, _Period, shift);
          EsPushBar(tBarOpen, o, h, l, c, vCur);
 
+         if(InpSwingRequireReclaimAfterSweep && g_es_count >= 2)
+         {
+            double prevC = g_es_close[EsIdx(1)];
+            double curC = g_es_close[EsIdx(0)];
+            if(!g_swing_allow_sl && g_swing_last_bull_sweep_level > 0.0 && prevC <= g_swing_last_bull_sweep_level && curC > g_swing_last_bull_sweep_level)
+               g_swing_allow_sl = true;
+            if(!g_swing_allow_sh && g_swing_last_bear_sweep_level > 0.0 && prevC >= g_swing_last_bear_sweep_level && curC < g_swing_last_bear_sweep_level)
+               g_swing_allow_sh = true;
+         }
+
          int dk = DayKeyLocal(tBarOpen);
          string dayPfx = g_prefix + IntegerToString(dk) + "_";
 
-         if(InpEarlySwingEnabled)
+         if(showOther && InpEarlySwingEnabled)
          {
             int lbLeft = InpEarlyLeftBars;
             int lbRight = InpEarlyRightBars;
@@ -1550,6 +1600,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             if(win < ES_CAP && g_es_count >= win)
             {
                double epsSwing = _Point * 0.1;
+               double sepSwing = (double)InpSwingMinReactionSepPoints * _Point;
+               double minSwingRange = (double)InpSwingMinSwingRangePoints * _Point;
                int centerOff = right;
                int centerIdx = EsIdx(centerOff);
                double hC = g_es_high[centerIdx];
@@ -1561,21 +1613,30 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   if(off == centerOff) continue;
                   if(g_es_high[EsIdx(off)] >= hC) { sh = false; break; }
                }
-               for(int k = left; sh && k >= 1; k--)
+               if(!InpSwingUseInstitutionalSwings)
                {
-                  if(g_es_high[EsIdx(centerOff + k)] >= g_es_high[EsIdx(centerOff + k - 1)]) { sh = false; break; }
-               }
-               for(int k = 1; sh && k <= right; k++)
-               {
-                  if(g_es_high[EsIdx(centerOff - k)] >= g_es_high[EsIdx(centerOff - k + 1)]) { sh = false; break; }
+                  for(int k = left; sh && k >= 1; k--)
+                  {
+                     if(g_es_high[EsIdx(centerOff + k)] >= g_es_high[EsIdx(centerOff + k - 1)]) { sh = false; break; }
+                  }
+                  for(int k = 1; sh && k <= right; k++)
+                  {
+                     if(g_es_high[EsIdx(centerOff - k)] >= g_es_high[EsIdx(centerOff - k + 1)]) { sh = false; break; }
+                  }
                }
                if(sh)
                {
                   int reactIdx = EsIdx(centerOff - 1);
                   if(!(g_es_close[reactIdx] < g_es_open[reactIdx])) sh = false;
-                  if(sh && !(g_es_high[reactIdx] < (hC - epsSwing))) sh = false;
-                  if(sh && !(g_es_open[reactIdx] < (hC - epsSwing))) sh = false;
-                  if(sh && !(g_es_close[reactIdx] < (hC - epsSwing))) sh = false;
+                  if(sh && !(g_es_high[reactIdx] < (hC - sepSwing))) sh = false;
+                  if(sh && !(g_es_open[reactIdx] < (hC - sepSwing))) sh = false;
+                  if(sh && !(g_es_close[reactIdx] < (hC - sepSwing))) sh = false;
+                  if(sh && minSwingRange > 0.0 && !((hC - lC) >= minSwingRange)) sh = false;
+                  if(sh && InpSwingConfirmBos)
+                  {
+                     int newest = EsIdx(0);
+                     if(!(g_es_close[newest] < g_es_low[reactIdx])) sh = false;
+                  }
                }
 
                bool sl = true;
@@ -1584,25 +1645,34 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   if(off == centerOff) continue;
                   if(g_es_low[EsIdx(off)] <= lC) { sl = false; break; }
                }
-               for(int k = left; sl && k >= 1; k--)
+               if(!InpSwingUseInstitutionalSwings)
                {
-                  if(g_es_low[EsIdx(centerOff + k)] <= g_es_low[EsIdx(centerOff + k - 1)]) { sl = false; break; }
-               }
-               for(int k = 1; sl && k <= right; k++)
-               {
-                  if(g_es_low[EsIdx(centerOff - k)] <= g_es_low[EsIdx(centerOff - k + 1)]) { sl = false; break; }
+                  for(int k = left; sl && k >= 1; k--)
+                  {
+                     if(g_es_low[EsIdx(centerOff + k)] <= g_es_low[EsIdx(centerOff + k - 1)]) { sl = false; break; }
+                  }
+                  for(int k = 1; sl && k <= right; k++)
+                  {
+                     if(g_es_low[EsIdx(centerOff - k)] <= g_es_low[EsIdx(centerOff - k + 1)]) { sl = false; break; }
+                  }
                }
                if(sl)
                {
                   int reactIdx = EsIdx(centerOff - 1);
                   if(!(g_es_close[reactIdx] > g_es_open[reactIdx])) sl = false;
-                  if(sl && !(g_es_low[reactIdx] > (lC + epsSwing))) sl = false;
-                  if(sl && !(g_es_open[reactIdx] > (lC + epsSwing))) sl = false;
-                  if(sl && !(g_es_close[reactIdx] > (lC + epsSwing))) sl = false;
+                  if(sl && !(g_es_low[reactIdx] > (lC + sepSwing))) sl = false;
+                  if(sl && !(g_es_open[reactIdx] > (lC + sepSwing))) sl = false;
+                  if(sl && !(g_es_close[reactIdx] > (lC + sepSwing))) sl = false;
+                  if(sl && minSwingRange > 0.0 && !((hC - lC) >= minSwingRange)) sl = false;
+                  if(sl && InpSwingConfirmBos)
+                  {
+                     int newest = EsIdx(0);
+                     if(!(g_es_close[newest] > g_es_high[reactIdx])) sl = false;
+                  }
                }
 
                datetime tPivot = g_es_time[centerIdx];
-               if(sh && g_es_last_sp_sh_time != tPivot)
+               if(sh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh) && g_es_last_sp_sh_time != tPivot)
                {
                   datetime prevShTime = g_swing_last_sh_time;
                   double prevShPrice = g_swing_last_sh_price;
@@ -1612,7 +1682,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   double rsiPivot = 0.0;
                   bool hasRsi = (InpSwingBullDivEnabled && GetRsiAtTime(tPivot, rsiPivot));
                   bool bearDiv = false;
-                  if(hasRsi && prevShHas && hC > prevShPrice && rsiPivot < prevShRsi)
+                  if(hasRsi && prevShHas && hC > prevShPrice && rsiPivot < (prevShRsi - InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevShRsi >= InpSwingDivBearPrevRsiMin))
                      bearDiv = true;
 
                   if(hasRsi)
@@ -1643,7 +1713,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   NotifySignal("SH", tBarOpen);
                   g_es_last_sp_sh_time = tPivot;
                }
-               if(sl && g_es_last_sp_sl_time != tPivot)
+               if(sl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl) && g_es_last_sp_sl_time != tPivot)
                {
                   datetime prevSlTime = g_swing_last_sl_time;
                   double prevSlPrice = g_swing_last_sl_price;
@@ -1653,7 +1723,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   double rsiPivot = 0.0;
                   bool hasRsi = (InpSwingBullDivEnabled && GetRsiAtTime(tPivot, rsiPivot));
                   bool bullDiv = false;
-                  if(hasRsi && prevSlHas && lC < prevSlPrice && rsiPivot > prevSlRsi)
+                  if(hasRsi && prevSlHas && lC < prevSlPrice && rsiPivot > (prevSlRsi + InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevSlRsi <= InpSwingDivBullPrevRsiMax))
                      bullDiv = true;
 
                   if(hasRsi)
@@ -1699,6 +1769,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
    int OnInit()
    {
+      if(InpShowOnlySwingSignals) DeleteByPrefix(g_prefix);
       CreateOrUpdateStatusLabel("CAP_IND loaded");
       UpdateChartComment("CAP_IND loaded");
       if(g_rsi_handle != INVALID_HANDLE) IndicatorRelease(g_rsi_handle);
@@ -1710,7 +1781,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
    InstReset();
       DeleteByToken("ES_");
       EsReset();
-      if(InpDebugOverlay)
+      if(InpDebugOverlay && !InpShowOnlySwingSignals)
       {
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          if(bid > 0.0) CreateOrUpdateText(g_prefix + "PING", TimeCurrent(), bid, "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
@@ -1813,7 +1884,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
 
          UpdateRightSideLabels(time[curIndex]);
-         if(InpDebugOverlay)
+         if(InpDebugOverlay && !InpShowOnlySwingSignals)
          {
             CreateOrUpdateText(g_prefix + "PING", time[curIndex], close[curIndex], "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
          }
@@ -1874,7 +1945,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       }
 
       UpdateRightSideLabels(time[curIdx]);
-      if(InpDebugOverlay)
+      if(InpDebugOverlay && !InpShowOnlySwingSignals)
       {
          CreateOrUpdateText(g_prefix + "PING", time[curIdx], close[curIdx], "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
       }

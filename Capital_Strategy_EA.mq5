@@ -52,6 +52,17 @@ input bool InpHammerFibConfirmNextCandle = true;
 input bool InpHammerFibUse05 = true;
 input bool InpHammerFibUse0382 = true;
 
+input group "Swing Pattern Strategy"
+input bool InpTradeOnlySwingPattern = true;
+input bool InpSwingUseEntryTimeFilter = false;
+input bool InpSwingUseInstitutionalSwings = false;
+input bool InpSwingRequireReclaimAfterSweep = false;
+input int InpSwingLeftBars = 2;
+input int InpSwingRightBars = 2;
+input int InpSwingMinSwingRangePoints = 0;
+input int InpSwingMinReactionSepPoints = 1;
+input bool InpSwingConfirmBos = true;
+
 input group "Alerts"
 input bool InpSendAlert = true;
 input bool InpSendPush = false;
@@ -120,6 +131,11 @@ datetime g_hsfib_pattern_time = 0;
 double g_hsfib_high = 0.0;
 double g_hsfib_low = 0.0;
 datetime g_hsfib_expiry = 0;
+
+double g_swing_last_sweep_low_level = 0.0;
+double g_swing_last_sweep_high_level = 0.0;
+bool g_swing_allow_buy = true;
+bool g_swing_allow_sell = true;
 
 enum { EA_INST_CAP = 300 };
 datetime g_inst_time[EA_INST_CAP];
@@ -555,6 +571,10 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    g_hsfib_high = 0.0;
    g_hsfib_low = 0.0;
    g_hsfib_expiry = 0;
+   g_swing_last_sweep_low_level = 0.0;
+   g_swing_last_sweep_high_level = 0.0;
+   g_swing_allow_buy = true;
+   g_swing_allow_sell = true;
    EaInstReset();
 }
 
@@ -629,6 +649,10 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
       g_ib_sweep_up_bar = -1;
       g_buy_done = false;
       g_sell_done = false;
+      g_swing_last_sweep_low_level = 0.0;
+      g_swing_last_sweep_high_level = 0.0;
+      g_swing_allow_buy = true;
+      g_swing_allow_sell = true;
    }
 
    if(InWindowLocal(tBarOpen, 9, 0, 10, 0))
@@ -665,7 +689,7 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
    DrawMidnightCandleLevels();
 }
 
-bool TryEnterWithSL(const bool isBuy, const datetime tBarOpen, const double barClose, const double slFixed)
+bool TryEnterWithSLTag(const bool isBuy, const datetime tBarOpen, const double barClose, const double slFixed, const string tag)
 {
    double entry = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    if(entry <= 0.0) entry = barClose;
@@ -683,8 +707,13 @@ bool TryEnterWithSL(const bool isBuy, const datetime tBarOpen, const double barC
 
    trade.SetDeviationInPoints(InpDeviationPoints);
    bool ok = isBuy ? trade.Buy(InpLots, _Symbol, 0.0, sl, tp) : trade.Sell(InpLots, _Symbol, 0.0, sl, tp);
-   if(ok) Notify(isBuy ? "BUY Fib" : "SELL Fib", tBarOpen);
+   if(ok) Notify(tag, tBarOpen);
    return ok;
+}
+
+bool TryEnterWithSL(const bool isBuy, const datetime tBarOpen, const double barClose, const double slFixed)
+{
+   return TryEnterWithSLTag(isBuy, tBarOpen, barClose, slFixed, isBuy ? "BUY Fib" : "SELL Fib");
 }
 
 bool TryEnter(const bool isBuy, const datetime tBarOpen, const double barClose)
@@ -788,6 +817,129 @@ void ProcessSignalOnNewBar()
          string n = g_prefix + IntegerToString(g_day_key) + "_ASIA_BIAS_" + IntegerToString((long)tBarOpen);
          CreateOrUpdateArrow(n, tBarOpen, buyBias ? (l - 12 * _Point) : (h + 12 * _Point), buyBias);
       }
+   }
+
+   if(InpTradeOnlySwingPattern)
+   {
+      if(InpSwingRequireReclaimAfterSweep && g_h13_has)
+      {
+         bool inKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
+         if(inKill)
+         {
+            if(l < g_h13_low)
+            {
+               g_swing_last_sweep_low_level = g_h13_low;
+               g_swing_allow_buy = false;
+            }
+            if(h > g_h13_high)
+            {
+               g_swing_last_sweep_high_level = g_h13_high;
+               g_swing_allow_sell = false;
+            }
+         }
+
+         double cPrev = iClose(_Symbol, _Period, 2);
+         if(!g_swing_allow_buy && g_swing_last_sweep_low_level > 0.0 && cPrev <= g_swing_last_sweep_low_level && c > g_swing_last_sweep_low_level)
+            g_swing_allow_buy = true;
+         if(!g_swing_allow_sell && g_swing_last_sweep_high_level > 0.0 && cPrev >= g_swing_last_sweep_high_level && c < g_swing_last_sweep_high_level)
+            g_swing_allow_sell = true;
+      }
+
+      bool isEntryTimeSwing = true;
+      if(InpSwingUseEntryTimeFilter) isEntryTimeSwing = IsEntryTimeLocal(tBarOpen);
+      if(isEntryTimeSwing)
+      {
+         int left = MathMax(1, InpSwingLeftBars);
+         int right = MathMax(1, InpSwingRightBars);
+         int centerShift = right + 1;
+         int needBars = centerShift + left + 2;
+         if(iBars(_Symbol, _Period) >= needBars)
+         {
+            double hC = iHigh(_Symbol, _Period, centerShift);
+            double lC = iLow(_Symbol, _Period, centerShift);
+            double oR = iOpen(_Symbol, _Period, right);
+            double cR = iClose(_Symbol, _Period, right);
+            double hR = iHigh(_Symbol, _Period, right);
+            double lR = iLow(_Symbol, _Period, right);
+
+            double minRange = (double)InpSwingMinSwingRangePoints * _Point;
+            double sep = (double)InpSwingMinReactionSepPoints * _Point;
+            bool rangeOk = ((hC - lC) >= minRange);
+
+            bool sh = true;
+            bool sl = true;
+            for(int off = -right; off <= left; off++)
+            {
+               int s = centerShift + off;
+               if(s == centerShift) continue;
+               double hh = iHigh(_Symbol, _Period, s);
+               if(hh >= hC) sh = false;
+               double ll = iLow(_Symbol, _Period, s);
+               if(ll <= lC) sl = false;
+            }
+
+            if(!InpSwingUseInstitutionalSwings)
+            {
+               for(int k = left; sh && k >= 1; k--)
+               {
+                  if(iHigh(_Symbol, _Period, centerShift + k) >= iHigh(_Symbol, _Period, centerShift + k - 1)) sh = false;
+               }
+               for(int k = 1; sh && k <= right; k++)
+               {
+                  if(iHigh(_Symbol, _Period, centerShift - k) >= iHigh(_Symbol, _Period, centerShift - k + 1)) sh = false;
+               }
+
+               for(int k = left; sl && k >= 1; k--)
+               {
+                  if(iLow(_Symbol, _Period, centerShift + k) <= iLow(_Symbol, _Period, centerShift + k - 1)) sl = false;
+               }
+               for(int k = 1; sl && k <= right; k++)
+               {
+                  if(iLow(_Symbol, _Period, centerShift - k) <= iLow(_Symbol, _Period, centerShift - k + 1)) sl = false;
+               }
+            }
+
+            bool reactBearOk = (cR < oR && hR < (hC - sep) && oR < (hC - sep) && cR < (hC - sep));
+            bool reactBullOk = (cR > oR && lR > (lC + sep) && oR > (lC + sep) && cR > (lC + sep));
+            bool bosBearOk = (!InpSwingConfirmBos || c < lR);
+            bool bosBullOk = (!InpSwingConfirmBos || c > hR);
+
+            sh = sh && rangeOk && reactBearOk && bosBearOk;
+            sl = sl && rangeOk && reactBullOk && bosBullOk;
+
+            if(InpSwingRequireReclaimAfterSweep)
+            {
+               sh = sh && g_swing_allow_sell;
+               sl = sl && g_swing_allow_buy;
+            }
+
+            if(sl && !sh)
+            {
+               if(!(InpMaxOneTradePerDayPerSide && g_buy_done))
+               {
+                  if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+                  if(!HasPosition(+1))
+                  {
+                     if(SpreadOk() && TryEnterWithSLTag(true, tBarOpen, c, lC, "BUY Swing")) g_buy_done = true;
+                  }
+               }
+            }
+            if(sh && !sl)
+            {
+               if(!(InpMaxOneTradePerDayPerSide && g_sell_done))
+               {
+                  if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+                  if(!HasPosition(-1))
+                  {
+                     if(SpreadOk() && TryEnterWithSLTag(false, tBarOpen, c, hC, "SELL Swing")) g_sell_done = true;
+                  }
+               }
+            }
+         }
+      }
+
+      g_last_bar_time = t0;
+      return;
    }
 
    int entrySlot = EntrySlotLocal(tBarOpen);

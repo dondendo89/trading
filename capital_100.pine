@@ -3,6 +3,7 @@ indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true,
 
 // --- INPUT ---
 showSessions = input.bool(false, "Mostra Box Sessioni (Asia, London, NY)")
+showSessionNames = input.bool(true, "Mostra Nomi Sessioni (Asia, London, NY)")
 showDailyHL  = input.bool(true, "Mostra Daily High/Low")
 showDailyOpen = input.bool(false, "Mostra Daily Open (line viola)")
 showNYOpen   = input.bool(true, "Mostra NY Open (14:30)")
@@ -58,12 +59,24 @@ earlyShowLabels = input.bool(true, "Mostra Etichette", group="Early Swing")
 swingPatternEnabled = input.bool(true, "Swing Pattern (Swing High/Low)", group="Swing Pattern")
 swingPatternLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Swing Pattern")
 swingPatternRightBars = input.int(2, "Candele Destra", minval=1, group="Swing Pattern")
+swingUseInstitutionalSwings = input.bool(false, "Usa swing tipo Sweep institutional", group="Swing Pattern")
 swingPatternOnlyAlerts = input.bool(true, "Solo notifica Swing Pattern", group="Swing Pattern")
+swingRequireReclaimAfterSweep = input.bool(false, "Mostra solo dopo reclaim Sweep recente", group="Swing Pattern")
+swingMinSwingRangeTicks = input.int(0, "Min range swing (ticks)", minval=0, group="Swing Pattern")
+swingMinReactionSepTicks = input.int(1, "Min distanza reazione (ticks)", minval=0, group="Swing Pattern")
+swingConfirmBos = input.bool(true, "Conferma BOS (close)", group="Swing Pattern")
 swingBullDivEnabled = input.bool(true, "Divergenza Bullish (RSI)", group="Swing Pattern")
 swingBullDivRsiLen = input.int(14, "RSI Length", minval=2, group="Swing Pattern")
+swingDivUseRsiThresholds = input.bool(true, "Filtro soglie RSI", group="Swing Pattern")
+swingDivBullPrevRsiMax = input.int(40, "RSI max 1° low", minval=1, maxval=50, group="Swing Pattern")
+swingDivBearPrevRsiMin = input.int(60, "RSI min 1° high", minval=50, maxval=99, group="Swing Pattern")
+swingDivMinRsiDelta = input.float(0.0, "Min delta RSI", minval=0.0, step=0.1, group="Swing Pattern")
 
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
+
+isAfterNyClose = not na(time(timeframe.period, "2100-2359", tz))
+showUntilNyClose = not isAfterNyClose
 
 instLineStyle(s) =>
     s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
@@ -82,13 +95,13 @@ else
     dHigh := math.max(dHigh, high)
     dLow := math.min(dLow, low)
 
-plot(showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
-plot(showDailyHL ? dHigh : na, "Daily High", color.white, 1, plot.style_linebr)
-plot(showDailyHL ? dLow : na, "Daily Low", color.white, 1, plot.style_linebr)
+plot(showUntilNyClose and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
+plot(showUntilNyClose and showDailyHL ? dHigh : na, "Daily High", color.white, 1, plot.style_linebr)
+plot(showUntilNyClose and showDailyHL ? dLow : na, "Daily Low", color.white, 1, plot.style_linebr)
 
 var label dHighLbl = na
 var label dLowLbl = na
-if showDailyHL and not na(dHigh) and not na(dLow)
+if showUntilNyClose and showDailyHL and not na(dHigh) and not na(dLow)
     if na(dHighLbl)
         dHighLbl := label.new(bar_index, dHigh, "Daily High", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
     else
@@ -116,10 +129,10 @@ if is_0000
 if isAfterNyOpen and not na(nyOpenFrom1m)
     nyOpenPrice := nyOpenFrom1m
 
-plot(showNYOpen ? nyOpenPrice : na, "NY Open Line", color.blue, 2, plot.style_linebr)
+plot(showUntilNyClose and showNYOpen ? nyOpenPrice : na, "NY Open Line", color.blue, 2, plot.style_linebr)
 
 var label nyOpenLbl = na
-if showNYOpen and not na(nyOpenPrice)
+if showUntilNyClose and showNYOpen and not na(nyOpenPrice)
     if na(nyOpenLbl)
         nyOpenLbl := label.new(bar_index, nyOpenPrice, "NY Open", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
     else
@@ -179,7 +192,7 @@ draw_session(sess_time, sess_name, sess_color, sBox, sLab, sHigh, sLow) =>
         resHigh := high
         resLow := low
         resBox := box.new(left=bar_index, top=resHigh, right=bar_index, bottom=resLow, bgcolor=color.new(sess_color, 92), border_color=color.new(sess_color, 100), border_width=0)
-        if showSessions
+        if showSessionNames
             resLab := label.new(bar_index, high, sess_name, color=sess_color, textcolor=color.white, style=label.style_label_down, size=size.small)
     else if isIn
         resHigh := math.max(nz(resHigh, high), high)
@@ -187,8 +200,15 @@ draw_session(sess_time, sess_name, sess_color, sBox, sLab, sHigh, sLow) =>
         box.set_top(resBox, resHigh)
         box.set_bottom(resBox, resLow)
         box.set_right(resBox, bar_index)
-        label.set_x(resLab, bar_index)
-        label.set_y(resLab, resHigh)
+        if showSessionNames
+            if na(resLab)
+                resLab := label.new(bar_index, resHigh, sess_name, color=sess_color, textcolor=color.white, style=label.style_label_down, size=size.small)
+            label.set_x(resLab, bar_index)
+            label.set_y(resLab, resHigh)
+        else
+            if not na(resLab)
+                label.delete(resLab)
+                resLab := na
     [resBox, resLab, resHigh, resLow]
 
 if showSessions
@@ -201,8 +221,12 @@ if showSessions
 
 // --- 4. INITIAL BALANCE (09:00 - 10:00) ---
 isInIB = not na(time(timeframe.period, "0900-1000", tz))
+isAfterIBStart = not na(time(timeframe.period, "0900-2359", tz))
 var float ibH = na
 var float ibL = na
+if is_0000
+    ibH := na
+    ibL := na
 if isInIB
     if not isInIB[1]
         ibH := high
@@ -211,8 +235,8 @@ if isInIB
         ibH := math.max(ibH, high)
         ibL := math.min(ibL, low)
 ibMid = (ibH + ibL) / 2
-plot(ibH, "IB High", color.new(color.blue, 40), 1, plot.style_linebr)
-plot(ibL, "IB Low", color.new(color.blue, 40), 1, plot.style_linebr)
+plot(showUntilNyClose and isAfterIBStart ? ibH : na, "IB High", color.new(color.blue, 40), 1, plot.style_linebr)
+plot(showUntilNyClose and isAfterIBStart ? ibL : na, "IB Low", color.new(color.blue, 40), 1, plot.style_linebr)
 
 var float orangeH = na
 var float orangeL = na
@@ -223,14 +247,17 @@ if is_0000
 
 orangeH60 = request.security(syminfo.tickerid, "60", ta.valuewhen(hour(time, tz) == 13 and minute(time, tz) == 0, high, 0), barmerge.gaps_off, barmerge.lookahead_off)
 orangeL60 = request.security(syminfo.tickerid, "60", ta.valuewhen(hour(time, tz) == 13 and minute(time, tz) == 0, low, 0), barmerge.gaps_off, barmerge.lookahead_off)
-if not na(orangeH60) and not na(orangeL60)
+orangeT60 = request.security(syminfo.tickerid, "60", ta.valuewhen(hour(time, tz) == 13 and minute(time, tz) == 0, time, 0), barmerge.gaps_off, barmerge.lookahead_off)
+orangeIsToday = not na(orangeT60) and dayofmonth(orangeT60, tz) == dayofmonth(time, tz) and month(orangeT60, tz) == month(time, tz) and year(orangeT60, tz) == year(time, tz)
+if orangeIsToday and not na(orangeH60) and not na(orangeL60)
     orangeH := orangeH60
     orangeL := orangeL60
 
-plot(not na(orangeH) ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
-plot(not na(orangeL) ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
+plot(showUntilNyClose and orangeIsToday and not na(orangeH) ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
+plot(showUntilNyClose and orangeIsToday and not na(orangeL) ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
 
 is_0200 = hour(time, tz) == 2 and minute(time, tz) == 0
+isAfter02 = not na(time(timeframe.period, "0200-2359", tz))
 var float c02H = na
 var float c02L = na
 if is_0000
@@ -239,8 +266,8 @@ if is_0000
 if is_0200
     c02H := high
     c02L := low
-plot(show02CandleLines and hour(time, tz) >= 2 ? c02H : na, "02 High", color.green, 2, plot.style_linebr)
-plot(show02CandleLines and hour(time, tz) >= 2 ? c02L : na, "02 Low", color.green, 2, plot.style_linebr)
+plot(showUntilNyClose and show02CandleLines and isAfter02 ? c02H : na, "02 High", color.green, 2, plot.style_linebr)
+plot(showUntilNyClose and show02CandleLines and isAfter02 ? c02L : na, "02 Low", color.green, 2, plot.style_linebr)
 
 is_1300 = hour(time, tz) == 13 and minute(time, tz) == 0
 c02AboveLondon = not na(c02H) and not na(c02L) and not na(londonHighLive) and c02H > londonHighLive and c02L > londonHighLive
@@ -252,8 +279,8 @@ midCandleLow  = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, 
 newDayRome = na(time[1]) ? true : dayofmonth(time, tz) != dayofmonth(time[1], tz)
 midCandlePlotHigh = newDayRome ? na : midCandleHigh
 midCandlePlotLow = newDayRome ? na : midCandleLow
-plot(showMidnightLines ? midCandlePlotHigh : na, "00 High", color.green, 2, plot.style_linebr)
-plot(showMidnightLines ? midCandlePlotLow : na, "00 Low", color.green, 2, plot.style_linebr)
+plot(showUntilNyClose and showMidnightLines ? midCandlePlotHigh : na, "00 High", color.green, 2, plot.style_linebr)
+plot(showUntilNyClose and showMidnightLines ? midCandlePlotLow : na, "00 Low", color.green, 2, plot.style_linebr)
 
 var line a2nHighLine = na
 var line a2nLowLine = na
@@ -265,8 +292,8 @@ if newDayRome
         line.delete(a2nLowLine)
         a2nLowLine := na
     if showA2NRange
-        a2nHighLine := line.new(bar_index, midCandleHigh, bar_index + 1, midCandleHigh, extend=extend.right, color=color.green, width=2)
-        a2nLowLine := line.new(bar_index, midCandleLow, bar_index + 1, midCandleLow, extend=extend.right, color=color.green, width=2)
+        a2nHighLine := line.new(bar_index, midCandleHigh, bar_index, midCandleHigh, extend=extend.none, color=color.green, width=2)
+        a2nLowLine := line.new(bar_index, midCandleLow, bar_index, midCandleLow, extend=extend.none, color=color.green, width=2)
 
 if not showA2NRange
     if not na(a2nHighLine)
@@ -276,12 +303,13 @@ if not showA2NRange
         line.delete(a2nLowLine)
         a2nLowLine := na
 else
-    if not na(a2nHighLine) and not na(midCandleHigh)
-        line.set_xy1(a2nHighLine, line.get_x1(a2nHighLine), midCandleHigh)
-        line.set_xy2(a2nHighLine, bar_index + 1, midCandleHigh)
-    if not na(a2nLowLine) and not na(midCandleLow)
-        line.set_xy1(a2nLowLine, line.get_x1(a2nLowLine), midCandleLow)
-        line.set_xy2(a2nLowLine, bar_index + 1, midCandleLow)
+    if showUntilNyClose
+        if not na(a2nHighLine) and not na(midCandleHigh)
+            line.set_xy1(a2nHighLine, line.get_x1(a2nHighLine), midCandleHigh)
+            line.set_xy2(a2nHighLine, bar_index, midCandleHigh)
+        if not na(a2nLowLine) and not na(midCandleLow)
+            line.set_xy1(a2nLowLine, line.get_x1(a2nLowLine), midCandleLow)
+            line.set_xy2(a2nLowLine, bar_index, midCandleLow)
 
 buf = sweepBufferTicks * syminfo.mintick
 
@@ -311,8 +339,8 @@ midSweepUp = not na(midSweepUpBar)
 newDay = year(time, tz) != year(time[1], tz) or month(time, tz) != month(time[1], tz) or dayofmonth(time, tz) != dayofmonth(time[1], tz)
 midPlotH = newDay ? na : midH
 midPlotL = newDay ? na : midL
-plot(showA2NRange ? midPlotH : na, "MID High", color.green, 2, plot.style_linebr)
-plot(showA2NRange ? midPlotL : na, "MID Low", color.green, 2, plot.style_linebr)
+plot(showUntilNyClose and showA2NRange ? midPlotH : na, "MID High", color.green, 2, plot.style_linebr)
+plot(showUntilNyClose and showA2NRange ? midPlotL : na, "MID Low", color.green, 2, plot.style_linebr)
 
 var int ibSweepDownBar = na
 var int ibSweepUpBar = na
@@ -520,34 +548,37 @@ lux_d = math.abs(lux_c - lux_o)
 lux_ph = ta.pivothigh(luxLen, luxLen)
 lux_pl = ta.pivotlow(luxLen, luxLen)
 
-lux_hammer = lux_pl and math.min(lux_o, lux_c) - lux_l > lux_d and lux_h - math.max(lux_c, lux_o) < lux_d
-lux_ihammer = lux_pl and lux_h - math.max(lux_c, lux_o) > lux_d and math.min(lux_c, lux_o) - lux_l < lux_d
+lux_has_pl = not na(lux_pl)
+lux_has_ph = not na(lux_ph)
+
+lux_hammer = lux_has_pl and math.min(lux_o, lux_c) - lux_l > lux_d and lux_h - math.max(lux_c, lux_o) < lux_d
+lux_ihammer = lux_has_pl and lux_h - math.max(lux_c, lux_o) > lux_d and math.min(lux_c, lux_o) - lux_l < lux_d
 lux_bulleng = lux_c > lux_o and lux_c[1] < lux_o[1] and lux_c > lux_o[1] and lux_o < lux_c[1]
-lux_hanging = lux_ph and math.min(lux_c, lux_o) - lux_l > lux_d and lux_h - math.max(lux_o, lux_c) < lux_d
-lux_shooting = lux_ph and lux_h - math.max(lux_o, lux_c) > lux_d and math.min(lux_c, lux_o) - lux_l < lux_d
+lux_hanging = lux_has_ph and math.min(lux_c, lux_o) - lux_l > lux_d and lux_h - math.max(lux_o, lux_c) < lux_d
+lux_shooting = lux_has_ph and lux_h - math.max(lux_o, lux_c) > lux_d and math.min(lux_c, lux_o) - lux_l < lux_d
 lux_beareng = lux_c > lux_o and lux_c[1] < lux_o[1] and lux_c > lux_o[1] and lux_o < lux_c[1]
 
 lux_code = lux_hammer ? 1 : lux_ihammer ? 2 : lux_bulleng ? 3 : lux_hanging ? 4 : lux_shooting ? 5 : lux_beareng ? 6 : 0
 lux_title = lux_code == 1 ? "Hammer" : lux_code == 2 ? "Inverted Hammer" : lux_code == 3 ? "Bullish Engulfing" : lux_code == 4 ? "Hanging Man" : lux_code == 5 ? "Shooting Star" : lux_code == 6 ? "Bearish Engulfing" : "None"
 
-if luxEnabled and (lux_ph or lux_pl)
-    if lux_ph
+if luxEnabled and (lux_has_ph or lux_has_pl)
+    if lux_has_ph
         H = na(lux_phy) ? "HH" : (lux_ph > lux_phy ? "HH" : "LH")
         lux_phy := lux_ph
         if luxShowLabels
             label.new(bar_index[luxLen], lux_ph, H + "\n" + lux_title, color=color.new(color.white, 100), style=label.style_label_down, textcolor=luxSwingHColor, size=size.small)
-    else if lux_pl
+    else if lux_has_pl
         L = na(lux_ply) ? "HL" : (lux_pl < lux_ply ? "LL" : "HL")
         lux_ply := lux_pl
         if luxShowLabels
             label.new(bar_index[luxLen], lux_pl, L + "\n" + lux_title, color=color.new(color.white, 100), style=label.style_label_up, textcolor=luxSwingLColor, size=size.small)
 
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 1, title="Lux Hammer", message="Lux Hammer on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 2, title="Lux Inverted Hammer", message="Lux Inverted Hammer on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 3, title="Lux Bullish Engulfing", message="Lux Bullish Engulfing on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 4, title="Lux Hanging Man", message="Lux Hanging Man on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 5, title="Lux Shooting Star", message="Lux Shooting Star on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_ph or lux_pl) and lux_code == 6, title="Lux Bearish Engulfing", message="Lux Bearish Engulfing on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 1, title="Lux Hammer", message="Lux Hammer on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 2, title="Lux Inverted Hammer", message="Lux Inverted Hammer on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 3, title="Lux Bullish Engulfing", message="Lux Bullish Engulfing on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 4, title="Lux Hanging Man", message="Lux Hanging Man on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 5, title="Lux Shooting Star", message="Lux Shooting Star on {{ticker}} TF={{interval}}")
+alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 6, title="Lux Bearish Engulfing", message="Lux Bearish Engulfing on {{ticker}} TF={{interval}}")
 
 instLbLeft = 20
 instLbRight = 20
@@ -693,7 +724,7 @@ plotshape(earlyShowPossibleSWH and earlySwingHigh, title="Anticipo Swing High", 
 if earlyShowLabels and earlySwingLow
     label.new(bar_index, low, "Possible SWL", style=label.style_label_up, color=color.yellow, textcolor=color.black)
 
-if earlyShowPossibleSWH and earlyShowLabels and earlySwingHigh
+if earlyShowLabels and earlyShowPossibleSWH and earlySwingHigh
     label.new(bar_index, high, "Possible SWH", style=label.style_label_down, color=color.yellow, textcolor=color.black)
 
 alertcondition(not swingPatternOnlyAlerts and earlySwingLow, title="Early Swing Low Alert", message="Possibile Swing Low in formazione")
@@ -705,7 +736,8 @@ hasSwingWindow = bar_index >= swingWin
 
 swingRsi = ta.rsi(close, swingBullDivRsiLen)
 swingEps = syminfo.mintick * 0.1
-swingSep = syminfo.mintick
+swingSep = swingMinReactionSepTicks * syminfo.mintick
+swingMinSwingRange = swingMinSwingRangeTicks * syminfo.mintick
 var float swingLastLowPrice = na
 var float swingLastLowRsi = na
 var int swingLastLowBarIndex = na
@@ -714,33 +746,76 @@ var float swingLastHighRsi = na
 var int swingLastHighBarIndex = na
 var swingDivLines = array.new_line(0)
 
-swingHighOk = hasSwingWindow
-if swingHighOk
+swingPH = ta.pivothigh(high, swingPatternLeftBars, swingPatternRightBars)
+swingPL = ta.pivotlow(low, swingPatternLeftBars, swingPatternRightBars)
+
+var float swingLastSweepLowLevel = na
+var float swingLastSweepHighLevel = na
+var bool swingAllowSL = true
+var bool swingAllowSH = true
+
+if is_0000
+    swingLastSweepLowLevel := na
+    swingLastSweepHighLevel := na
+    swingAllowSL := true
+    swingAllowSH := true
+
+if (isKill or sweepOutsideKillzone) and not na(orangeL) and low < orangeL
+    swingLastSweepLowLevel := orangeL
+    swingAllowSL := false
+
+if (isKill or sweepOutsideKillzone) and not na(orangeH) and high > orangeH
+    swingLastSweepHighLevel := orangeH
+    swingAllowSH := false
+
+if not na(swingLastSweepLowLevel) and ta.crossover(close, swingLastSweepLowLevel)
+    swingAllowSL := true
+
+if not na(swingLastSweepHighLevel) and ta.crossunder(close, swingLastSweepHighLevel)
+    swingAllowSH := true
+
+swingRangeOk = (high[swingCenter] - low[swingCenter]) >= swingMinSwingRange
+swingReactBearOk = close[swingCenter - 1] < open[swingCenter - 1] and high[swingCenter - 1] < (high[swingCenter] - swingSep) and open[swingCenter - 1] < (high[swingCenter] - swingSep) and close[swingCenter - 1] < (high[swingCenter] - swingSep)
+swingReactBullOk = close[swingCenter - 1] > open[swingCenter - 1] and low[swingCenter - 1] > (low[swingCenter] + swingSep) and open[swingCenter - 1] > (low[swingCenter] + swingSep) and close[swingCenter - 1] > (low[swingCenter] + swingSep)
+swingBosBearOk = not swingConfirmBos or close < low[swingCenter - 1]
+swingBosBullOk = not swingConfirmBos or close > high[swingCenter - 1]
+
+swingHighOkInst = not na(swingPH) and swingRangeOk and swingReactBearOk and swingBosBearOk
+swingLowOkInst = not na(swingPL) and swingRangeOk and swingReactBullOk and swingBosBullOk
+
+swingHighOkStrict = hasSwingWindow
+if swingHighOkStrict
     for i = 0 to swingWin
         if i != swingCenter and high[i] >= high[swingCenter]
-            swingHighOk := false
+            swingHighOkStrict := false
     for j = swingPatternLeftBars to 1
         if high[swingCenter + j] >= high[swingCenter + j - 1]
-            swingHighOk := false
+            swingHighOkStrict := false
     for j = 1 to swingPatternRightBars
         if high[swingCenter - j + 1] <= high[swingCenter - j]
-            swingHighOk := false
-    swingHighOk := swingHighOk and close[swingCenter - 1] < open[swingCenter - 1] and high[swingCenter - 1] < (high[swingCenter] - swingSep) and open[swingCenter - 1] < (high[swingCenter] - swingSep) and close[swingCenter - 1] < (high[swingCenter] - swingSep)
+            swingHighOkStrict := false
+    swingHighOkStrict := swingHighOkStrict and swingRangeOk and swingReactBearOk and swingBosBearOk
 
-swingLowOk = hasSwingWindow
-if swingLowOk
+swingLowOkStrict = hasSwingWindow
+if swingLowOkStrict
     for i = 0 to swingWin
         if i != swingCenter and low[i] <= low[swingCenter]
-            swingLowOk := false
+            swingLowOkStrict := false
     for j = swingPatternLeftBars to 1
         if low[swingCenter + j] <= low[swingCenter + j - 1]
-            swingLowOk := false
+            swingLowOkStrict := false
     for j = 1 to swingPatternRightBars
         if low[swingCenter - j + 1] >= low[swingCenter - j]
-            swingLowOk := false
-    swingLowOk := swingLowOk and close[swingCenter - 1] > open[swingCenter - 1] and low[swingCenter - 1] > (low[swingCenter] + swingSep) and open[swingCenter - 1] > (low[swingCenter] + swingSep) and close[swingCenter - 1] > (low[swingCenter] + swingSep)
+            swingLowOkStrict := false
+    swingLowOkStrict := swingLowOkStrict and swingRangeOk and swingReactBullOk and swingBosBullOk
 
-swingBullDiv = swingPatternEnabled and swingBullDivEnabled and swingLowOk and not na(swingLastLowPrice) and low[swingCenter] < swingLastLowPrice and swingRsi[swingCenter] > swingLastLowRsi
+swingHighOk = swingUseInstitutionalSwings ? swingHighOkInst : swingHighOkStrict
+swingLowOk = swingUseInstitutionalSwings ? swingLowOkInst : swingLowOkStrict
+
+swingHighOk := swingHighOk and (not swingRequireReclaimAfterSweep or swingAllowSH)
+swingLowOk := swingLowOk and (not swingRequireReclaimAfterSweep or swingAllowSL)
+
+swingBullDiv = swingPatternEnabled and swingBullDivEnabled and swingLowOk and not na(swingLastLowPrice) and low[swingCenter] < swingLastLowPrice and swingRsi[swingCenter] > (swingLastLowRsi + swingDivMinRsiDelta) and (not swingDivUseRsiThresholds or swingLastLowRsi <= swingDivBullPrevRsiMax)
 if swingBullDiv and not na(swingLastLowBarIndex)
     newX = bar_index - swingCenter
     newY = low[swingCenter]
@@ -753,7 +828,7 @@ if swingPatternEnabled and swingLowOk
     swingLastLowRsi := swingRsi[swingCenter]
     swingLastLowBarIndex := bar_index - swingCenter
 
-swingBearDiv = swingPatternEnabled and swingBullDivEnabled and swingHighOk and not na(swingLastHighPrice) and high[swingCenter] > swingLastHighPrice and swingRsi[swingCenter] < swingLastHighRsi
+swingBearDiv = swingPatternEnabled and swingBullDivEnabled and swingHighOk and not na(swingLastHighPrice) and high[swingCenter] > swingLastHighPrice and swingRsi[swingCenter] < (swingLastHighRsi - swingDivMinRsiDelta) and (not swingDivUseRsiThresholds or swingLastHighRsi >= swingDivBearPrevRsiMin)
 if swingBearDiv and not na(swingLastHighBarIndex)
     newXh = bar_index - swingCenter
     newYh = high[swingCenter]

@@ -53,7 +53,8 @@ input bool InpHammerFibUse05 = true;
 input bool InpHammerFibUse0382 = true;
 
 input group "Swing Pattern Strategy"
-input bool InpTradeOnlySwingPattern = true;
+input bool InpTradeOnlyInstitutionalSwing = true;
+input bool InpTradeOnlySwingPattern = false;
 input bool InpSwingUseEntryTimeFilter = false;
 input bool InpSwingUseInstitutionalSwings = false;
 input bool InpSwingRequireReclaimAfterSweep = false;
@@ -62,6 +63,29 @@ input int InpSwingRightBars = 2;
 input int InpSwingMinSwingRangePoints = 0;
 input int InpSwingMinReactionSepPoints = 1;
 input bool InpSwingConfirmBos = true;
+
+enum ENUM_MTF_RETEST_ZONE_TYPE
+{
+   MTF_ZONE_OB = 0,
+   MTF_ZONE_FVG = 1,
+   MTF_ZONE_OB_FVG = 2
+};
+
+input group "MTF Entry (H1->M1)"
+input bool InpTradeH1SwingWithM1Entries = false;
+input bool InpMtfUseSetupA_ReclaimBreak = true;
+input bool InpMtfUseSetupB_SweepSfp = true;
+input bool InpMtfUseSetupC_ChoChRetest = false;
+input int InpMtfChoChPivotLen = 1;
+input ENUM_MTF_RETEST_ZONE_TYPE InpMtfRetestZoneType = MTF_ZONE_OB_FVG;
+input int InpMtfObLookbackBars = 5;
+input int InpMtfSlBufferPoints = 0;
+input int InpMtfH1LeftBars = 2;
+input int InpMtfH1RightBars = 2;
+input bool InpMtfH1ConfirmBos = true;
+input int InpMtfMaxM1BarsAfterH1Signal = 180;
+input int InpMtfSweepLookbackBars = 5;
+input int InpMtfSweepBufferPoints = 0;
 
 input group "Alerts"
 input bool InpSendAlert = true;
@@ -151,6 +175,42 @@ datetime g_inst_touch_buy_time = 0;
 datetime g_inst_touch_sell_time = 0;
 datetime g_inst_last_touch_high_time = 0;
 datetime g_inst_last_touch_low_time = 0;
+
+datetime g_mtf_last_h1_close_time = 0;
+datetime g_mtf_last_h1_sh_time = 0;
+double g_mtf_last_h1_sh_price = 0.0;
+datetime g_mtf_last_h1_sl_time = 0;
+double g_mtf_last_h1_sl_price = 0.0;
+
+bool g_mtf_buy_active = false;
+datetime g_mtf_buy_h1_time = 0;
+double g_mtf_buy_level = 0.0;
+int g_mtf_buy_bars = 0;
+
+bool g_mtf_sell_active = false;
+datetime g_mtf_sell_h1_time = 0;
+double g_mtf_sell_level = 0.0;
+int g_mtf_sell_bars = 0;
+
+int g_mtfA_buy_state = 0;
+double g_mtfA_buy_reclaim_high = 0.0;
+double g_mtfA_buy_reclaim_low = 0.0;
+
+int g_mtfA_sell_state = 0;
+double g_mtfA_sell_reclaim_high = 0.0;
+double g_mtfA_sell_reclaim_low = 0.0;
+
+int g_mtfC_buy_state = 0;
+double g_mtfC_buy_last_pivot_high = 0.0;
+double g_mtfC_buy_zone_low = 0.0;
+double g_mtfC_buy_zone_high = 0.0;
+double g_mtfC_buy_struct_low = 0.0;
+
+int g_mtfC_sell_state = 0;
+double g_mtfC_sell_last_pivot_low = 0.0;
+double g_mtfC_sell_zone_low = 0.0;
+double g_mtfC_sell_zone_high = 0.0;
+double g_mtfC_sell_struct_high = 0.0;
 
 datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
@@ -576,6 +636,36 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    g_swing_allow_buy = true;
    g_swing_allow_sell = true;
    EaInstReset();
+
+   g_mtf_last_h1_close_time = 0;
+   g_mtf_last_h1_sh_time = 0;
+   g_mtf_last_h1_sh_price = 0.0;
+   g_mtf_last_h1_sl_time = 0;
+   g_mtf_last_h1_sl_price = 0.0;
+   g_mtf_buy_active = false;
+   g_mtf_buy_h1_time = 0;
+   g_mtf_buy_level = 0.0;
+   g_mtf_buy_bars = 0;
+   g_mtf_sell_active = false;
+   g_mtf_sell_h1_time = 0;
+   g_mtf_sell_level = 0.0;
+   g_mtf_sell_bars = 0;
+   g_mtfA_buy_state = 0;
+   g_mtfA_buy_reclaim_high = 0.0;
+   g_mtfA_buy_reclaim_low = 0.0;
+   g_mtfA_sell_state = 0;
+   g_mtfA_sell_reclaim_high = 0.0;
+   g_mtfA_sell_reclaim_low = 0.0;
+   g_mtfC_buy_state = 0;
+   g_mtfC_buy_last_pivot_high = 0.0;
+   g_mtfC_buy_zone_low = 0.0;
+   g_mtfC_buy_zone_high = 0.0;
+   g_mtfC_buy_struct_low = 0.0;
+   g_mtfC_sell_state = 0;
+   g_mtfC_sell_last_pivot_low = 0.0;
+   g_mtfC_sell_zone_low = 0.0;
+   g_mtfC_sell_zone_high = 0.0;
+   g_mtfC_sell_struct_high = 0.0;
 }
 
 bool HasPosition(const int dir)
@@ -687,6 +777,162 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
 
    EaInstUpdate(tBarOpen, h, l);
    DrawMidnightCandleLevels();
+}
+
+double LowestPrevLow(const int lookbackBars)
+{
+   int n = lookbackBars;
+   if(n < 1) n = 1;
+   if(iBars(_Symbol, _Period) < (n + 2)) return 0.0;
+   double v = iLow(_Symbol, _Period, 2);
+   for(int sh = 3; sh <= n + 1; sh++)
+   {
+      double x = iLow(_Symbol, _Period, sh);
+      if(x > 0.0 && (v <= 0.0 || x < v)) v = x;
+   }
+   return v;
+}
+
+double HighestPrevHigh(const int lookbackBars)
+{
+   int n = lookbackBars;
+   if(n < 1) n = 1;
+   if(iBars(_Symbol, _Period) < (n + 2)) return 0.0;
+   double v = iHigh(_Symbol, _Period, 2);
+   for(int sh = 3; sh <= n + 1; sh++)
+   {
+      double x = iHigh(_Symbol, _Period, sh);
+      if(x > 0.0 && (v <= 0.0 || x > v)) v = x;
+   }
+   return v;
+}
+
+void UpdateMtfH1SwingSignals()
+{
+   datetime h1BarOpen = iTime(_Symbol, PERIOD_H1, 1);
+   if(h1BarOpen == 0) return;
+   if(h1BarOpen == g_mtf_last_h1_close_time) return;
+   g_mtf_last_h1_close_time = h1BarOpen;
+
+   int left = MathMax(1, InpMtfH1LeftBars);
+   int right = MathMax(1, InpMtfH1RightBars);
+   int centerShift = right + 1;
+   int needBars = centerShift + left + 2;
+   if(iBars(_Symbol, PERIOD_H1) < needBars) return;
+
+   double hC = iHigh(_Symbol, PERIOD_H1, centerShift);
+   double lC = iLow(_Symbol, PERIOD_H1, centerShift);
+   if(hC <= 0.0 || lC <= 0.0) return;
+
+   bool sh = true;
+   bool sl = true;
+   for(int off = -right; off <= left; off++)
+   {
+      int s = centerShift + off;
+      if(s == centerShift) continue;
+      double hh = iHigh(_Symbol, PERIOD_H1, s);
+      if(hh >= hC) sh = false;
+      double ll = iLow(_Symbol, PERIOD_H1, s);
+      if(ll <= lC) sl = false;
+   }
+
+   for(int k = left; sh && k >= 1; k--)
+   {
+      if(iHigh(_Symbol, PERIOD_H1, centerShift + k) >= iHigh(_Symbol, PERIOD_H1, centerShift + k - 1)) sh = false;
+   }
+   for(int k = 1; sh && k <= right; k++)
+   {
+      if(iHigh(_Symbol, PERIOD_H1, centerShift - k) >= iHigh(_Symbol, PERIOD_H1, centerShift - k + 1)) sh = false;
+   }
+
+   for(int k = left; sl && k >= 1; k--)
+   {
+      if(iLow(_Symbol, PERIOD_H1, centerShift + k) <= iLow(_Symbol, PERIOD_H1, centerShift + k - 1)) sl = false;
+   }
+   for(int k = 1; sl && k <= right; k++)
+   {
+      if(iLow(_Symbol, PERIOD_H1, centerShift - k) <= iLow(_Symbol, PERIOD_H1, centerShift - k + 1)) sl = false;
+   }
+
+   double sep = (double)InpSwingMinReactionSepPoints * _Point;
+   double minRange = (double)InpSwingMinSwingRangePoints * _Point;
+   bool rangeOk = ((hC - lC) >= minRange);
+
+   double cR = iClose(_Symbol, PERIOD_H1, right);
+   double oR = iOpen(_Symbol, PERIOD_H1, right);
+   double hR = iHigh(_Symbol, PERIOD_H1, right);
+   double lR = iLow(_Symbol, PERIOD_H1, right);
+   double cNow = iClose(_Symbol, PERIOD_H1, 1);
+
+   bool reactBearOk = (cR < oR && hR < (hC - sep) && oR < (hC - sep) && cR < (hC - sep));
+   bool reactBullOk = (cR > oR && lR > (lC + sep) && oR > (lC + sep) && cR > (lC + sep));
+
+   bool bosBearOk = true;
+   bool bosBullOk = true;
+   if(InpMtfH1ConfirmBos)
+   {
+      if(right == 1)
+      {
+         bosBearOk = (cNow < lC);
+         bosBullOk = (cNow > hC);
+      }
+      else
+      {
+         bosBearOk = (cNow < lR);
+         bosBullOk = (cNow > hR);
+      }
+   }
+
+   sh = sh && rangeOk && reactBearOk && bosBearOk;
+   sl = sl && rangeOk && reactBullOk && bosBullOk;
+
+   datetime tPivot = iTime(_Symbol, PERIOD_H1, centerShift);
+   if(tPivot == 0) return;
+
+   if(sl && tPivot != g_mtf_last_h1_sl_time)
+   {
+      g_mtf_last_h1_sl_time = tPivot;
+      g_mtf_last_h1_sl_price = lC;
+      g_mtf_buy_active = true;
+      g_mtf_buy_h1_time = tPivot;
+      g_mtf_buy_level = lC;
+      g_mtf_buy_bars = 0;
+      g_mtfA_buy_state = 0;
+      g_mtfA_buy_reclaim_high = 0.0;
+      g_mtfA_buy_reclaim_low = 0.0;
+      g_mtfC_buy_state = 0;
+      g_mtfC_buy_last_pivot_high = 0.0;
+      g_mtfC_buy_zone_low = 0.0;
+      g_mtfC_buy_zone_high = 0.0;
+      g_mtfC_buy_struct_low = 0.0;
+      g_mtf_sell_active = false;
+      g_mtf_sell_bars = 0;
+      g_mtfA_sell_state = 0;
+      g_mtfC_sell_state = 0;
+      return;
+   }
+   if(sh && tPivot != g_mtf_last_h1_sh_time)
+   {
+      g_mtf_last_h1_sh_time = tPivot;
+      g_mtf_last_h1_sh_price = hC;
+      g_mtf_sell_active = true;
+      g_mtf_sell_h1_time = tPivot;
+      g_mtf_sell_level = hC;
+      g_mtf_sell_bars = 0;
+      g_mtfA_sell_state = 0;
+      g_mtfA_sell_reclaim_high = 0.0;
+      g_mtfA_sell_reclaim_low = 0.0;
+      g_mtfC_sell_state = 0;
+      g_mtfC_sell_last_pivot_low = 0.0;
+      g_mtfC_sell_zone_low = 0.0;
+      g_mtfC_sell_zone_high = 0.0;
+      g_mtfC_sell_struct_high = 0.0;
+      g_mtf_buy_active = false;
+      g_mtf_buy_bars = 0;
+      g_mtfA_buy_state = 0;
+      g_mtfC_buy_state = 0;
+      return;
+   }
 }
 
 bool TryEnterWithSLTag(const bool isBuy, const datetime tBarOpen, const double barClose, const double slFixed, const string tag)
@@ -817,6 +1063,358 @@ void ProcessSignalOnNewBar()
          string n = g_prefix + IntegerToString(g_day_key) + "_ASIA_BIAS_" + IntegerToString((long)tBarOpen);
          CreateOrUpdateArrow(n, tBarOpen, buyBias ? (l - 12 * _Point) : (h + 12 * _Point), buyBias);
       }
+   }
+
+   if(InpTradeH1SwingWithM1Entries)
+   {
+      if(_Period != PERIOD_M1) { g_last_bar_time = t0; return; }
+
+      UpdateMtfH1SwingSignals();
+
+      int maxBars = InpMtfMaxM1BarsAfterH1Signal;
+      if(maxBars < 0) maxBars = 0;
+
+      if(g_mtf_buy_active) g_mtf_buy_bars++;
+      if(g_mtf_sell_active) g_mtf_sell_bars++;
+
+      if(maxBars > 0 && g_mtf_buy_active && g_mtf_buy_bars > maxBars)
+      {
+         g_mtf_buy_active = false;
+         g_mtf_buy_bars = 0;
+         g_mtfA_buy_state = 0;
+         g_mtfC_buy_state = 0;
+      }
+      if(maxBars > 0 && g_mtf_sell_active && g_mtf_sell_bars > maxBars)
+      {
+         g_mtf_sell_active = false;
+         g_mtf_sell_bars = 0;
+         g_mtfA_sell_state = 0;
+         g_mtfC_sell_state = 0;
+      }
+
+      double cPrev = iClose(_Symbol, _Period, 2);
+      if(cPrev <= 0.0) { g_last_bar_time = t0; return; }
+
+      double buf = (double)InpMtfSweepBufferPoints * _Point;
+      int look = InpMtfSweepLookbackBars;
+      if(look < 1) look = 1;
+
+      if(g_mtf_buy_active && !(InpMaxOneTradePerDayPerSide && g_buy_done) && !HasPosition(+1))
+      {
+         if(g_mtfC_buy_struct_low <= 0.0 || l < g_mtfC_buy_struct_low) g_mtfC_buy_struct_low = l;
+
+         if(InpMtfUseSetupA_ReclaimBreak)
+         {
+            if(g_mtfA_buy_state == 0) g_mtfA_buy_state = 1;
+
+            if(g_mtfA_buy_state == 1)
+            {
+               if(cPrev <= g_mtf_buy_level && c > g_mtf_buy_level)
+               {
+                  g_mtfA_buy_reclaim_high = h;
+                  g_mtfA_buy_reclaim_low = l;
+                  g_mtfA_buy_state = 2;
+               }
+            }
+            else if(g_mtfA_buy_state == 2)
+            {
+               if(g_mtfA_buy_reclaim_high > 0.0 && cPrev <= g_mtfA_buy_reclaim_high && c > g_mtfA_buy_reclaim_high)
+               {
+                  if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+                  if(!HasPosition(+1))
+                  {
+                     if(SpreadOk() && TryEnterWithSLTag(true, tBarOpen, c, g_mtfA_buy_reclaim_low, "BUY MTF A")) g_buy_done = true;
+                  }
+                  g_mtf_buy_active = false;
+                  g_mtf_buy_bars = 0;
+                  g_mtfA_buy_state = 0;
+               }
+            }
+         }
+
+         if(g_mtf_buy_active && InpMtfUseSetupB_SweepSfp)
+         {
+            double lowestPrev = LowestPrevLow(look);
+            if(lowestPrev > 0.0 && l < (lowestPrev - buf) && c > lowestPrev)
+            {
+               if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+               if(!HasPosition(+1))
+               {
+                  if(SpreadOk() && TryEnterWithSLTag(true, tBarOpen, c, l, "BUY MTF B")) g_buy_done = true;
+               }
+               g_mtf_buy_active = false;
+               g_mtf_buy_bars = 0;
+               g_mtfA_buy_state = 0;
+               g_mtfC_buy_state = 0;
+            }
+         }
+
+         if(g_mtf_buy_active && InpMtfUseSetupC_ChoChRetest)
+         {
+            int piv = MathMax(1, InpMtfChoChPivotLen);
+            int centerShift = piv + 1;
+            int needBars = centerShift + piv + 2;
+            if(iBars(_Symbol, _Period) >= needBars)
+            {
+               if(g_mtfC_buy_state == 0)
+               {
+                  bool isPH = true;
+                  double hC = iHigh(_Symbol, _Period, centerShift);
+                  for(int k = 1; k <= piv; k++)
+                  {
+                     if(hC <= iHigh(_Symbol, _Period, centerShift - k)) { isPH = false; break; }
+                     if(hC <= iHigh(_Symbol, _Period, centerShift + k)) { isPH = false; break; }
+                  }
+                  if(isPH) g_mtfC_buy_last_pivot_high = hC;
+
+                  if(g_mtfC_buy_last_pivot_high > 0.0 && cPrev <= g_mtfC_buy_last_pivot_high && c > g_mtfC_buy_last_pivot_high)
+                  {
+                     int obLook = MathMax(1, InpMtfObLookbackBars);
+                     double obH = 0.0, obL = 0.0;
+                     for(int i = 2; i <= (obLook + 1); i++)
+                     {
+                        double oi = iOpen(_Symbol, _Period, i);
+                        double ci = iClose(_Symbol, _Period, i);
+                        if(oi <= 0.0 || ci <= 0.0) continue;
+                        if(ci < oi)
+                        {
+                           obH = iHigh(_Symbol, _Period, i);
+                           obL = iLow(_Symbol, _Period, i);
+                           break;
+                        }
+                     }
+
+                     double fvgL = 0.0, fvgH = 0.0;
+                     double h2 = iHigh(_Symbol, _Period, 3);
+                     if(h2 > 0.0 && l > h2)
+                     {
+                        fvgL = h2;
+                        fvgH = l;
+                     }
+
+                     double zL = 0.0, zH = 0.0;
+                     if(InpMtfRetestZoneType == MTF_ZONE_OB)
+                     {
+                        zL = obL; zH = obH;
+                     }
+                     else if(InpMtfRetestZoneType == MTF_ZONE_FVG)
+                     {
+                        zL = fvgL; zH = fvgH;
+                     }
+                     else
+                     {
+                        if(obL > 0.0 && obH > 0.0) { zL = obL; zH = obH; }
+                        if(fvgL > 0.0 && fvgH > 0.0)
+                        {
+                           if(zL <= 0.0 || fvgL < zL) zL = fvgL;
+                           if(zH <= 0.0 || fvgH > zH) zH = fvgH;
+                        }
+                     }
+
+                     if(zL > 0.0 && zH > 0.0 && zL < zH)
+                     {
+                        g_mtfC_buy_zone_low = zL;
+                        g_mtfC_buy_zone_high = zH;
+                        g_mtfC_buy_state = 1;
+                     }
+                  }
+               }
+               else if(g_mtfC_buy_state == 1)
+               {
+                  if(g_mtfC_buy_zone_low > 0.0 && g_mtfC_buy_zone_high > 0.0 && l <= g_mtfC_buy_zone_high && h >= g_mtfC_buy_zone_low)
+                  {
+                     double slBuf = (double)InpMtfSlBufferPoints * _Point;
+                     double slFixed = g_mtfC_buy_struct_low - slBuf;
+                     if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+                     if(!HasPosition(+1))
+                     {
+                        if(SpreadOk() && TryEnterWithSLTag(true, tBarOpen, c, slFixed, "BUY MTF C")) g_buy_done = true;
+                     }
+                     g_mtf_buy_active = false;
+                     g_mtf_buy_bars = 0;
+                     g_mtfA_buy_state = 0;
+                     g_mtfC_buy_state = 0;
+                  }
+               }
+            }
+         }
+      }
+
+      if(g_mtf_sell_active && !(InpMaxOneTradePerDayPerSide && g_sell_done) && !HasPosition(-1))
+      {
+         if(g_mtfC_sell_struct_high <= 0.0 || h > g_mtfC_sell_struct_high) g_mtfC_sell_struct_high = h;
+
+         if(InpMtfUseSetupA_ReclaimBreak)
+         {
+            if(g_mtfA_sell_state == 0) g_mtfA_sell_state = 1;
+
+            if(g_mtfA_sell_state == 1)
+            {
+               if(cPrev >= g_mtf_sell_level && c < g_mtf_sell_level)
+               {
+                  g_mtfA_sell_reclaim_high = h;
+                  g_mtfA_sell_reclaim_low = l;
+                  g_mtfA_sell_state = 2;
+               }
+            }
+            else if(g_mtfA_sell_state == 2)
+            {
+               if(g_mtfA_sell_reclaim_low > 0.0 && cPrev >= g_mtfA_sell_reclaim_low && c < g_mtfA_sell_reclaim_low)
+               {
+                  if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+                  if(!HasPosition(-1))
+                  {
+                     if(SpreadOk() && TryEnterWithSLTag(false, tBarOpen, c, g_mtfA_sell_reclaim_high, "SELL MTF A")) g_sell_done = true;
+                  }
+                  g_mtf_sell_active = false;
+                  g_mtf_sell_bars = 0;
+                  g_mtfA_sell_state = 0;
+               }
+            }
+         }
+
+         if(g_mtf_sell_active && InpMtfUseSetupB_SweepSfp)
+         {
+            double highestPrev = HighestPrevHigh(look);
+            if(highestPrev > 0.0 && h > (highestPrev + buf) && c < highestPrev)
+            {
+               if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+               if(!HasPosition(-1))
+               {
+                  if(SpreadOk() && TryEnterWithSLTag(false, tBarOpen, c, h, "SELL MTF B")) g_sell_done = true;
+               }
+               g_mtf_sell_active = false;
+               g_mtf_sell_bars = 0;
+               g_mtfA_sell_state = 0;
+               g_mtfC_sell_state = 0;
+            }
+         }
+
+         if(g_mtf_sell_active && InpMtfUseSetupC_ChoChRetest)
+         {
+            int piv = MathMax(1, InpMtfChoChPivotLen);
+            int centerShift = piv + 1;
+            int needBars = centerShift + piv + 2;
+            if(iBars(_Symbol, _Period) >= needBars)
+            {
+               if(g_mtfC_sell_state == 0)
+               {
+                  bool isPL = true;
+                  double lC = iLow(_Symbol, _Period, centerShift);
+                  for(int k = 1; k <= piv; k++)
+                  {
+                     if(lC >= iLow(_Symbol, _Period, centerShift - k)) { isPL = false; break; }
+                     if(lC >= iLow(_Symbol, _Period, centerShift + k)) { isPL = false; break; }
+                  }
+                  if(isPL) g_mtfC_sell_last_pivot_low = lC;
+
+                  if(g_mtfC_sell_last_pivot_low > 0.0 && cPrev >= g_mtfC_sell_last_pivot_low && c < g_mtfC_sell_last_pivot_low)
+                  {
+                     int obLook = MathMax(1, InpMtfObLookbackBars);
+                     double obH = 0.0, obL = 0.0;
+                     for(int i = 2; i <= (obLook + 1); i++)
+                     {
+                        double oi = iOpen(_Symbol, _Period, i);
+                        double ci = iClose(_Symbol, _Period, i);
+                        if(oi <= 0.0 || ci <= 0.0) continue;
+                        if(ci > oi)
+                        {
+                           obH = iHigh(_Symbol, _Period, i);
+                           obL = iLow(_Symbol, _Period, i);
+                           break;
+                        }
+                     }
+
+                     double fvgL = 0.0, fvgH = 0.0;
+                     double l2 = iLow(_Symbol, _Period, 3);
+                     if(l2 > 0.0 && h < l2)
+                     {
+                        fvgL = h;
+                        fvgH = l2;
+                     }
+
+                     double zL = 0.0, zH = 0.0;
+                     if(InpMtfRetestZoneType == MTF_ZONE_OB)
+                     {
+                        zL = obL; zH = obH;
+                     }
+                     else if(InpMtfRetestZoneType == MTF_ZONE_FVG)
+                     {
+                        zL = fvgL; zH = fvgH;
+                     }
+                     else
+                     {
+                        if(obL > 0.0 && obH > 0.0) { zL = obL; zH = obH; }
+                        if(fvgL > 0.0 && fvgH > 0.0)
+                        {
+                           if(zL <= 0.0 || fvgL < zL) zL = fvgL;
+                           if(zH <= 0.0 || fvgH > zH) zH = fvgH;
+                        }
+                     }
+
+                     if(zL > 0.0 && zH > 0.0 && zL < zH)
+                     {
+                        g_mtfC_sell_zone_low = zL;
+                        g_mtfC_sell_zone_high = zH;
+                        g_mtfC_sell_state = 1;
+                     }
+                  }
+               }
+               else if(g_mtfC_sell_state == 1)
+               {
+                  if(g_mtfC_sell_zone_low > 0.0 && g_mtfC_sell_zone_high > 0.0 && l <= g_mtfC_sell_zone_high && h >= g_mtfC_sell_zone_low)
+                  {
+                     double slBuf = (double)InpMtfSlBufferPoints * _Point;
+                     double slFixed = g_mtfC_sell_struct_high + slBuf;
+                     if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+                     if(!HasPosition(-1))
+                     {
+                        if(SpreadOk() && TryEnterWithSLTag(false, tBarOpen, c, slFixed, "SELL MTF C")) g_sell_done = true;
+                     }
+                     g_mtf_sell_active = false;
+                     g_mtf_sell_bars = 0;
+                     g_mtfA_sell_state = 0;
+                     g_mtfC_sell_state = 0;
+                  }
+               }
+            }
+         }
+      }
+
+      g_last_bar_time = t0;
+      return;
+   }
+
+   if(InpTradeOnlyInstitutionalSwing)
+   {
+      bool instBuyTouch = (g_inst_touch_buy_time == tBarOpen);
+      bool instSellTouch = (g_inst_touch_sell_time == tBarOpen);
+
+      if(instBuyTouch && g_inst_swing_low_has)
+      {
+         if(!(InpMaxOneTradePerDayPerSide && g_buy_done))
+         {
+            if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+            if(!HasPosition(+1))
+            {
+               if(SpreadOk() && TryEnterWithSLTag(true, tBarOpen, c, g_inst_swing_low, "BUY InstSwing")) g_buy_done = true;
+            }
+         }
+      }
+      if(instSellTouch && g_inst_swing_high_has)
+      {
+         if(!(InpMaxOneTradePerDayPerSide && g_sell_done))
+         {
+            if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+            if(!HasPosition(-1))
+            {
+               if(SpreadOk() && TryEnterWithSLTag(false, tBarOpen, c, g_inst_swing_high, "SELL InstSwing")) g_sell_done = true;
+            }
+         }
+      }
+
+      g_last_bar_time = t0;
+      return;
    }
 
    if(InpTradeOnlySwingPattern)

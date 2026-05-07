@@ -7,17 +7,19 @@
    input bool InpEnabled = true;
    input int InpItalyOffsetHours = 2;
    input bool InpShowSessions = false;
+   input bool InpShowSessionNames = true;
    input int InpBoxAlpha = 60;
    input bool InpShowDailyHL = true;
    input bool InpShowDailyOpen = false;
    input bool InpShowNYOpen = true;
+   input bool InpShowA2NRange = true;
    input bool InpShowIB = true;
    input bool InpShowH13 = true; 
    input bool InpShow02 = true;
    input bool InpShowMidnightHL = true;
    input bool InpShowAsiaBiasArrow = true;
    input bool InpShowSignals = true;
-   input bool InpShowOnlySwingSignals = true;
+   input bool InpShowOnlySwingSignals = false;
    input bool InpShowStatusLabel = true;
    input bool InpShowChartComment = true;
    input bool InpShowTestLines = false;
@@ -31,6 +33,8 @@
    input bool InpNotifyCrossLevels = false;
    input bool InpNotifyOnlySHSL = true;
    input bool InpNotifyDiv = true;
+   input bool InpNotifyLux = true;
+   input bool InpNotifyMtf = true;
 
    input group "Logic"
    input bool InpUseDailyOpenFilter = true;
@@ -44,6 +48,8 @@
    input group "Logica Matteo Capital"
    input int InpRetestToleranceTicks = 5;
    input bool InpRequireSweepBeforeKiss = true;
+   input bool InpSweepOutsideKillzone = false;
+   input bool InpKissOutsideKillzone = false;
 
    input group "Hammer/Shooting"
    input bool InpHammerShootingEnabled = true;
@@ -60,6 +66,15 @@
    input bool InpLuxSwingShowLabels = true;
    input color InpLuxSwingHighColor = clrRed;
    input color InpLuxSwingLowColor = clrTeal;
+   input bool InpLuxNotifySwings = true;
+   input bool InpLuxNotifyPatterns = true;
+   input bool InpLuxNotifyHammer = true;
+   input bool InpLuxNotifyInvertedHammer = true;
+   input bool InpLuxNotifyBullishEngulfing = true;
+   input bool InpLuxNotifyHangingMan = true;
+   input bool InpLuxNotifyShootingStar = true;
+   input bool InpLuxNotifyBearishEngulfing = true;
+   input bool InpLuxNotifyNone = true;
 
 input group "Institutional Sweep"
 input bool InpInstSweepEnabled = true;
@@ -73,14 +88,42 @@ input int InpEarlyLeftBars = 2;
 input int InpEarlyRightBars = 2;
 input bool InpEarlyVolFilter = true;
 input bool InpEarlyShowLabels = true;
+input bool InpEarlyShowDailyExtremeShSl = false;
+input int InpEarlyDailyExtremeBufferPoints = 0;
 
 input group "Swing Pattern"
 input bool InpSwingPatternEnabled = true;
 input int InpSwingLeftBars = 2;
 input int InpSwingRightBars = 2;
+input bool InpSwingUseTfBars = true;
+input int InpSwingLeftBars_M1 = 2;
+input int InpSwingRightBars_M1 = 2;
+input int InpSwingLeftBars_M15 = 2;
+input int InpSwingRightBars_M15 = 2;
+input int InpSwingLeftBars_H1 = 2;
+input int InpSwingRightBars_H1 = 2;
+input int InpSwingLeftBars_H4 = 2;
+input int InpSwingRightBars_H4 = 2;
 input bool InpSwingShowLabels = true;
 input bool InpSwingUseInstitutionalSwings = false;
 input bool InpSwingRequireReclaimAfterSweep = false;
+input bool InpSwingRequireOppositeSwingSweep = false;
+input int InpSwingOppositeSwingSweepBufferPoints = 0;
+input bool InpSwingRequireH13L13Sweep = false;
+input bool InpSwingRequireAsiaSweep = false;
+input int InpSwingAsiaSweepStartHour = 8;
+input int InpSwingAsiaSweepStartMinute = 0;
+input int InpSwingAsiaSweepEndHour = 11;
+input int InpSwingAsiaSweepEndMinute = 0;
+input bool InpSwingRequireIBSweep = false;
+input int InpSwingIBSweepStartHour = 10;
+input int InpSwingIBSweepStartMinute = 0;
+input int InpSwingIBSweepEndHour = 13;
+input int InpSwingIBSweepEndMinute = 0;
+input bool InpSwingOverLowL13Enabled = false;
+input int InpSwingOverLowL13BufferPoints = 0;
+input bool InpSwingShowDailyExtremeShSl = false;
+input int InpSwingDailyExtremeBufferPoints = 0;
 input int InpSwingMinSwingRangePoints = 0;
 input int InpSwingMinReactionSepPoints = 1;
 input bool InpSwingConfirmBos = true;
@@ -91,6 +134,29 @@ input bool InpSwingDivUseRsiThresholds = true;
 input double InpSwingDivBullPrevRsiMax = 40.0;
 input double InpSwingDivBearPrevRsiMin = 60.0;
 input double InpSwingDivMinRsiDelta = 0.0;
+
+enum ENUM_MTF_RETEST_ZONE_TYPE
+{
+   MTF_ZONE_OB = 0,
+   MTF_ZONE_FVG = 1,
+   MTF_ZONE_OB_FVG = 2
+};
+
+input group "MTF Entry (H1->M1)"
+input bool InpMtfEntryEnabled = false;
+input bool InpMtfUseSetupA = true;
+input bool InpMtfUseSetupB = true;
+input bool InpMtfUseSetupC = false;
+input int InpMtfH1LeftBars = 2;
+input int InpMtfH1RightBars = 2;
+input bool InpMtfH1ConfirmBos = true;
+input int InpMtfMaxM1BarsAfterH1Signal = 180;
+input int InpMtfSweepLookbackBars = 5;
+input int InpMtfSweepBufferPoints = 0;
+input int InpMtfChoChPivotLen = 1;
+input ENUM_MTF_RETEST_ZONE_TYPE InpMtfRetestZoneType = MTF_ZONE_OB_FVG;
+input int InpMtfObLookbackBars = 5;
+input int InpMtfSlBufferPoints = 0;
 
    input group "Colors"
    input color InpDailyOpenColor = clrPurple;
@@ -257,6 +323,54 @@ input double InpSwingDivMinRsiDelta = 0.0;
    bool g_swing_allow_sl = true;
    bool g_swing_allow_sh = true;
 
+   bool g_liq_last_sl_has = false;
+   double g_liq_last_sl_price = 0.0;
+   datetime g_liq_last_sl_time = 0;
+   bool g_liq_last_sh_has = false;
+   double g_liq_last_sh_price = 0.0;
+   datetime g_liq_last_sh_time = 0;
+   bool g_liq_opp_swept_for_sh = false;
+   bool g_liq_opp_swept_for_sl = false;
+
+   bool g_swing_asia_swept_h = false;
+   bool g_swing_asia_swept_l = false;
+   bool g_swing_ib_swept_h = false;
+   bool g_swing_ib_swept_l = false;
+   double g_prev_bar_low = 0.0;
+   bool g_prev_bar_low_has = false;
+   datetime g_last_over_low_time = 0;
+
+   datetime g_mtf_last_h1_sl_time = 0;
+   double g_mtf_last_h1_sl_price = 0.0;
+   datetime g_mtf_last_h1_sh_time = 0;
+   double g_mtf_last_h1_sh_price = 0.0;
+
+   bool g_mtf_buy_active = false;
+   datetime g_mtf_buy_h1_time = 0;
+   double g_mtf_buy_level = 0.0;
+   int g_mtf_buy_bars = 0;
+   int g_mtfA_buy_state = 0;
+   double g_mtfA_buy_reclaim_high = 0.0;
+   double g_mtfA_buy_reclaim_low = 0.0;
+   int g_mtfC_buy_state = 0;
+   double g_mtfC_buy_last_pivot_high = 0.0;
+   double g_mtfC_buy_zone_low = 0.0;
+   double g_mtfC_buy_zone_high = 0.0;
+   double g_mtfC_buy_struct_low = 0.0;
+
+   bool g_mtf_sell_active = false;
+   datetime g_mtf_sell_h1_time = 0;
+   double g_mtf_sell_level = 0.0;
+   int g_mtf_sell_bars = 0;
+   int g_mtfA_sell_state = 0;
+   double g_mtfA_sell_reclaim_high = 0.0;
+   double g_mtfA_sell_reclaim_low = 0.0;
+   int g_mtfC_sell_state = 0;
+   double g_mtfC_sell_last_pivot_low = 0.0;
+   double g_mtfC_sell_zone_low = 0.0;
+   double g_mtfC_sell_zone_high = 0.0;
+   double g_mtfC_sell_struct_high = 0.0;
+
    datetime LocalTime(const datetime tServer) { return tServer + (datetime)InpItalyOffsetHours * 3600; }
 
    datetime NextLocalMidnightServer(const datetime tServer)
@@ -286,6 +400,140 @@ input double InpSwingDivMinRsiDelta = 0.0;
       if(CopyBuffer(g_rsi_handle, 0, shift, 1, buf) <= 0) return false;
       rsiVal = buf[0];
       return true;
+   }
+
+   double MtfLowestPrevLow(const int look)
+   {
+      double vMin = 0.0;
+      int n = MathMax(1, look);
+      for(int s = 2; s <= n + 1; s++)
+      {
+         double v = iLow(_Symbol, _Period, s);
+         if(v <= 0.0) continue;
+         if(vMin <= 0.0 || v < vMin) vMin = v;
+      }
+      return vMin;
+   }
+
+   double MtfHighestPrevHigh(const int look)
+   {
+      double vMax = 0.0;
+      int n = MathMax(1, look);
+      for(int s = 2; s <= n + 1; s++)
+      {
+         double v = iHigh(_Symbol, _Period, s);
+         if(v <= 0.0) continue;
+         if(v > vMax) vMax = v;
+      }
+      return vMax;
+   }
+
+   void UpdateMtfH1SwingSignals()
+   {
+      int left = MathMax(1, InpMtfH1LeftBars);
+      int right = MathMax(1, InpMtfH1RightBars);
+      int centerShift = right + 1;
+      int needBars = centerShift + left + 3;
+      if(iBars(_Symbol, PERIOD_H1) < needBars) return;
+
+      double hC = iHigh(_Symbol, PERIOD_H1, centerShift);
+      double lC = iLow(_Symbol, PERIOD_H1, centerShift);
+      if(hC <= 0.0 || lC <= 0.0) return;
+
+      bool sh = true;
+      bool sl = true;
+      for(int off = -right; off <= left; off++)
+      {
+         if(off == 0) continue;
+         int s = centerShift + off;
+         double hh = iHigh(_Symbol, PERIOD_H1, s);
+         double ll = iLow(_Symbol, PERIOD_H1, s);
+         if(hh <= 0.0 || ll <= 0.0) { sh = false; sl = false; break; }
+         if(hh >= hC) sh = false;
+         if(ll <= lC) sl = false;
+         if(!sh && !sl) break;
+      }
+
+      double sep = (double)InpSwingMinReactionSepPoints * _Point;
+      double minRange = (double)InpSwingMinSwingRangePoints * _Point;
+      bool rangeOk = ((hC - lC) >= minRange);
+
+      double cR = iClose(_Symbol, PERIOD_H1, right);
+      double oR = iOpen(_Symbol, PERIOD_H1, right);
+      double hR = iHigh(_Symbol, PERIOD_H1, right);
+      double lR = iLow(_Symbol, PERIOD_H1, right);
+      double cNow = iClose(_Symbol, PERIOD_H1, 1);
+      if(cR <= 0.0 || oR <= 0.0 || hR <= 0.0 || lR <= 0.0 || cNow <= 0.0) return;
+
+      bool reactBearOk = (cR < oR && hR < (hC - sep) && oR < (hC - sep) && cR < (hC - sep));
+      bool reactBullOk = (cR > oR && lR > (lC + sep) && oR > (lC + sep) && cR > (lC + sep));
+
+      bool bosBearOk = true;
+      bool bosBullOk = true;
+      if(InpMtfH1ConfirmBos)
+      {
+         if(right == 1)
+         {
+            bosBearOk = (cNow < lC);
+            bosBullOk = (cNow > hC);
+         }
+         else
+         {
+            bosBearOk = (cNow < lR);
+            bosBullOk = (cNow > hR);
+         }
+      }
+
+      bool shSig = (sh && rangeOk && reactBearOk && bosBearOk);
+      bool slSig = (sl && rangeOk && reactBullOk && bosBullOk);
+
+      datetime tPivot = iTime(_Symbol, PERIOD_H1, centerShift);
+      if(tPivot == 0) return;
+
+      if(slSig && tPivot != g_mtf_last_h1_sl_time)
+      {
+         g_mtf_last_h1_sl_time = tPivot;
+         g_mtf_last_h1_sl_price = lC;
+         g_mtf_buy_active = true;
+         g_mtf_buy_h1_time = tPivot;
+         g_mtf_buy_level = lC;
+         g_mtf_buy_bars = 0;
+         g_mtfA_buy_state = 0;
+         g_mtfA_buy_reclaim_high = 0.0;
+         g_mtfA_buy_reclaim_low = 0.0;
+         g_mtfC_buy_state = 0;
+         g_mtfC_buy_last_pivot_high = 0.0;
+         g_mtfC_buy_zone_low = 0.0;
+         g_mtfC_buy_zone_high = 0.0;
+         g_mtfC_buy_struct_low = 0.0;
+         g_mtf_sell_active = false;
+         g_mtf_sell_bars = 0;
+         g_mtfA_sell_state = 0;
+         g_mtfC_sell_state = 0;
+         return;
+      }
+      if(shSig && tPivot != g_mtf_last_h1_sh_time)
+      {
+         g_mtf_last_h1_sh_time = tPivot;
+         g_mtf_last_h1_sh_price = hC;
+         g_mtf_sell_active = true;
+         g_mtf_sell_h1_time = tPivot;
+         g_mtf_sell_level = hC;
+         g_mtf_sell_bars = 0;
+         g_mtfA_sell_state = 0;
+         g_mtfA_sell_reclaim_high = 0.0;
+         g_mtfA_sell_reclaim_low = 0.0;
+         g_mtfC_sell_state = 0;
+         g_mtfC_sell_last_pivot_low = 0.0;
+         g_mtfC_sell_zone_low = 0.0;
+         g_mtfC_sell_zone_high = 0.0;
+         g_mtfC_sell_struct_high = 0.0;
+         g_mtf_buy_active = false;
+         g_mtf_buy_bars = 0;
+         g_mtfA_buy_state = 0;
+         g_mtfC_buy_state = 0;
+         return;
+      }
    }
 
    int IndexByShift(const bool isSeries, const int rates_total, const int shiftFromCurrent)
@@ -415,6 +663,15 @@ void EsReset()
    g_swing_last_bear_sweep_level = 0.0;
    g_swing_allow_sl = true;
    g_swing_allow_sh = true;
+
+   g_liq_last_sl_has = false;
+   g_liq_last_sl_price = 0.0;
+   g_liq_last_sl_time = 0;
+   g_liq_last_sh_has = false;
+   g_liq_last_sh_price = 0.0;
+   g_liq_last_sh_time = 0;
+   g_liq_opp_swept_for_sh = false;
+   g_liq_opp_swept_for_sl = false;
 }
 
 int EsIdx(const int offsetFromNewest)
@@ -640,7 +897,14 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
    void NotifySignal(const string txt, const datetime tBar)
    {
       if(!InpSendAlert && !InpSendPush) return;
-      if(InpNotifyOnlySHSL && !(txt == "SH" || txt == "SL" || (InpNotifyDiv && txt == "DIV"))) return;
+      if(InpNotifyOnlySHSL)
+      {
+         bool isShSl = (txt == "SH" || txt == "SL");
+         bool isDiv = (txt == "DIV");
+         bool isLux = (StringFind(txt, "LUX") == 0);
+         bool isMtf = (StringFind(txt, "BUY MTF") == 0 || StringFind(txt, "SELL MTF") == 0);
+         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf))) return;
+      }
       if(!InpNotifyHistorical)
       {
          datetime ref = iTime(_Symbol, _Period, 1);
@@ -734,6 +998,41 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       g_hsfib_high = 0.0;
       g_hsfib_low = 0.0;
       g_hsfib_expiry = 0;
+      g_swing_asia_swept_h = false;
+      g_swing_asia_swept_l = false;
+      g_swing_ib_swept_h = false;
+      g_swing_ib_swept_l = false;
+      g_prev_bar_low = 0.0;
+      g_prev_bar_low_has = false;
+      g_last_over_low_time = 0;
+      g_mtf_last_h1_sl_time = 0;
+      g_mtf_last_h1_sl_price = 0.0;
+      g_mtf_last_h1_sh_time = 0;
+      g_mtf_last_h1_sh_price = 0.0;
+      g_mtf_buy_active = false;
+      g_mtf_buy_h1_time = 0;
+      g_mtf_buy_level = 0.0;
+      g_mtf_buy_bars = 0;
+      g_mtfA_buy_state = 0;
+      g_mtfA_buy_reclaim_high = 0.0;
+      g_mtfA_buy_reclaim_low = 0.0;
+      g_mtfC_buy_state = 0;
+      g_mtfC_buy_last_pivot_high = 0.0;
+      g_mtfC_buy_zone_low = 0.0;
+      g_mtfC_buy_zone_high = 0.0;
+      g_mtfC_buy_struct_low = 0.0;
+      g_mtf_sell_active = false;
+      g_mtf_sell_h1_time = 0;
+      g_mtf_sell_level = 0.0;
+      g_mtf_sell_bars = 0;
+      g_mtfA_sell_state = 0;
+      g_mtfA_sell_reclaim_high = 0.0;
+      g_mtfA_sell_reclaim_low = 0.0;
+      g_mtfC_sell_state = 0;
+      g_mtfC_sell_last_pivot_low = 0.0;
+      g_mtfC_sell_zone_low = 0.0;
+      g_mtfC_sell_zone_high = 0.0;
+      g_mtfC_sell_struct_high = 0.0;
       DeleteByToken("HSFIB_");
       DeleteByPrefix(g_prefix + IntegerToString(dayKey) + "_");
       EsReset();
@@ -744,6 +1043,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       g_update_calls++;
       int dk = DayKeyLocal(tBarOpen);
       if(dk != g_day_key) ResetDay(dk);
+
+      double prevLow = g_prev_bar_low_has ? g_prev_bar_low : l;
 
       if(!g_daily_has) { g_day_start_time = tBarOpen; g_daily_open = o; g_daily_high = h; g_daily_low = l; g_daily_has = true; }
       else { if(h > g_daily_high) g_daily_high = h; if(l < g_daily_low) g_daily_low = l; }
@@ -805,6 +1106,21 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       bool inAsia = InWindowLocal(tBarOpen, 0, 0, 8, 0);
       bool inLondon = InWindowLocal(tBarOpen, 9, 0, 17, 30);
       bool inNy = InWindowLocal(tBarOpen, 14, 30, 21, 0);
+      bool beforeNyClose = (MinuteOfDayLocal(tBarOpen) < 21 * 60);
+
+      bool inAsiaSweepWin = InWindowLocal(tBarOpen, InpSwingAsiaSweepStartHour, InpSwingAsiaSweepStartMinute, InpSwingAsiaSweepEndHour, InpSwingAsiaSweepEndMinute);
+      if(inAsiaSweepWin && g_asia_has)
+      {
+         if(h > g_asia_high) g_swing_asia_swept_h = true;
+         if(l < g_asia_low) g_swing_asia_swept_l = true;
+      }
+
+      bool inIbSweepWin = InWindowLocal(tBarOpen, InpSwingIBSweepStartHour, InpSwingIBSweepStartMinute, InpSwingIBSweepEndHour, InpSwingIBSweepEndMinute);
+      if(inIbSweepWin && g_ib_has)
+      {
+         if(h > g_ib_high) g_swing_ib_swept_h = true;
+         if(l < g_ib_low) g_swing_ib_swept_l = true;
+      }
 
       if(inAsia)
       {
@@ -836,20 +1152,21 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
       if(showOther && InpShowSessions)
       {
+         if(!InpShowSessionNames) DeleteByToken("_TAG_");
          if(inAsia)
          {
             CreateOrUpdateRect(dayPfx + "ASIA_BOX", g_asia_start, g_asia_high, tBarOpen + PeriodSeconds(_Period), g_asia_low, InpAsiaColor);
-            UpdateSessionTag(dayPfx, "ASIA", "ASIA", InpAsiaColor, tBarOpen, g_asia_high);
+            if(InpShowSessionNames) UpdateSessionTag(dayPfx, "ASIA", "ASIA", InpAsiaColor, tBarOpen, g_asia_high);
          }
          if(inLondon)
          {
             CreateOrUpdateRect(dayPfx + "LONDON_BOX", g_london_start, g_london_high, tBarOpen + PeriodSeconds(_Period), g_london_low, InpLondonColor);
-            UpdateSessionTag(dayPfx, "LONDON", "LONDON", InpLondonColor, tBarOpen, g_london_high);
+            if(InpShowSessionNames) UpdateSessionTag(dayPfx, "LONDON", "LONDON", InpLondonColor, tBarOpen, g_london_high);
          }
          if(inNy)
          {
             CreateOrUpdateRect(dayPfx + "NY_BOX", g_ny_start, g_ny_high, tBarOpen + PeriodSeconds(_Period), g_ny_low, InpNyColor);
-            UpdateSessionTag(dayPfx, "NY", "NY", InpNyColor, tBarOpen, g_ny_high);
+            if(InpShowSessionNames) UpdateSessionTag(dayPfx, "NY", "NY", InpNyColor, tBarOpen, g_ny_high);
          }
       }
 
@@ -900,6 +1217,21 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          CreateOrUpdateRay(dayPfx + "MID_L", tStart, g_mid_low, InpMidnightColor, STYLE_SOLID, 2);
       }
 
+      if(showOther && InpShowA2NRange && g_mid_has)
+      {
+         datetime tStart = (g_mid_time == 0 ? tBarOpen : g_mid_time);
+         if(beforeNyClose)
+         {
+            datetime tEnd = tBarOpen + (datetime)PeriodSeconds(_Period);
+            CreateOrUpdateTrendSegment(dayPfx + "A2N_H", tStart, g_mid_high, tEnd, g_mid_high, InpMidnightColor, STYLE_SOLID, 2);
+            CreateOrUpdateTrendSegment(dayPfx + "A2N_L", tStart, g_mid_low, tEnd, g_mid_low, InpMidnightColor, STYLE_SOLID, 2);
+         }
+      }
+      else
+      {
+         DeleteByToken("A2N_");
+      }
+
       if(showOther && InpShowAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_has)
       {
          bool buyBias = (g_asia_high > 0.0 && l > g_asia_high);
@@ -933,10 +1265,24 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
       }
 
+      if(InpSwingOverLowL13Enabled && beforeNyClose && g_h13_has)
+      {
+         double buf = (double)InpSwingOverLowL13BufferPoints * _Point;
+         double level = g_h13_low - buf;
+         if(prevLow >= level && l < level && g_last_over_low_time != tBarOpen)
+         {
+            string n = dayPfx + "SP_OVERLOW_L13_" + IntegerToString((long)tBarOpen);
+            CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "OVER\nLOW", clrRed, ANCHOR_LEFT_LOWER);
+            NotifySignal("OVER LOW (L13)", tBarOpen);
+            g_last_over_low_time = tBarOpen;
+         }
+      }
+
       if(g_h13_has)
       {
          bool isKill = InWindowLocal(tBarOpen, 14, 30, 16, 30);
-         if(isKill)
+         bool allowSweep = (isKill || InpSweepOutsideKillzone);
+         if(allowSweep)
          {
             if(!g_kiss_swept_h && h > g_h13_high)
             {
@@ -971,8 +1317,9 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
 
          double tol = (double)InpRetestToleranceTicks * _Point;
-         bool validKissBuy = isKill && (!InpRequireSweepBeforeKiss || g_kiss_swept_l) && !g_kiss_done_b && l <= (g_h13_low + tol) && c > g_h13_low;
-         bool validKissSell = isKill && (!InpRequireSweepBeforeKiss || g_kiss_swept_h) && !g_kiss_done_s && h >= (g_h13_high - tol) && c < g_h13_high;
+         bool allowKiss = (isKill || InpKissOutsideKillzone);
+         bool validKissBuy = allowKiss && (!InpRequireSweepBeforeKiss || g_kiss_swept_l) && !g_kiss_done_b && l <= (g_h13_low + tol) && c > g_h13_low;
+         bool validKissSell = allowKiss && (!InpRequireSweepBeforeKiss || g_kiss_swept_h) && !g_kiss_done_s && h >= (g_h13_high - tol) && c < g_h13_high;
 
          if(validKissBuy) g_kiss_done_b = true;
          if(validKissSell) g_kiss_done_s = true;
@@ -1323,7 +1670,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          CreateOrUpdateText(n, tBarOpen, l - 14 * _Point, "★", clrYellow, ANCHOR_LEFT_LOWER);
       }
 
-      if(showOther && InpLuxSwingEnabled)
+      bool runLux = InpLuxSwingEnabled && (showOther || InpLuxNotifySwings || InpLuxNotifyPatterns);
+      if(runLux)
       {
          int len = InpLuxSwingLength;
          if(len < 1) len = 1;
@@ -1366,13 +1714,23 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   bool shooting = (ph && (hC - MathMax(oC, cC) > d) && (MathMin(cC, oC) - lC < d));
                   bool beareng = (cC > oC && cP < oP && cC > oP && oC < cP);
 
+                  int pattCode = 0;
                   string patt = "None";
-                  if(hammer) patt = "Hammer";
-                  else if(ihammer) patt = "Inverted Hammer";
-                  else if(bulleng) patt = "Bullish Engulfing";
-                  else if(hanging) patt = "Hanging Man";
-                  else if(shooting) patt = "Shooting Star";
-                  else if(beareng) patt = "Bearish Engulfing";
+                  if(hammer) { patt = "Hammer"; pattCode = 1; }
+                  else if(ihammer) { patt = "Inverted Hammer"; pattCode = 2; }
+                  else if(bulleng) { patt = "Bullish Engulfing"; pattCode = 3; }
+                  else if(hanging) { patt = "Hanging Man"; pattCode = 4; }
+                  else if(shooting) { patt = "Shooting Star"; pattCode = 5; }
+                  else if(beareng) { patt = "Bearish Engulfing"; pattCode = 6; }
+
+                  bool pattAllowed = true;
+                  if(pattCode == 0) pattAllowed = InpLuxNotifyNone;
+                  else if(pattCode == 1) pattAllowed = InpLuxNotifyHammer;
+                  else if(pattCode == 2) pattAllowed = InpLuxNotifyInvertedHammer;
+                  else if(pattCode == 3) pattAllowed = InpLuxNotifyBullishEngulfing;
+                  else if(pattCode == 4) pattAllowed = InpLuxNotifyHangingMan;
+                  else if(pattCode == 5) pattAllowed = InpLuxNotifyShootingStar;
+                  else if(pattCode == 6) pattAllowed = InpLuxNotifyBearishEngulfing;
 
                   datetime tPivot = g_lux_time[centerIdx];
                   int dk = DayKeyLocal(tPivot);
@@ -1382,10 +1740,12 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                      string hh = (!g_lux_phy_has || hC > g_lux_phy) ? "HH" : "LH";
                      g_lux_phy = hC;
                      g_lux_phy_has = true;
-                     string txt = hh + "\n" + patt;
+                     string pattLbl = (InpLuxNotifyPatterns && pattAllowed) ? patt : "";
+                     string txt = (pattLbl == "" ? hh : (hh + "\n" + pattLbl));
                      string name = g_prefix + IntegerToString(dk) + "_LUX_PH_" + IntegerToString((long)tPivot);
-                     if(InpLuxSwingShowLabels) CreateOrUpdateText(name, tPivot, hC, txt, InpLuxSwingHighColor, ANCHOR_LEFT_UPPER);
-                     NotifySignal("LUX " + txt, tBarOpen);
+                     if(showOther && InpLuxSwingShowLabels) CreateOrUpdateText(name, tPivot, hC, txt, InpLuxSwingHighColor, ANCHOR_LEFT_UPPER);
+                     if(InpLuxNotifySwings) NotifySignal("LUX SWING " + hh, tBarOpen);
+                     if(InpLuxNotifyPatterns && pattAllowed) NotifySignal("LUX " + hh + " " + patt, tBarOpen);
                      g_lux_last_notified_ph = tPivot;
                   }
                   else if(pl && tPivot != g_lux_last_notified_pl)
@@ -1393,10 +1753,12 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                      string ll = (!g_lux_ply_has || lC < g_lux_ply) ? "LL" : "HL";
                      g_lux_ply = lC;
                      g_lux_ply_has = true;
-                     string txt = ll + "\n" + patt;
+                     string pattLbl = (InpLuxNotifyPatterns && pattAllowed) ? patt : "";
+                     string txt = (pattLbl == "" ? ll : (ll + "\n" + pattLbl));
                      string name = g_prefix + IntegerToString(dk) + "_LUX_PL_" + IntegerToString((long)tPivot);
-                     if(InpLuxSwingShowLabels) CreateOrUpdateText(name, tPivot, lC, txt, InpLuxSwingLowColor, ANCHOR_LEFT_LOWER);
-                     NotifySignal("LUX " + txt, tBarOpen);
+                     if(showOther && InpLuxSwingShowLabels) CreateOrUpdateText(name, tPivot, lC, txt, InpLuxSwingLowColor, ANCHOR_LEFT_LOWER);
+                     if(InpLuxNotifySwings) NotifySignal("LUX SWING " + ll, tBarOpen);
+                     if(InpLuxNotifyPatterns && pattAllowed) NotifySignal("LUX " + ll + " " + patt, tBarOpen);
                      g_lux_last_notified_pl = tPivot;
                   }
                }
@@ -1531,6 +1893,15 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                g_swing_allow_sh = true;
          }
 
+         if(InpSwingPatternEnabled && InpSwingRequireOppositeSwingSweep)
+         {
+            double buf = (double)InpSwingOppositeSwingSweepBufferPoints * _Point;
+            if(g_liq_last_sl_has && !g_liq_opp_swept_for_sh && l < (g_liq_last_sl_price - buf))
+               g_liq_opp_swept_for_sh = true;
+            if(g_liq_last_sh_has && !g_liq_opp_swept_for_sl && h > (g_liq_last_sh_price + buf))
+               g_liq_opp_swept_for_sl = true;
+         }
+
          int dk = DayKeyLocal(tBarOpen);
          string dayPfx = g_prefix + IntegerToString(dk) + "_";
 
@@ -1566,12 +1937,24 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             bool potentialLow = (l <= (minLow + eps));
             bool liquiditySweepLow = (l < prevLow && c > prevLow);
             bool bullReaction = (c > o);
-            bool earlyLow = (potentialLow && liquiditySweepLow && bullReaction && (!InpEarlyVolFilter || strongVol));
+            bool passEarlyLow = true;
+            if(InpEarlyShowDailyExtremeShSl)
+            {
+               double bufDaily = (double)InpEarlyDailyExtremeBufferPoints * _Point;
+               passEarlyLow = (g_daily_has && bufDaily >= 0.0 && MathAbs(l - g_daily_low) <= bufDaily);
+            }
+            bool earlyLow = (potentialLow && liquiditySweepLow && bullReaction && (!InpEarlyVolFilter || strongVol) && passEarlyLow);
 
             bool potentialHigh = (h >= (maxHigh - eps));
             bool liquiditySweepHigh = (h > prevHigh && c < prevHigh);
             bool bearReaction = (c < o);
-            bool earlyHigh = (potentialHigh && liquiditySweepHigh && bearReaction && (!InpEarlyVolFilter || strongVol));
+            bool passEarlyHigh = true;
+            if(InpEarlyShowDailyExtremeShSl)
+            {
+               double bufDaily = (double)InpEarlyDailyExtremeBufferPoints * _Point;
+               passEarlyHigh = (g_daily_has && bufDaily >= 0.0 && MathAbs(h - g_daily_high) <= bufDaily);
+            }
+            bool earlyHigh = (potentialHigh && liquiditySweepHigh && bearReaction && (!InpEarlyVolFilter || strongVol) && passEarlyHigh);
 
             if(earlyLow && g_es_last_early_low_time != tBarOpen)
             {
@@ -1593,6 +1976,13 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          {
             int left = InpSwingLeftBars;
             int right = InpSwingRightBars;
+            if(InpSwingUseTfBars)
+            {
+               if(_Period == PERIOD_M1) { left = InpSwingLeftBars_M1; right = InpSwingRightBars_M1; }
+               else if(_Period == PERIOD_M15) { left = InpSwingLeftBars_M15; right = InpSwingRightBars_M15; }
+               else if(_Period == PERIOD_H1) { left = InpSwingLeftBars_H1; right = InpSwingRightBars_H1; }
+               else if(_Period == PERIOD_H4) { left = InpSwingLeftBars_H4; right = InpSwingRightBars_H4; }
+            }
             if(left < 1) left = 1;
             if(right < 1) right = 1;
 
@@ -1672,7 +2062,23 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                }
 
                datetime tPivot = g_es_time[centerIdx];
-               if(sh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh) && g_es_last_sp_sh_time != tPivot)
+               bool passOppForSh = true;
+               if(InpSwingRequireOppositeSwingSweep)
+                  passOppForSh = (g_liq_last_sl_has && g_liq_opp_swept_for_sh);
+               bool requireAnySessionSweep = (InpSwingRequireH13L13Sweep || InpSwingRequireAsiaSweep || InpSwingRequireIBSweep);
+               bool passSessionSh = (!requireAnySessionSweep) ||
+                  (InpSwingRequireH13L13Sweep && g_h13_has && g_kiss_swept_l) ||
+                  (InpSwingRequireAsiaSweep && g_swing_asia_swept_h) ||
+                  (InpSwingRequireIBSweep && g_swing_ib_swept_h);
+
+               bool passDailySh = true;
+               if(InpSwingShowDailyExtremeShSl)
+               {
+                  double buf = (double)InpSwingDailyExtremeBufferPoints * _Point;
+                  passDailySh = (g_daily_has && buf >= 0.0 && MathAbs(hC - g_daily_high) <= buf);
+               }
+
+               if(sh && passOppForSh && passSessionSh && passDailySh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh) && g_es_last_sp_sh_time != tPivot)
                {
                   datetime prevShTime = g_swing_last_sh_time;
                   double prevShPrice = g_swing_last_sh_price;
@@ -1712,8 +2118,28 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   }
                   NotifySignal("SH", tBarOpen);
                   g_es_last_sp_sh_time = tPivot;
+
+                  g_liq_last_sh_has = true;
+                  g_liq_last_sh_price = hC;
+                  g_liq_last_sh_time = tPivot;
+                  g_liq_opp_swept_for_sl = false;
                }
-               if(sl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl) && g_es_last_sp_sl_time != tPivot)
+               bool passOppForSl = true;
+               if(InpSwingRequireOppositeSwingSweep)
+                  passOppForSl = (g_liq_last_sh_has && g_liq_opp_swept_for_sl);
+               bool passSessionSl = (!requireAnySessionSweep) ||
+                  (InpSwingRequireH13L13Sweep && g_h13_has && g_kiss_swept_h) ||
+                  (InpSwingRequireAsiaSweep && g_swing_asia_swept_l) ||
+                  (InpSwingRequireIBSweep && g_swing_ib_swept_l);
+
+               bool passDailySl = true;
+               if(InpSwingShowDailyExtremeShSl)
+               {
+                  double buf = (double)InpSwingDailyExtremeBufferPoints * _Point;
+                  passDailySl = (g_daily_has && buf >= 0.0 && MathAbs(lC - g_daily_low) <= buf);
+               }
+
+               if(sl && passOppForSl && passSessionSl && passDailySl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl) && g_es_last_sp_sl_time != tPivot)
                {
                   datetime prevSlTime = g_swing_last_sl_time;
                   double prevSlPrice = g_swing_last_sl_price;
@@ -1753,6 +2179,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   }
                   NotifySignal("SL", tBarOpen);
                   g_es_last_sp_sl_time = tPivot;
+
+                  g_liq_last_sl_has = true;
+                  g_liq_last_sl_price = lC;
+                  g_liq_last_sl_time = tPivot;
+                  g_liq_opp_swept_for_sh = false;
                }
             }
          }
@@ -1762,9 +2193,327 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          EsReset();
       }
 
+      if(InpMtfEntryEnabled && _Period == PERIOD_M1)
+      {
+         UpdateMtfH1SwingSignals();
+
+         int maxBars = InpMtfMaxM1BarsAfterH1Signal;
+         if(maxBars < 0) maxBars = 0;
+
+         if(g_mtf_buy_active) g_mtf_buy_bars++;
+         if(g_mtf_sell_active) g_mtf_sell_bars++;
+
+         if(maxBars > 0 && g_mtf_buy_active && g_mtf_buy_bars > maxBars)
+         {
+            g_mtf_buy_active = false;
+            g_mtf_buy_bars = 0;
+            g_mtfA_buy_state = 0;
+            g_mtfC_buy_state = 0;
+         }
+         if(maxBars > 0 && g_mtf_sell_active && g_mtf_sell_bars > maxBars)
+         {
+            g_mtf_sell_active = false;
+            g_mtf_sell_bars = 0;
+            g_mtfA_sell_state = 0;
+            g_mtfC_sell_state = 0;
+         }
+
+         double cPrev = iClose(_Symbol, _Period, 2);
+         if(cPrev <= 0.0) cPrev = c;
+
+         double buf = (double)InpMtfSweepBufferPoints * _Point;
+         int look = MathMax(1, InpMtfSweepLookbackBars);
+
+         if(g_mtf_buy_active)
+         {
+            if(g_mtfC_buy_struct_low <= 0.0 || l < g_mtfC_buy_struct_low) g_mtfC_buy_struct_low = l;
+
+            if(InpMtfUseSetupA)
+            {
+               if(g_mtfA_buy_state == 0) g_mtfA_buy_state = 1;
+               if(g_mtfA_buy_state == 1)
+               {
+                  if(cPrev <= g_mtf_buy_level && c > g_mtf_buy_level)
+                  {
+                     g_mtfA_buy_reclaim_high = h;
+                     g_mtfA_buy_reclaim_low = l;
+                     g_mtfA_buy_state = 2;
+                  }
+               }
+               else if(g_mtfA_buy_state == 2)
+               {
+                  if(g_mtfA_buy_reclaim_high > 0.0 && cPrev <= g_mtfA_buy_reclaim_high && c > g_mtfA_buy_reclaim_high)
+                  {
+                     if(InpShowSignals)
+                     {
+                        string n = dayPfx + "MTF_BUY_A_" + IntegerToString((long)tBarOpen);
+                        CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "BUY\nA", InpBuyColor, ANCHOR_LEFT_LOWER);
+                     }
+                     NotifySignal("BUY MTF A", tBarOpen);
+                     g_mtf_buy_active = false;
+                     g_mtf_buy_bars = 0;
+                     g_mtfA_buy_state = 0;
+                     g_mtfC_buy_state = 0;
+                  }
+               }
+            }
+
+            if(g_mtf_buy_active && InpMtfUseSetupB)
+            {
+               double lowestPrev = MtfLowestPrevLow(look);
+               if(lowestPrev > 0.0 && l < (lowestPrev - buf) && c > lowestPrev)
+               {
+                  if(InpShowSignals)
+                  {
+                     string n = dayPfx + "MTF_BUY_B_" + IntegerToString((long)tBarOpen);
+                     CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "BUY\nB", InpBuyColor, ANCHOR_LEFT_LOWER);
+                  }
+                  NotifySignal("BUY MTF B", tBarOpen);
+                  g_mtf_buy_active = false;
+                  g_mtf_buy_bars = 0;
+                  g_mtfA_buy_state = 0;
+                  g_mtfC_buy_state = 0;
+               }
+            }
+
+            if(g_mtf_buy_active && InpMtfUseSetupC)
+            {
+               int piv = MathMax(1, InpMtfChoChPivotLen);
+               int centerShift = piv + 1;
+               int needBars = centerShift + piv + 2;
+               if(iBars(_Symbol, _Period) >= needBars)
+               {
+                  if(g_mtfC_buy_state == 0)
+                  {
+                     bool isPH = true;
+                     double hC = iHigh(_Symbol, _Period, centerShift);
+                     for(int k = 1; k <= piv; k++)
+                     {
+                        if(hC <= iHigh(_Symbol, _Period, centerShift - k)) { isPH = false; break; }
+                        if(hC <= iHigh(_Symbol, _Period, centerShift + k)) { isPH = false; break; }
+                     }
+                     if(isPH) g_mtfC_buy_last_pivot_high = hC;
+
+                     if(g_mtfC_buy_last_pivot_high > 0.0 && cPrev <= g_mtfC_buy_last_pivot_high && c > g_mtfC_buy_last_pivot_high)
+                     {
+                        int obLook = MathMax(1, InpMtfObLookbackBars);
+                        double obH = 0.0, obL = 0.0;
+                        for(int i = 2; i <= (obLook + 1); i++)
+                        {
+                           double oi = iOpen(_Symbol, _Period, i);
+                           double ci = iClose(_Symbol, _Period, i);
+                           if(oi <= 0.0 || ci <= 0.0) continue;
+                           if(ci < oi)
+                           {
+                              obH = iHigh(_Symbol, _Period, i);
+                              obL = iLow(_Symbol, _Period, i);
+                              break;
+                           }
+                        }
+
+                        double fvgL = 0.0, fvgH = 0.0;
+                        double h2 = iHigh(_Symbol, _Period, 3);
+                        if(h2 > 0.0 && l > h2)
+                        {
+                           fvgL = h2;
+                           fvgH = l;
+                        }
+
+                        double zL = 0.0, zH = 0.0;
+                        if(InpMtfRetestZoneType == MTF_ZONE_OB)
+                        {
+                           zL = obL; zH = obH;
+                        }
+                        else if(InpMtfRetestZoneType == MTF_ZONE_FVG)
+                        {
+                           zL = fvgL; zH = fvgH;
+                        }
+                        else
+                        {
+                           if(obL > 0.0 && obH > 0.0) { zL = obL; zH = obH; }
+                           if(fvgL > 0.0 && fvgH > 0.0)
+                           {
+                              if(zL <= 0.0 || fvgL < zL) zL = fvgL;
+                              if(zH <= 0.0 || fvgH > zH) zH = fvgH;
+                           }
+                        }
+
+                        if(zL > 0.0 && zH > 0.0 && zL < zH)
+                        {
+                           g_mtfC_buy_zone_low = zL;
+                           g_mtfC_buy_zone_high = zH;
+                           g_mtfC_buy_state = 1;
+                        }
+                     }
+                  }
+                  else if(g_mtfC_buy_state == 1)
+                  {
+                     if(g_mtfC_buy_zone_low > 0.0 && g_mtfC_buy_zone_high > 0.0 && l <= g_mtfC_buy_zone_high && h >= g_mtfC_buy_zone_low)
+                     {
+                        if(InpShowSignals)
+                        {
+                           string n = dayPfx + "MTF_BUY_C_" + IntegerToString((long)tBarOpen);
+                           CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "BUY\nC", InpBuyColor, ANCHOR_LEFT_LOWER);
+                        }
+                        NotifySignal("BUY MTF C", tBarOpen);
+                        g_mtf_buy_active = false;
+                        g_mtf_buy_bars = 0;
+                        g_mtfA_buy_state = 0;
+                        g_mtfC_buy_state = 0;
+                     }
+                  }
+               }
+            }
+         }
+
+         if(g_mtf_sell_active)
+         {
+            if(g_mtfC_sell_struct_high <= 0.0 || h > g_mtfC_sell_struct_high) g_mtfC_sell_struct_high = h;
+
+            if(InpMtfUseSetupA)
+            {
+               if(g_mtfA_sell_state == 0) g_mtfA_sell_state = 1;
+               if(g_mtfA_sell_state == 1)
+               {
+                  if(cPrev >= g_mtf_sell_level && c < g_mtf_sell_level)
+                  {
+                     g_mtfA_sell_reclaim_high = h;
+                     g_mtfA_sell_reclaim_low = l;
+                     g_mtfA_sell_state = 2;
+                  }
+               }
+               else if(g_mtfA_sell_state == 2)
+               {
+                  if(g_mtfA_sell_reclaim_low > 0.0 && cPrev >= g_mtfA_sell_reclaim_low && c < g_mtfA_sell_reclaim_low)
+                  {
+                     if(InpShowSignals)
+                     {
+                        string n = dayPfx + "MTF_SELL_A_" + IntegerToString((long)tBarOpen);
+                        CreateOrUpdateText(n, tBarOpen, h + 12 * _Point, "SELL\nA", InpSellColor, ANCHOR_LEFT_UPPER);
+                     }
+                     NotifySignal("SELL MTF A", tBarOpen);
+                     g_mtf_sell_active = false;
+                     g_mtf_sell_bars = 0;
+                     g_mtfA_sell_state = 0;
+                     g_mtfC_sell_state = 0;
+                  }
+               }
+            }
+
+            if(g_mtf_sell_active && InpMtfUseSetupB)
+            {
+               double highestPrev = MtfHighestPrevHigh(look);
+               if(highestPrev > 0.0 && h > (highestPrev + buf) && c < highestPrev)
+               {
+                  if(InpShowSignals)
+                  {
+                     string n = dayPfx + "MTF_SELL_B_" + IntegerToString((long)tBarOpen);
+                     CreateOrUpdateText(n, tBarOpen, h + 12 * _Point, "SELL\nB", InpSellColor, ANCHOR_LEFT_UPPER);
+                  }
+                  NotifySignal("SELL MTF B", tBarOpen);
+                  g_mtf_sell_active = false;
+                  g_mtf_sell_bars = 0;
+                  g_mtfA_sell_state = 0;
+                  g_mtfC_sell_state = 0;
+               }
+            }
+
+            if(g_mtf_sell_active && InpMtfUseSetupC)
+            {
+               int piv = MathMax(1, InpMtfChoChPivotLen);
+               int centerShift = piv + 1;
+               int needBars = centerShift + piv + 2;
+               if(iBars(_Symbol, _Period) >= needBars)
+               {
+                  if(g_mtfC_sell_state == 0)
+                  {
+                     bool isPL = true;
+                     double lC = iLow(_Symbol, _Period, centerShift);
+                     for(int k = 1; k <= piv; k++)
+                     {
+                        if(lC >= iLow(_Symbol, _Period, centerShift - k)) { isPL = false; break; }
+                        if(lC >= iLow(_Symbol, _Period, centerShift + k)) { isPL = false; break; }
+                     }
+                     if(isPL) g_mtfC_sell_last_pivot_low = lC;
+
+                     if(g_mtfC_sell_last_pivot_low > 0.0 && cPrev >= g_mtfC_sell_last_pivot_low && c < g_mtfC_sell_last_pivot_low)
+                     {
+                        int obLook = MathMax(1, InpMtfObLookbackBars);
+                        double obH = 0.0, obL = 0.0;
+                        for(int i = 2; i <= (obLook + 1); i++)
+                        {
+                           double oi = iOpen(_Symbol, _Period, i);
+                           double ci = iClose(_Symbol, _Period, i);
+                           if(oi <= 0.0 || ci <= 0.0) continue;
+                           if(ci > oi)
+                           {
+                              obH = iHigh(_Symbol, _Period, i);
+                              obL = iLow(_Symbol, _Period, i);
+                              break;
+                           }
+                        }
+
+                        double fvgL = 0.0, fvgH = 0.0;
+                        double l2 = iLow(_Symbol, _Period, 3);
+                        if(l2 > 0.0 && h < l2)
+                        {
+                           fvgL = h;
+                           fvgH = l2;
+                        }
+
+                        double zL = 0.0, zH = 0.0;
+                        if(InpMtfRetestZoneType == MTF_ZONE_OB)
+                        {
+                           zL = obL; zH = obH;
+                        }
+                        else if(InpMtfRetestZoneType == MTF_ZONE_FVG)
+                        {
+                           zL = fvgL; zH = fvgH;
+                        }
+                        else
+                        {
+                           if(obL > 0.0 && obH > 0.0) { zL = obL; zH = obH; }
+                           if(fvgL > 0.0 && fvgH > 0.0)
+                           {
+                              if(zL <= 0.0 || fvgL < zL) zL = fvgL;
+                              if(zH <= 0.0 || fvgH > zH) zH = fvgH;
+                           }
+                        }
+
+                        if(zL > 0.0 && zH > 0.0 && zL < zH)
+                        {
+                           g_mtfC_sell_zone_low = zL;
+                           g_mtfC_sell_zone_high = zH;
+                           g_mtfC_sell_state = 1;
+                        }
+                     }
+                  }
+                  else if(g_mtfC_sell_state == 1)
+                  {
+                     if(g_mtfC_sell_zone_low > 0.0 && g_mtfC_sell_zone_high > 0.0 && l <= g_mtfC_sell_zone_high && h >= g_mtfC_sell_zone_low)
+                     {
+                        if(InpShowSignals)
+                        {
+                           string n = dayPfx + "MTF_SELL_C_" + IntegerToString((long)tBarOpen);
+                           CreateOrUpdateText(n, tBarOpen, h + 12 * _Point, "SELL\nC", InpSellColor, ANCHOR_LEFT_UPPER);
+                        }
+                        NotifySignal("SELL MTF C", tBarOpen);
+                        g_mtf_sell_active = false;
+                        g_mtf_sell_bars = 0;
+                        g_mtfA_sell_state = 0;
+                        g_mtfC_sell_state = 0;
+                     }
+                  }
+               }
+            }
+         }
+      }
+
       string st = "CAP_IND | it " + IntegerToString(MinuteOfDayLocal(tBarOpen) / 60) + ":" + IntegerToString(MinuteOfDayLocal(tBarOpen) % 60) +
                   " | daily " + (g_daily_has ? "Y" : "N") + " | h02 " + (g_h02_has ? "Y" : "N") + " | h13 " + (g_h13_has ? "Y" : "N");
       CreateOrUpdateStatusLabel(st);
+      g_prev_bar_low = l;
+      g_prev_bar_low_has = true;
    }
 
    int OnInit()

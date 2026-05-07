@@ -37,6 +37,16 @@ luxLen = input.int(21, "Length", minval=1, group="Lux Swing")
 luxShowLabels = input.bool(true, "Show Labels", group="Lux Swing")
 luxSwingHColor = input.color(color.red, "Swing High", group="Lux Swing")
 luxSwingLColor = input.color(color.teal, "Swing Low", group="Lux Swing")
+luxNotifyEnabled = input.bool(true, "Notifiche Lux (alert)", group="Lux Swing")
+luxNotifySwings = input.bool(true, "Notifica Swing HH/HL", group="Lux Swing")
+luxNotifyPatterns = input.bool(true, "Notifica Candle Patterns", group="Lux Swing")
+luxNotifyHammer = input.bool(true, "Hammer", group="Lux Swing")
+luxNotifyInvertedHammer = input.bool(true, "Inverted Hammer", group="Lux Swing")
+luxNotifyBullishEngulfing = input.bool(true, "Bullish Engulfing", group="Lux Swing")
+luxNotifyHangingMan = input.bool(true, "Hanging Man", group="Lux Swing")
+luxNotifyShootingStar = input.bool(true, "Shooting Star", group="Lux Swing")
+luxNotifyBearishEngulfing = input.bool(true, "Bearish Engulfing", group="Lux Swing")
+luxNotifyNone = input.bool(true, "None", group="Lux Swing")
 
 instEnabled = input.bool(true, "Sweep institutional", group="Sweep institutional")
 instCooldownPeriod = input.int(10, title="Cooldown Period", minval=0, group="Sweep institutional")
@@ -55,13 +65,35 @@ earlyLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Early Swing")
 earlyRightBars = input.int(2, "Candele Destra Conferma", minval=1, group="Early Swing")
 earlyVolFilter = input.bool(true, "Filtro Volume", group="Early Swing")
 earlyShowLabels = input.bool(true, "Mostra Etichette", group="Early Swing")
+earlyShowDailyExtremeShSl = input.bool(false, "Filtro Daily High/Low", group="Early Swing")
+earlyDailyExtremeBufferTicks = input.int(0, "Distanza max da Daily High/Low (ticks)", minval=0, group="Early Swing")
 
 swingPatternEnabled = input.bool(true, "Swing Pattern (Swing High/Low)", group="Swing Pattern")
 swingPatternLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Swing Pattern")
 swingPatternRightBars = input.int(2, "Candele Destra", minval=1, group="Swing Pattern")
+swingPatternUseTfBars = input.bool(true, "Usa Candele Sinistra/Destra per TF (M1/M15/H1/H4)", group="Swing Pattern")
+swingPatternLeftBars_M1 = input.int(2, "M1 - Candele Sinistra", minval=1, group="Swing Pattern")
+swingPatternRightBars_M1 = input.int(2, "M1 - Candele Destra", minval=1, group="Swing Pattern")
+swingPatternLeftBars_M15 = input.int(2, "M15 - Candele Sinistra", minval=1, group="Swing Pattern")
+swingPatternRightBars_M15 = input.int(2, "M15 - Candele Destra", minval=1, group="Swing Pattern")
+swingPatternLeftBars_H1 = input.int(2, "H1 - Candele Sinistra", minval=1, group="Swing Pattern")
+swingPatternRightBars_H1 = input.int(2, "H1 - Candele Destra", minval=1, group="Swing Pattern")
+swingPatternLeftBars_H4 = input.int(2, "H4 - Candele Sinistra", minval=1, group="Swing Pattern")
+swingPatternRightBars_H4 = input.int(2, "H4 - Candele Destra", minval=1, group="Swing Pattern")
 swingUseInstitutionalSwings = input.bool(false, "Usa swing tipo Sweep institutional", group="Swing Pattern")
 swingPatternOnlyAlerts = input.bool(true, "Solo notifica Swing Pattern", group="Swing Pattern")
 swingRequireReclaimAfterSweep = input.bool(false, "Mostra solo dopo reclaim Sweep recente", group="Swing Pattern")
+swingRequireOppositeSwingSweep = input.bool(false, "Richiedi sweep ultimo swing opposto", group="Swing Pattern")
+swingOppositeSwingSweepBufferTicks = input.int(0, "Buffer sweep swing opposto (ticks)", minval=0, group="Swing Pattern")
+swingRequireH13L13Sweep = input.bool(false, "Richiedi sweep H13/L13", group="Swing Pattern")
+swingRequireAsiaSweep = input.bool(false, "Richiedi sweep Asia High/Low", group="Swing Pattern")
+swingAsiaSweepWindow = input.session("0800-1100", "Finestra sweep Asia", group="Swing Pattern")
+swingRequireIBSweep = input.bool(false, "Richiedi sweep IB High/Low", group="Swing Pattern")
+swingIBSweepWindow = input.session("1000-1300", "Finestra sweep IB", group="Swing Pattern")
+swingShowOverLowL13 = input.bool(false, "Segnale Over Low (sotto L13)", group="Swing Pattern")
+swingOverLowL13BufferTicks = input.int(0, "Buffer Over Low L13 (ticks)", minval=0, group="Swing Pattern")
+swingShowDailyExtremeShSl = input.bool(false, "Mostra SH vicino a Daily High e SL vicino a Daily Low", group="Swing Pattern")
+swingDailyExtremeBufferTicks = input.int(0, "Distanza max da Daily High/Low (ticks)", minval=0, group="Swing Pattern")
 swingMinSwingRangeTicks = input.int(0, "Min range swing (ticks)", minval=0, group="Swing Pattern")
 swingMinReactionSepTicks = input.int(1, "Min distanza reazione (ticks)", minval=0, group="Swing Pattern")
 swingConfirmBos = input.bool(true, "Conferma BOS (close)", group="Swing Pattern")
@@ -418,6 +450,11 @@ plotshape(validKISS_SELL, "KISS SELL", shape.labeldown, location.abovebar, color
 plotshape(sweptL and not sweptL[1], "Sweep Low", shape.xcross, location.belowbar, color.red, size=size.tiny, text="Swept")
 plotshape(sweptH and not sweptH[1], "Sweep High", shape.xcross, location.abovebar, color.red, size=size.tiny, text="Swept")
 
+overLowBuf = swingOverLowL13BufferTicks * syminfo.mintick
+overLowL13 = showUntilNyClose and orangeIsToday and not na(orangeL) and ta.crossunder(low, orangeL - overLowBuf)
+plotshape(swingShowOverLowL13 and overLowL13, title="Over Low (L13)", location=location.belowbar, style=shape.labelup, color=color.new(color.red, 0), text="OVER\nLOW", textcolor=color.white, size=size.tiny)
+alertcondition(not swingPatternOnlyAlerts and swingShowOverLowL13 and overLowL13, title="Over Low (L13)", message="{{ticker}} Over Low (sotto L13)")
+
 plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY")
 plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
 plotshape(isStar13, title="13:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
@@ -560,28 +597,34 @@ lux_beareng = lux_c > lux_o and lux_c[1] < lux_o[1] and lux_c > lux_o[1] and lux
 
 lux_code = lux_hammer ? 1 : lux_ihammer ? 2 : lux_bulleng ? 3 : lux_hanging ? 4 : lux_shooting ? 5 : lux_beareng ? 6 : 0
 lux_title = lux_code == 1 ? "Hammer" : lux_code == 2 ? "Inverted Hammer" : lux_code == 3 ? "Bullish Engulfing" : lux_code == 4 ? "Hanging Man" : lux_code == 5 ? "Shooting Star" : lux_code == 6 ? "Bearish Engulfing" : "None"
+luxPatternAllowed = (lux_code == 0 and luxNotifyNone) or (lux_code == 1 and luxNotifyHammer) or (lux_code == 2 and luxNotifyInvertedHammer) or (lux_code == 3 and luxNotifyBullishEngulfing) or (lux_code == 4 and luxNotifyHangingMan) or (lux_code == 5 and luxNotifyShootingStar) or (lux_code == 6 and luxNotifyBearishEngulfing)
+luxTitleForLabel = (luxNotifyPatterns and luxPatternAllowed) ? lux_title : ""
 
 if luxEnabled and (lux_has_ph or lux_has_pl)
     if lux_has_ph
         H = na(lux_phy) ? "HH" : (lux_ph > lux_phy ? "HH" : "LH")
         lux_phy := lux_ph
         if luxShowLabels
-            label.new(bar_index[luxLen], lux_ph, H + "\n" + lux_title, color=color.new(color.white, 100), style=label.style_label_down, textcolor=luxSwingHColor, size=size.small)
+            label.new(bar_index[luxLen], lux_ph, luxTitleForLabel == "" ? H : (H + "\n" + luxTitleForLabel), color=color.new(color.white, 100), style=label.style_label_down, textcolor=luxSwingHColor, size=size.small)
     else if lux_has_pl
         L = na(lux_ply) ? "HL" : (lux_pl < lux_ply ? "LL" : "HL")
         lux_ply := lux_pl
         if luxShowLabels
-            label.new(bar_index[luxLen], lux_pl, L + "\n" + lux_title, color=color.new(color.white, 100), style=label.style_label_up, textcolor=luxSwingLColor, size=size.small)
+            label.new(bar_index[luxLen], lux_pl, luxTitleForLabel == "" ? L : (L + "\n" + luxTitleForLabel), color=color.new(color.white, 100), style=label.style_label_up, textcolor=luxSwingLColor, size=size.small)
 
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 1, title="Lux Hammer", message="Lux Hammer on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 2, title="Lux Inverted Hammer", message="Lux Inverted Hammer on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 3, title="Lux Bullish Engulfing", message="Lux Bullish Engulfing on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 4, title="Lux Hanging Man", message="Lux Hanging Man on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 5, title="Lux Shooting Star", message="Lux Shooting Star on {{ticker}} TF={{interval}}")
-alertcondition(not swingPatternOnlyAlerts and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 6, title="Lux Bearish Engulfing", message="Lux Bearish Engulfing on {{ticker}} TF={{interval}}")
+alertcondition(luxNotifyEnabled and luxNotifySwings and luxEnabled and lux_has_ph, title="Lux Swing High", message="{{ticker}} Lux Swing High (LuxAlgo)")
+alertcondition(luxNotifyEnabled and luxNotifySwings and luxEnabled and lux_has_pl, title="Lux Swing Low", message="{{ticker}} Lux Swing Low (LuxAlgo)")
 
-instLbLeft = 20
-instLbRight = 20
+alertcondition(luxNotifyEnabled and luxNotifyPatterns and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 0 and luxNotifyNone, title="Lux None", message="Lux None on {{ticker}} TF={{interval}}")
+alertcondition(luxNotifyEnabled and luxNotifyPatterns and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 1 and luxNotifyHammer, title="Lux Hammer", message="Lux Hammer on {{ticker}} TF={{interval}}")
+alertcondition(luxNotifyEnabled and luxNotifyPatterns and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 2 and luxNotifyInvertedHammer, title="Lux Inverted Hammer", message="Lux Inverted Hammer on {{ticker}} TF={{interval}}")
+alertcondition(luxNotifyEnabled and luxNotifyPatterns and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 3 and luxNotifyBullishEngulfing, title="Lux Bullish Engulfing", message="Lux Bullish Engulfing on {{ticker}} TF={{interval}}")
+alertcondition(luxNotifyEnabled and luxNotifyPatterns and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 4 and luxNotifyHangingMan, title="Lux Hanging Man", message="Lux Hanging Man on {{ticker}} TF={{interval}}")
+alertcondition(luxNotifyEnabled and luxNotifyPatterns and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 5 and luxNotifyShootingStar, title="Lux Shooting Star", message="Lux Shooting Star on {{ticker}} TF={{interval}}")
+alertcondition(luxNotifyEnabled and luxNotifyPatterns and luxEnabled and (lux_has_ph or lux_has_pl) and lux_code == 6 and luxNotifyBearishEngulfing, title="Lux Bearish Engulfing", message="Lux Bearish Engulfing on {{ticker}} TF={{interval}}")
+
+instLbLeft = 1
+instLbRight = 1
 var int instBullSignalIndex = 0
 var int instBearSignalIndex = 0
 
@@ -706,16 +749,19 @@ alertcondition(not swingPatternOnlyAlerts and instEnabled and instBearishSFP, ti
 
 earlyAvgVol = ta.sma(volume, 20)
 earlyStrongVol = volume > earlyAvgVol
+earlyDailyBuf = earlyDailyExtremeBufferTicks * syminfo.mintick
 
 earlyPotentialLow = low <= ta.lowest(low, earlyLeftBars + 1)
 earlyLiquiditySweepLow = low < low[1] and close > low[1]
 earlyBullReaction = close > open
-earlySwingLow = earlySwingEnabled and earlyPotentialLow and earlyLiquiditySweepLow and earlyBullReaction and (not earlyVolFilter or earlyStrongVol)
+earlyPassLow = not earlyShowDailyExtremeShSl or (not na(dLow) and math.abs(low - dLow) <= earlyDailyBuf)
+earlySwingLow = earlySwingEnabled and earlyPotentialLow and earlyLiquiditySweepLow and earlyBullReaction and (not earlyVolFilter or earlyStrongVol) and earlyPassLow
 
 earlyPotentialHigh = high >= ta.highest(high, earlyLeftBars + 1)
 earlyLiquiditySweepHigh = high > high[1] and close < high[1]
 earlyBearReaction = close < open
-earlySwingHigh = earlySwingEnabled and earlyPotentialHigh and earlyLiquiditySweepHigh and earlyBearReaction and (not earlyVolFilter or earlyStrongVol)
+earlyPassHigh = not earlyShowDailyExtremeShSl or (not na(dHigh) and math.abs(high - dHigh) <= earlyDailyBuf)
+earlySwingHigh = earlySwingEnabled and earlyPotentialHigh and earlyLiquiditySweepHigh and earlyBearReaction and (not earlyVolFilter or earlyStrongVol) and earlyPassHigh
 
 plotshape(earlySwingLow, title="Anticipo Swing Low", location=location.belowbar, style=shape.triangleup, color=color.yellow, size=size.small)
 
@@ -728,10 +774,18 @@ if earlyShowLabels and earlyShowPossibleSWH and earlySwingHigh
     label.new(bar_index, high, "Possible SWH", style=label.style_label_down, color=color.yellow, textcolor=color.black)
 
 alertcondition(not swingPatternOnlyAlerts and earlySwingLow, title="Early Swing Low Alert", message="Possibile Swing Low in formazione")
-alertcondition(not swingPatternOnlyAlerts and earlyShowPossibleSWH and earlySwingHigh, title="Early Swing High Alert", message="Possibile Swing High in formazione")
+alertcondition(not swingPatternOnlyAlerts and earlySwingHigh, title="Early Swing High Alert", message="Possibile Swing High in formazione")
 
-swingWin = swingPatternLeftBars + swingPatternRightBars
-swingCenter = swingPatternRightBars
+tfIsM1 = timeframe.isminutes and timeframe.multiplier == 1
+tfIsM15 = timeframe.isminutes and timeframe.multiplier == 15
+tfIsH1 = timeframe.isminutes and timeframe.multiplier == 60
+tfIsH4 = timeframe.isminutes and timeframe.multiplier == 240
+
+swingLbL = swingPatternUseTfBars ? (tfIsM1 ? swingPatternLeftBars_M1 : tfIsM15 ? swingPatternLeftBars_M15 : tfIsH1 ? swingPatternLeftBars_H1 : tfIsH4 ? swingPatternLeftBars_H4 : swingPatternLeftBars) : swingPatternLeftBars
+swingLbR = swingPatternUseTfBars ? (tfIsM1 ? swingPatternRightBars_M1 : tfIsM15 ? swingPatternRightBars_M15 : tfIsH1 ? swingPatternRightBars_H1 : tfIsH4 ? swingPatternRightBars_H4 : swingPatternRightBars) : swingPatternRightBars
+
+swingWin = swingLbL + swingLbR
+swingCenter = swingLbR
 hasSwingWindow = bar_index >= swingWin
 
 swingRsi = ta.rsi(close, swingBullDivRsiLen)
@@ -745,20 +799,51 @@ var float swingLastHighPrice = na
 var float swingLastHighRsi = na
 var int swingLastHighBarIndex = na
 var swingDivLines = array.new_line(0)
+var float swingLiqLastLowPrice = na
+var float swingLiqLastHighPrice = na
+var bool swingOppSweptForSH = false
+var bool swingOppSweptForSL = false
 
-swingPH = ta.pivothigh(high, swingPatternLeftBars, swingPatternRightBars)
-swingPL = ta.pivotlow(low, swingPatternLeftBars, swingPatternRightBars)
+swingPH = ta.pivothigh(high, swingLbL, swingLbR)
+swingPL = ta.pivotlow(low, swingLbL, swingLbR)
 
 var float swingLastSweepLowLevel = na
 var float swingLastSweepHighLevel = na
 var bool swingAllowSL = true
 var bool swingAllowSH = true
+var bool swingAsiaSweptH = false
+var bool swingAsiaSweptL = false
+var bool swingIbSweptH = false
+var bool swingIbSweptL = false
 
 if is_0000
     swingLastSweepLowLevel := na
     swingLastSweepHighLevel := na
     swingAllowSL := true
     swingAllowSH := true
+    swingLiqLastLowPrice := na
+    swingLiqLastHighPrice := na
+    swingOppSweptForSH := false
+    swingOppSweptForSL := false
+    swingAsiaSweptH := false
+    swingAsiaSweptL := false
+    swingIbSweptH := false
+    swingIbSweptL := false
+
+swingInAsiaSweepWin = not na(time(timeframe.period, swingAsiaSweepWindow, tz))
+swingInIBSweepWin = not na(time(timeframe.period, swingIBSweepWindow, tz))
+
+if swingInAsiaSweepWin and asiaRangeHas
+    if high > asiaHigh
+        swingAsiaSweptH := true
+    if low < asiaLow
+        swingAsiaSweptL := true
+
+if swingInIBSweepWin and not na(ibH) and not na(ibL)
+    if high > ibH
+        swingIbSweptH := true
+    if low < ibL
+        swingIbSweptL := true
 
 if (isKill or sweepOutsideKillzone) and not na(orangeL) and low < orangeL
     swingLastSweepLowLevel := orangeL
@@ -777,8 +862,8 @@ if not na(swingLastSweepHighLevel) and ta.crossunder(close, swingLastSweepHighLe
 swingRangeOk = (high[swingCenter] - low[swingCenter]) >= swingMinSwingRange
 swingReactBearOk = close[swingCenter - 1] < open[swingCenter - 1] and high[swingCenter - 1] < (high[swingCenter] - swingSep) and open[swingCenter - 1] < (high[swingCenter] - swingSep) and close[swingCenter - 1] < (high[swingCenter] - swingSep)
 swingReactBullOk = close[swingCenter - 1] > open[swingCenter - 1] and low[swingCenter - 1] > (low[swingCenter] + swingSep) and open[swingCenter - 1] > (low[swingCenter] + swingSep) and close[swingCenter - 1] > (low[swingCenter] + swingSep)
-swingBosBearOk = not swingConfirmBos or close < low[swingCenter - 1]
-swingBosBullOk = not swingConfirmBos or close > high[swingCenter - 1]
+swingBosBearOk = not swingConfirmBos or (swingLbR == 1 ? close < low[swingCenter] : close < low[swingCenter - 1])
+swingBosBullOk = not swingConfirmBos or (swingLbR == 1 ? close > high[swingCenter] : close > high[swingCenter - 1])
 
 swingHighOkInst = not na(swingPH) and swingRangeOk and swingReactBearOk and swingBosBearOk
 swingLowOkInst = not na(swingPL) and swingRangeOk and swingReactBullOk and swingBosBullOk
@@ -788,10 +873,10 @@ if swingHighOkStrict
     for i = 0 to swingWin
         if i != swingCenter and high[i] >= high[swingCenter]
             swingHighOkStrict := false
-    for j = swingPatternLeftBars to 1
+    for j = swingLbL to 1
         if high[swingCenter + j] >= high[swingCenter + j - 1]
             swingHighOkStrict := false
-    for j = 1 to swingPatternRightBars
+    for j = 1 to swingLbR
         if high[swingCenter - j + 1] <= high[swingCenter - j]
             swingHighOkStrict := false
     swingHighOkStrict := swingHighOkStrict and swingRangeOk and swingReactBearOk and swingBosBearOk
@@ -801,10 +886,10 @@ if swingLowOkStrict
     for i = 0 to swingWin
         if i != swingCenter and low[i] <= low[swingCenter]
             swingLowOkStrict := false
-    for j = swingPatternLeftBars to 1
+    for j = swingLbL to 1
         if low[swingCenter + j] <= low[swingCenter + j - 1]
             swingLowOkStrict := false
-    for j = 1 to swingPatternRightBars
+    for j = 1 to swingLbR
         if low[swingCenter - j + 1] >= low[swingCenter - j]
             swingLowOkStrict := false
     swingLowOkStrict := swingLowOkStrict and swingRangeOk and swingReactBullOk and swingBosBullOk
@@ -812,8 +897,33 @@ if swingLowOkStrict
 swingHighOk = swingUseInstitutionalSwings ? swingHighOkInst : swingHighOkStrict
 swingLowOk = swingUseInstitutionalSwings ? swingLowOkInst : swingLowOkStrict
 
-swingHighOk := swingHighOk and (not swingRequireReclaimAfterSweep or swingAllowSH)
-swingLowOk := swingLowOk and (not swingRequireReclaimAfterSweep or swingAllowSL)
+swingOppBuf = swingOppositeSwingSweepBufferTicks * syminfo.mintick
+swingHighOkBase = swingHighOk and (not swingRequireReclaimAfterSweep or swingAllowSH)
+swingLowOkBase = swingLowOk and (not swingRequireReclaimAfterSweep or swingAllowSL)
+
+if swingPatternEnabled and swingLowOkBase
+    swingLiqLastLowPrice := low[swingCenter]
+    swingOppSweptForSH := false
+    if swingRequireOppositeSwingSweep and not na(swingLiqLastLowPrice) and ta.lowest(low, swingCenter) < (swingLiqLastLowPrice - swingOppBuf)
+        swingOppSweptForSH := true
+if swingPatternEnabled and swingHighOkBase
+    swingLiqLastHighPrice := high[swingCenter]
+    swingOppSweptForSL := false
+    if swingRequireOppositeSwingSweep and not na(swingLiqLastHighPrice) and ta.highest(high, swingCenter) > (swingLiqLastHighPrice + swingOppBuf)
+        swingOppSweptForSL := true
+
+if swingPatternEnabled and swingRequireOppositeSwingSweep
+    if not na(swingLiqLastLowPrice) and low < (swingLiqLastLowPrice - swingOppBuf)
+        swingOppSweptForSH := true
+    if not na(swingLiqLastHighPrice) and high > (swingLiqLastHighPrice + swingOppBuf)
+        swingOppSweptForSL := true
+
+requireAnySessionSweep = swingRequireH13L13Sweep or swingRequireAsiaSweep or swingRequireIBSweep
+passSessionSh = not requireAnySessionSweep or (swingRequireH13L13Sweep and sweptL) or (swingRequireAsiaSweep and swingAsiaSweptH) or (swingRequireIBSweep and swingIbSweptH)
+passSessionSl = not requireAnySessionSweep or (swingRequireH13L13Sweep and sweptH) or (swingRequireAsiaSweep and swingAsiaSweptL) or (swingRequireIBSweep and swingIbSweptL)
+
+swingHighOk := swingHighOkBase and (not swingRequireOppositeSwingSweep or (not na(swingLiqLastLowPrice) and swingOppSweptForSH)) and passSessionSh
+swingLowOk := swingLowOkBase and (not swingRequireOppositeSwingSweep or (not na(swingLiqLastHighPrice) and swingOppSweptForSL)) and passSessionSl
 
 swingBullDiv = swingPatternEnabled and swingBullDivEnabled and swingLowOk and not na(swingLastLowPrice) and low[swingCenter] < swingLastLowPrice and swingRsi[swingCenter] > (swingLastLowRsi + swingDivMinRsiDelta) and (not swingDivUseRsiThresholds or swingLastLowRsi <= swingDivBullPrevRsiMax)
 if swingBullDiv and not na(swingLastLowBarIndex)
@@ -827,6 +937,7 @@ if swingPatternEnabled and swingLowOk
     swingLastLowPrice := low[swingCenter]
     swingLastLowRsi := swingRsi[swingCenter]
     swingLastLowBarIndex := bar_index - swingCenter
+    swingOppSweptForSH := false
 
 swingBearDiv = swingPatternEnabled and swingBullDivEnabled and swingHighOk and not na(swingLastHighPrice) and high[swingCenter] > swingLastHighPrice and swingRsi[swingCenter] < (swingLastHighRsi - swingDivMinRsiDelta) and (not swingDivUseRsiThresholds or swingLastHighRsi >= swingDivBearPrevRsiMin)
 if swingBearDiv and not na(swingLastHighBarIndex)
@@ -840,13 +951,18 @@ if swingPatternEnabled and swingHighOk
     swingLastHighPrice := high[swingCenter]
     swingLastHighRsi := swingRsi[swingCenter]
     swingLastHighBarIndex := bar_index - swingCenter
+    swingOppSweptForSL := false
 
-plotshape(swingPatternEnabled and swingHighOk, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
-plotshape(swingPatternEnabled and swingLowOk, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
+swingDailyBuf = swingDailyExtremeBufferTicks * syminfo.mintick
+swingShowHighFinal = swingPatternEnabled and swingHighOk and (not swingShowDailyExtremeShSl or (not na(dHigh) and math.abs(high[swingCenter] - dHigh) <= swingDailyBuf))
+swingShowLowFinal = swingPatternEnabled and swingLowOk and (not swingShowDailyExtremeShSl or (not na(dLow) and math.abs(low[swingCenter] - dLow) <= swingDailyBuf))
+
+plotshape(swingShowHighFinal, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
+plotshape(swingShowLowFinal, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
 plotshape(swingBullDiv, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
 plotshape(swingBearDiv, title="Bearish Divergence", location=location.abovebar, style=shape.labeldown, color=color.new(color.fuchsia, 0), text="DIV", textcolor=color.white, size=size.tiny, offset=-swingCenter)
 
-alertcondition(swingPatternOnlyAlerts and swingPatternEnabled and swingHighOk, title="Swing High", message="{{ticker}} Swing High")
-alertcondition(swingPatternOnlyAlerts and swingPatternEnabled and swingLowOk, title="Swing Low", message="{{ticker}} Swing Low")
+alertcondition(swingPatternOnlyAlerts and swingShowHighFinal, title="Swing High", message="{{ticker}} Swing High")
+alertcondition(swingPatternOnlyAlerts and swingShowLowFinal, title="Swing Low", message="{{ticker}} Swing Low")
 alertcondition(swingPatternOnlyAlerts and swingBullDiv, title="Bullish Divergence", message="{{ticker}} Bullish Divergence (RSI)")
 alertcondition(swingPatternOnlyAlerts and swingBearDiv, title="Bearish Divergence", message="{{ticker}} Bearish Divergence (RSI)")

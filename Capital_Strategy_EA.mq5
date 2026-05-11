@@ -53,15 +53,44 @@ input bool InpHammerFibUse05 = true;
 input bool InpHammerFibUse0382 = true;
 
 input group "Swing Pattern Strategy"
-input bool InpTradeOnlyInstitutionalSwing = true;
-input bool InpTradeOnlySwingPattern = false;
+input bool InpTradeOnlyInstitutionalSwing = false;
+input bool InpTradeOnlySwingPattern = true;
 input bool InpSwingUseEntryTimeFilter = false;
 input bool InpSwingUseInstitutionalSwings = false;
 input bool InpSwingRequireReclaimAfterSweep = false;
+input bool InpSwingRequireOppositeSwingSweep = false;
+input int InpSwingOppositeSwingSweepBufferPoints = 0;
+input bool InpSwingRequireH13L13Sweep = false;
+input bool InpSwingRequireAsiaSweep = false;
+input int InpSwingAsiaSweepStartHour = 8;
+input int InpSwingAsiaSweepStartMinute = 0;
+input int InpSwingAsiaSweepEndHour = 11;
+input int InpSwingAsiaSweepEndMinute = 0;
+input bool InpSwingRequireIBSweep = false;
+input int InpSwingIBSweepStartHour = 10;
+input int InpSwingIBSweepStartMinute = 0;
+input int InpSwingIBSweepEndHour = 13;
+input int InpSwingIBSweepEndMinute = 0;
+input bool InpSwingShowDailyExtremeShSl = true;
+input int InpSwingDailyExtremeBufferPoints = 200;
+input bool InpSwingShowSessionExtremeShSl = false;
+input bool InpSwingSessionUseAsia = true;
+input bool InpSwingSessionUseLondon = true;
+input bool InpSwingSessionUseNy = true;
+input int InpSwingSessionExtremeBufferPoints = 80;
+input bool InpSwingUseTfBars = true;
+input int InpSwingLeftBars_M1 = 2;
+input int InpSwingRightBars_M1 = 2;
+input int InpSwingLeftBars_M15 = 2;
+input int InpSwingRightBars_M15 = 2;
+input int InpSwingLeftBars_H1 = 1;
+input int InpSwingRightBars_H1 = 1;
+input int InpSwingLeftBars_H4 = 1;
+input int InpSwingRightBars_H4 = 1;
 input int InpSwingLeftBars = 2;
 input int InpSwingRightBars = 2;
-input int InpSwingMinSwingRangePoints = 0;
-input int InpSwingMinReactionSepPoints = 1;
+input int InpSwingMinSwingRangePoints = 80;
+input int InpSwingMinReactionSepPoints = 10;
 input bool InpSwingConfirmBos = true;
 
 enum ENUM_MTF_RETEST_ZONE_TYPE
@@ -100,6 +129,8 @@ datetime g_last_bar_time = 0;
 int g_day_key = 0;
 datetime g_day_start_time = 0;
 double g_daily_open = 0.0;
+double g_daily_high = 0.0;
+double g_daily_low = 0.0;
 bool g_daily_has = false;
 double g_mid_high = 0.0;
 double g_mid_low = 0.0;
@@ -137,6 +168,10 @@ double g_london_high = 0.0;
 double g_london_low = 0.0;
 bool g_london_range_has = false;
 
+double g_ny_high = 0.0;
+double g_ny_low = 0.0;
+bool g_ny_range_has = false;
+
 bool g_buy_done = false;
 bool g_sell_done = false;
 
@@ -160,6 +195,21 @@ double g_swing_last_sweep_low_level = 0.0;
 double g_swing_last_sweep_high_level = 0.0;
 bool g_swing_allow_buy = true;
 bool g_swing_allow_sell = true;
+bool g_swing_h13_swept_low = false;
+bool g_swing_h13_swept_high = false;
+bool g_swing_asia_swept_h = false;
+bool g_swing_asia_swept_l = false;
+bool g_swing_ib_swept_h = false;
+bool g_swing_ib_swept_l = false;
+
+double g_liq_last_sh_price = 0.0;
+datetime g_liq_last_sh_time = 0;
+bool g_liq_last_sh_has = false;
+double g_liq_last_sl_price = 0.0;
+datetime g_liq_last_sl_time = 0;
+bool g_liq_last_sl_has = false;
+bool g_liq_opp_swept_for_sh = false;
+bool g_liq_opp_swept_for_sl = false;
 
 enum { EA_INST_CAP = 300 };
 datetime g_inst_time[EA_INST_CAP];
@@ -602,7 +652,7 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    DeleteByPrefix(g_prefix);
    g_day_key = dayKey;
    g_day_start_time = firstBarOpen;
-   g_daily_open = 0.0; g_daily_has = false;
+   g_daily_open = 0.0; g_daily_high = 0.0; g_daily_low = 0.0; g_daily_has = false;
    g_mid_high = 0.0; g_mid_low = 0.0; g_mid_has = false; g_mid_time = 0;
    g_mid_sweep_down = false; g_mid_sweep_up = false;
    g_mid_sweep_down_bar = -1; g_mid_sweep_up_bar = -1;
@@ -616,6 +666,7 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    g_asia_open = 0.0; g_asia_close = 0.0; g_asia_has = false;
    g_asia_high = 0.0; g_asia_low = 0.0; g_asia_range_has = false;
    g_london_high = 0.0; g_london_low = 0.0; g_london_range_has = false;
+   g_ny_high = 0.0; g_ny_low = 0.0; g_ny_range_has = false;
    g_buy_done = false;
    g_sell_done = false;
    g_partial_ticket_buy_done = 0;
@@ -635,6 +686,21 @@ void ResetDay(const int dayKey, const datetime firstBarOpen)
    g_swing_last_sweep_high_level = 0.0;
    g_swing_allow_buy = true;
    g_swing_allow_sell = true;
+   g_swing_h13_swept_low = false;
+   g_swing_h13_swept_high = false;
+   g_swing_asia_swept_h = false;
+   g_swing_asia_swept_l = false;
+   g_swing_ib_swept_h = false;
+   g_swing_ib_swept_l = false;
+
+   g_liq_last_sh_price = 0.0;
+   g_liq_last_sh_time = 0;
+   g_liq_last_sh_has = false;
+   g_liq_last_sl_price = 0.0;
+   g_liq_last_sl_time = 0;
+   g_liq_last_sl_has = false;
+   g_liq_opp_swept_for_sh = false;
+   g_liq_opp_swept_for_sl = false;
    EaInstReset();
 
    g_mtf_last_h1_close_time = 0;
@@ -719,10 +785,20 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
    int dk = DayKeyLocal(tBarOpen);
    if(dk != g_day_key) ResetDay(dk, tBarOpen);
 
+   if(!g_daily_has)
+   {
+      g_daily_open = iOpen(_Symbol, _Period, 1);
+      g_daily_high = h;
+      g_daily_low = l;
+      g_daily_has = (g_daily_open > 0.0 && g_daily_high > 0.0 && g_daily_low > 0.0);
+   }
+
    if(IsLocalTime(tBarOpen, 0, 0))
    {
       g_daily_open = iOpen(_Symbol, _Period, 1);
-      g_daily_has = (g_daily_open > 0.0);
+      g_daily_high = h;
+      g_daily_low = l;
+      g_daily_has = (g_daily_open > 0.0 && g_daily_high > 0.0 && g_daily_low > 0.0);
       g_mid_time = tBarOpen;
       g_mid_high = h;
       g_mid_low = l;
@@ -743,6 +819,26 @@ void UpdateLevelsWithClosedBar(const datetime tBarOpen, const double h, const do
       g_swing_last_sweep_high_level = 0.0;
       g_swing_allow_buy = true;
       g_swing_allow_sell = true;
+      g_swing_h13_swept_low = false;
+      g_swing_h13_swept_high = false;
+      g_swing_asia_swept_h = false;
+      g_swing_asia_swept_l = false;
+      g_swing_ib_swept_h = false;
+      g_swing_ib_swept_l = false;
+      g_liq_last_sh_price = 0.0;
+      g_liq_last_sh_time = 0;
+      g_liq_last_sh_has = false;
+      g_liq_last_sl_price = 0.0;
+      g_liq_last_sl_time = 0;
+      g_liq_last_sl_has = false;
+      g_liq_opp_swept_for_sh = false;
+      g_liq_opp_swept_for_sl = false;
+   }
+
+   if(g_daily_has)
+   {
+      if(h > g_daily_high) g_daily_high = h;
+      if(l < g_daily_low) g_daily_low = l;
    }
 
    if(InWindowLocal(tBarOpen, 9, 0, 10, 0))
@@ -1014,6 +1110,8 @@ void ProcessSignalOnNewBar()
       if(o0 > 0.0 && h0 > 0.0 && l0 > 0.0)
       {
          g_daily_open = o0;
+         g_daily_high = h0;
+         g_daily_low = l0;
          g_daily_has = true;
          g_mid_time = t0;
          g_mid_high = h0;
@@ -1054,6 +1152,33 @@ void ProcessSignalOnNewBar()
       if(!g_london_range_has) { g_london_high = h; g_london_low = l; g_london_range_has = true; }
       else { if(h > g_london_high) g_london_high = h; if(l < g_london_low) g_london_low = l; }
    }
+   if(InWindowLocal(tBarOpen, 14, 30, 21, 0))
+   {
+      if(!g_ny_range_has) { g_ny_high = h; g_ny_low = l; g_ny_range_has = true; }
+      else { if(h > g_ny_high) g_ny_high = h; if(l < g_ny_low) g_ny_low = l; }
+   }
+
+   if(InWindowLocal(tBarOpen, InpSwingAsiaSweepStartHour, InpSwingAsiaSweepStartMinute, InpSwingAsiaSweepEndHour, InpSwingAsiaSweepEndMinute) && g_asia_range_has)
+   {
+      if(h > g_asia_high) g_swing_asia_swept_h = true;
+      if(l < g_asia_low) g_swing_asia_swept_l = true;
+   }
+   if(InWindowLocal(tBarOpen, InpSwingIBSweepStartHour, InpSwingIBSweepStartMinute, InpSwingIBSweepEndHour, InpSwingIBSweepEndMinute) && g_ib_has)
+   {
+      if(h > g_ib_high) g_swing_ib_swept_h = true;
+      if(l < g_ib_low) g_swing_ib_swept_l = true;
+   }
+
+   if(g_h13_has && InWindowLocal(tBarOpen, 14, 30, 16, 30))
+   {
+      if(l < g_h13_low) g_swing_h13_swept_low = true;
+      if(h > g_h13_high) g_swing_h13_swept_high = true;
+   }
+
+   double oppBuf = (double)InpSwingOppositeSwingSweepBufferPoints * _Point;
+   if(oppBuf < 0.0) oppBuf = 0.0;
+   if(g_liq_last_sl_has && l < (g_liq_last_sl_price - oppBuf)) g_liq_opp_swept_for_sh = true;
+   if(g_liq_last_sh_has && h > (g_liq_last_sh_price + oppBuf)) g_liq_opp_swept_for_sl = true;
    if(InpDrawAsiaBiasArrow && IsLocalTime(tBarOpen, 9, 0) && g_asia_has && g_asia_open > 0.0)
    {
       bool buyBias = (g_asia_high > 0.0 && l > g_asia_high);
@@ -1447,8 +1572,17 @@ void ProcessSignalOnNewBar()
       if(InpSwingUseEntryTimeFilter) isEntryTimeSwing = IsEntryTimeLocal(tBarOpen);
       if(isEntryTimeSwing)
       {
-         int left = MathMax(1, InpSwingLeftBars);
-         int right = MathMax(1, InpSwingRightBars);
+         int left = InpSwingLeftBars;
+         int right = InpSwingRightBars;
+         if(InpSwingUseTfBars)
+         {
+            if(_Period == PERIOD_M1) { left = InpSwingLeftBars_M1; right = InpSwingRightBars_M1; }
+            else if(_Period == PERIOD_M15) { left = InpSwingLeftBars_M15; right = InpSwingRightBars_M15; }
+            else if(_Period == PERIOD_H1) { left = InpSwingLeftBars_H1; right = InpSwingRightBars_H1; }
+            else if(_Period == PERIOD_H4) { left = InpSwingLeftBars_H4; right = InpSwingRightBars_H4; }
+         }
+         left = MathMax(1, left);
+         right = MathMax(1, right);
          int centerShift = right + 1;
          int needBars = centerShift + left + 2;
          if(iBars(_Symbol, _Period) >= needBars)
@@ -1499,8 +1633,21 @@ void ProcessSignalOnNewBar()
 
             bool reactBearOk = (cR < oR && hR < (hC - sep) && oR < (hC - sep) && cR < (hC - sep));
             bool reactBullOk = (cR > oR && lR > (lC + sep) && oR > (lC + sep) && cR > (lC + sep));
-            bool bosBearOk = (!InpSwingConfirmBos || c < lR);
-            bool bosBullOk = (!InpSwingConfirmBos || c > hR);
+            bool bosBearOk = true;
+            bool bosBullOk = true;
+            if(InpSwingConfirmBos)
+            {
+               if(right == 1)
+               {
+                  bosBearOk = (c < lC);
+                  bosBullOk = (c > hC);
+               }
+               else
+               {
+                  bosBearOk = (c < lR);
+                  bosBullOk = (c > hR);
+               }
+            }
 
             sh = sh && rangeOk && reactBearOk && bosBearOk;
             sl = sl && rangeOk && reactBullOk && bosBullOk;
@@ -1511,7 +1658,82 @@ void ProcessSignalOnNewBar()
                sl = sl && g_swing_allow_buy;
             }
 
-            if(sl && !sh)
+            bool passOppForSh = true;
+            bool passOppForSl = true;
+            if(InpSwingRequireOppositeSwingSweep)
+            {
+               passOppForSh = (g_liq_last_sl_has && g_liq_opp_swept_for_sh);
+               passOppForSl = (g_liq_last_sh_has && g_liq_opp_swept_for_sl);
+            }
+
+            bool requireAnySessionSweep = (InpSwingRequireH13L13Sweep || InpSwingRequireAsiaSweep || InpSwingRequireIBSweep);
+            bool passSessionSh = (!requireAnySessionSweep) ||
+               (InpSwingRequireH13L13Sweep && g_swing_h13_swept_low) ||
+               (InpSwingRequireAsiaSweep && g_swing_asia_swept_h) ||
+               (InpSwingRequireIBSweep && g_swing_ib_swept_h);
+            bool passSessionSl = (!requireAnySessionSweep) ||
+               (InpSwingRequireH13L13Sweep && g_swing_h13_swept_high) ||
+               (InpSwingRequireAsiaSweep && g_swing_asia_swept_l) ||
+               (InpSwingRequireIBSweep && g_swing_ib_swept_l);
+
+            bool shOk = (sh && passOppForSh && passSessionSh);
+            bool slOk = (sl && passOppForSl && passSessionSl);
+
+            datetime tPivot = iTime(_Symbol, _Period, centerShift);
+            if(slOk && tPivot != 0)
+            {
+               g_liq_last_sl_has = true;
+               g_liq_last_sl_price = lC;
+               g_liq_last_sl_time = tPivot;
+               g_liq_opp_swept_for_sh = false;
+            }
+            if(shOk && tPivot != 0)
+            {
+               g_liq_last_sh_has = true;
+               g_liq_last_sh_price = hC;
+               g_liq_last_sh_time = tPivot;
+               g_liq_opp_swept_for_sl = false;
+            }
+
+            bool extremeOn = (InpSwingShowDailyExtremeShSl || InpSwingShowSessionExtremeShSl);
+            bool nearDailyHigh = false;
+            bool nearDailyLow = false;
+            bool nearSessHigh = false;
+            bool nearSessLow = false;
+            if(InpSwingShowDailyExtremeShSl)
+            {
+               double buf = (double)InpSwingDailyExtremeBufferPoints * _Point;
+               if(buf < 0.0) buf = 0.0;
+               nearDailyHigh = (g_daily_has && MathAbs(hC - g_daily_high) <= buf);
+               nearDailyLow = (g_daily_has && MathAbs(lC - g_daily_low) <= buf);
+            }
+            if(InpSwingShowSessionExtremeShSl)
+            {
+               double buf = (double)InpSwingSessionExtremeBufferPoints * _Point;
+               if(buf < 0.0) buf = 0.0;
+               if(InpSwingSessionUseAsia && g_asia_range_has)
+               {
+                  nearSessHigh = nearSessHigh || (MathAbs(hC - g_asia_high) <= buf);
+                  nearSessLow = nearSessLow || (MathAbs(lC - g_asia_low) <= buf);
+               }
+               if(InpSwingSessionUseLondon && g_london_range_has)
+               {
+                  nearSessHigh = nearSessHigh || (MathAbs(hC - g_london_high) <= buf);
+                  nearSessLow = nearSessLow || (MathAbs(lC - g_london_low) <= buf);
+               }
+               if(InpSwingSessionUseNy && g_ny_range_has)
+               {
+                  nearSessHigh = nearSessHigh || (MathAbs(hC - g_ny_high) <= buf);
+                  nearSessLow = nearSessLow || (MathAbs(lC - g_ny_low) <= buf);
+               }
+            }
+            bool passExtremeSh = (!extremeOn) || nearDailyHigh || nearSessHigh;
+            bool passExtremeSl = (!extremeOn) || nearDailyLow || nearSessLow;
+
+            bool slTrade = (slOk && passExtremeSl);
+            bool shTrade = (shOk && passExtremeSh);
+
+            if(slTrade && !shTrade)
             {
                if(!(InpMaxOneTradePerDayPerSide && g_buy_done))
                {
@@ -1522,7 +1744,7 @@ void ProcessSignalOnNewBar()
                   }
                }
             }
-            if(sh && !sl)
+            if(shTrade && !slTrade)
             {
                if(!(InpMaxOneTradePerDayPerSide && g_sell_done))
                {

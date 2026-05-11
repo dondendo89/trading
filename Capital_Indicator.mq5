@@ -124,6 +124,11 @@ input bool InpSwingOverLowL13Enabled = false;
 input int InpSwingOverLowL13BufferPoints = 0;
 input bool InpSwingShowDailyExtremeShSl = false;
 input int InpSwingDailyExtremeBufferPoints = 0;
+input bool InpSwingShowSessionExtremeShSl = false;
+input bool InpSwingSessionUseAsia = true;
+input bool InpSwingSessionUseLondon = true;
+input bool InpSwingSessionUseNy = true;
+input int InpSwingSessionExtremeBufferPoints = 0;
 input int InpSwingMinSwingRangePoints = 0;
 input int InpSwingMinReactionSepPoints = 1;
 input bool InpSwingConfirmBos = true;
@@ -318,6 +323,8 @@ input int InpMtfSlBufferPoints = 0;
    double g_swing_last_sh_price = 0.0;
    double g_swing_last_sh_rsi = 0.0;
    datetime g_swing_last_sh_time = 0;
+   datetime g_swing_last_bull_div_time = 0;
+   datetime g_swing_last_bear_div_time = 0;
    double g_swing_last_bull_sweep_level = 0.0;
    double g_swing_last_bear_sweep_level = 0.0;
    bool g_swing_allow_sl = true;
@@ -659,6 +666,8 @@ void EsReset()
    g_swing_last_sh_price = 0.0;
    g_swing_last_sh_rsi = 0.0;
    g_swing_last_sh_time = 0;
+   g_swing_last_bull_div_time = 0;
+   g_swing_last_bear_div_time = 0;
    g_swing_last_bull_sweep_level = 0.0;
    g_swing_last_bear_sweep_level = 0.0;
    g_swing_allow_sl = true;
@@ -900,7 +909,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       if(InpNotifyOnlySHSL)
       {
          bool isShSl = (txt == "SH" || txt == "SL");
-         bool isDiv = (txt == "DIV");
+         bool isDiv = (StringFind(txt, "DIV") == 0);
          bool isLux = (StringFind(txt, "LUX") == 0);
          bool isMtf = (StringFind(txt, "BUY MTF") == 0 || StringFind(txt, "SELL MTF") == 0);
          if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf))) return;
@@ -2025,7 +2034,14 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   if(sh && InpSwingConfirmBos)
                   {
                      int newest = EsIdx(0);
-                     if(!(g_es_close[newest] < g_es_low[reactIdx])) sh = false;
+                     if(centerOff == 1)
+                     {
+                        if(!(g_es_close[newest] < lC)) sh = false;
+                     }
+                     else
+                     {
+                        if(!(g_es_close[newest] < g_es_low[reactIdx])) sh = false;
+                     }
                   }
                }
 
@@ -2057,7 +2073,14 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   if(sl && InpSwingConfirmBos)
                   {
                      int newest = EsIdx(0);
-                     if(!(g_es_close[newest] > g_es_high[reactIdx])) sl = false;
+                     if(centerOff == 1)
+                     {
+                        if(!(g_es_close[newest] > hC)) sl = false;
+                     }
+                     else
+                     {
+                        if(!(g_es_close[newest] > g_es_high[reactIdx])) sl = false;
+                     }
                   }
                }
 
@@ -2071,14 +2094,41 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   (InpSwingRequireAsiaSweep && g_swing_asia_swept_h) ||
                   (InpSwingRequireIBSweep && g_swing_ib_swept_h);
 
-               bool passDailySh = true;
+               bool extremeOn = (InpSwingShowDailyExtremeShSl || InpSwingShowSessionExtremeShSl);
+               bool nearDailyHigh = false;
+               bool nearDailyLow = false;
+               bool nearSessHigh = false;
+               bool nearSessLow = false;
                if(InpSwingShowDailyExtremeShSl)
                {
                   double buf = (double)InpSwingDailyExtremeBufferPoints * _Point;
-                  passDailySh = (g_daily_has && buf >= 0.0 && MathAbs(hC - g_daily_high) <= buf);
+                  nearDailyHigh = (g_daily_has && buf >= 0.0 && MathAbs(hC - g_daily_high) <= buf);
+                  nearDailyLow = (g_daily_has && buf >= 0.0 && MathAbs(lC - g_daily_low) <= buf);
                }
+               if(InpSwingShowSessionExtremeShSl)
+               {
+                  double buf = (double)InpSwingSessionExtremeBufferPoints * _Point;
+                  if(buf < 0.0) buf = 0.0;
+                  if(InpSwingSessionUseAsia && g_asia_has)
+                  {
+                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_asia_high) <= buf);
+                     nearSessLow = nearSessLow || (MathAbs(lC - g_asia_low) <= buf);
+                  }
+                  if(InpSwingSessionUseLondon && g_london_has)
+                  {
+                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_london_high) <= buf);
+                     nearSessLow = nearSessLow || (MathAbs(lC - g_london_low) <= buf);
+                  }
+                  if(InpSwingSessionUseNy && g_ny_sess_has)
+                  {
+                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_ny_high) <= buf);
+                     nearSessLow = nearSessLow || (MathAbs(lC - g_ny_low) <= buf);
+                  }
+               }
+               bool passExtremeSh = (!extremeOn) || nearDailyHigh || nearSessHigh;
+               bool passExtremeSl = (!extremeOn) || nearDailyLow || nearSessLow;
 
-               if(sh && passOppForSh && passSessionSh && passDailySh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh) && g_es_last_sp_sh_time != tPivot)
+               if(sh && passOppForSh && passSessionSh && passExtremeSh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh) && g_es_last_sp_sh_time != tPivot)
                {
                   datetime prevShTime = g_swing_last_sh_time;
                   double prevShPrice = g_swing_last_sh_price;
@@ -2108,7 +2158,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   {
                      string nLn = dayPfx + "SP_DIVH_LN_" + IntegerToString((long)tPivot);
                      CreateOrUpdateTrendSegment(nLn, prevShTime, prevShPrice, tPivot, hC, clrFuchsia, STYLE_SOLID, 2);
-                     NotifySignal("DIV", tBarOpen);
+                     if(g_swing_last_bear_div_time != tPivot)
+                     {
+                        NotifySignal("DIV BEAR", tBarOpen);
+                        g_swing_last_bear_div_time = tPivot;
+                     }
                   }
 
                   if(InpSwingShowLabels)
@@ -2132,14 +2186,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   (InpSwingRequireAsiaSweep && g_swing_asia_swept_l) ||
                   (InpSwingRequireIBSweep && g_swing_ib_swept_l);
 
-               bool passDailySl = true;
-               if(InpSwingShowDailyExtremeShSl)
-               {
-                  double buf = (double)InpSwingDailyExtremeBufferPoints * _Point;
-                  passDailySl = (g_daily_has && buf >= 0.0 && MathAbs(lC - g_daily_low) <= buf);
-               }
-
-               if(sl && passOppForSl && passSessionSl && passDailySl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl) && g_es_last_sp_sl_time != tPivot)
+               if(sl && passOppForSl && passSessionSl && passExtremeSl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl) && g_es_last_sp_sl_time != tPivot)
                {
                   datetime prevSlTime = g_swing_last_sl_time;
                   double prevSlPrice = g_swing_last_sl_price;
@@ -2169,7 +2216,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   {
                      string nLn = dayPfx + "SP_DIV_LN_" + IntegerToString((long)tPivot);
                      CreateOrUpdateTrendSegment(nLn, prevSlTime, prevSlPrice, tPivot, lC, clrAqua, STYLE_SOLID, 2);
-                     NotifySignal("DIV", tBarOpen);
+                     if(g_swing_last_bull_div_time != tPivot)
+                     {
+                        NotifySignal("DIV BULL", tBarOpen);
+                        g_swing_last_bull_div_time = tPivot;
+                     }
                   }
 
                   if(InpSwingShowLabels)

@@ -94,6 +94,11 @@ swingShowOverLowL13 = input.bool(false, "Segnale Over Low (sotto L13)", group="S
 swingOverLowL13BufferTicks = input.int(0, "Buffer Over Low L13 (ticks)", minval=0, group="Swing Pattern")
 swingShowDailyExtremeShSl = input.bool(false, "Mostra SH vicino a Daily High e SL vicino a Daily Low", group="Swing Pattern")
 swingDailyExtremeBufferTicks = input.int(0, "Distanza max da Daily High/Low (ticks)", minval=0, group="Swing Pattern")
+swingShowSessionExtremeShSl = input.bool(false, "Filtro Session High/Low (Asia/London/NY)", group="Swing Pattern")
+swingSessionUseAsia = input.bool(true, "Usa Asia", group="Swing Pattern")
+swingSessionUseLondon = input.bool(true, "Usa London", group="Swing Pattern")
+swingSessionUseNy = input.bool(true, "Usa NY", group="Swing Pattern")
+swingSessionExtremeBufferTicks = input.int(0, "Distanza max da Session High/Low (ticks)", minval=0, group="Swing Pattern")
 swingMinSwingRangeTicks = input.int(0, "Min range swing (ticks)", minval=0, group="Swing Pattern")
 swingMinReactionSepTicks = input.int(1, "Min distanza reazione (ticks)", minval=0, group="Swing Pattern")
 swingConfirmBos = input.bool(true, "Conferma BOS (close)", group="Swing Pattern")
@@ -214,6 +219,20 @@ if isInLondon
     else
         londonHighLive := math.max(nz(londonHighLive, high), high)
         londonLowLive := math.min(nz(londonLowLive, low), low)
+
+var float nyHighLive = na
+var float nyLowLive = na
+isInNySess = not na(time(timeframe.period, "1430-2100", tz))
+if is_0000
+    nyHighLive := na
+    nyLowLive := na
+if isInNySess
+    if not isInNySess[1]
+        nyHighLive := high
+        nyLowLive := low
+    else
+        nyHighLive := math.max(nz(nyHighLive, high), high)
+        nyLowLive := math.min(nz(nyLowLive, low), low)
 
 draw_session(sess_time, sess_name, sess_color, sBox, sLab, sHigh, sLow) =>
     t = time(timeframe.period, sess_time, tz)
@@ -954,8 +973,32 @@ if swingPatternEnabled and swingHighOk
     swingOppSweptForSL := false
 
 swingDailyBuf = swingDailyExtremeBufferTicks * syminfo.mintick
-swingShowHighFinal = swingPatternEnabled and swingHighOk and (not swingShowDailyExtremeShSl or (not na(dHigh) and math.abs(high[swingCenter] - dHigh) <= swingDailyBuf))
-swingShowLowFinal = swingPatternEnabled and swingLowOk and (not swingShowDailyExtremeShSl or (not na(dLow) and math.abs(low[swingCenter] - dLow) <= swingDailyBuf))
+swingSessBuf = swingSessionExtremeBufferTicks * syminfo.mintick
+
+nearDailyHigh = (swingShowDailyExtremeShSl and not na(dHigh) and math.abs(high[swingCenter] - dHigh) <= swingDailyBuf)
+nearDailyLow = (swingShowDailyExtremeShSl and not na(dLow) and math.abs(low[swingCenter] - dLow) <= swingDailyBuf)
+
+asiaHas = not na(asiaHigh) and not na(asiaLow)
+londonHas = not na(londonHighLive) and not na(londonLowLive)
+nyHas = not na(nyHighLive) and not na(nyLowLive)
+
+nearSessHigh = swingShowSessionExtremeShSl and (
+     (swingSessionUseAsia and asiaHas and math.abs(high[swingCenter] - asiaHigh) <= swingSessBuf) or
+     (swingSessionUseLondon and londonHas and math.abs(high[swingCenter] - londonHighLive) <= swingSessBuf) or
+     (swingSessionUseNy and nyHas and math.abs(high[swingCenter] - nyHighLive) <= swingSessBuf)
+ )
+nearSessLow = swingShowSessionExtremeShSl and (
+     (swingSessionUseAsia and asiaHas and math.abs(low[swingCenter] - asiaLow) <= swingSessBuf) or
+     (swingSessionUseLondon and londonHas and math.abs(low[swingCenter] - londonLowLive) <= swingSessBuf) or
+     (swingSessionUseNy and nyHas and math.abs(low[swingCenter] - nyLowLive) <= swingSessBuf)
+ )
+
+extremeFilterOn = swingShowDailyExtremeShSl or swingShowSessionExtremeShSl
+passExtremeSh = not extremeFilterOn or nearDailyHigh or nearSessHigh
+passExtremeSl = not extremeFilterOn or nearDailyLow or nearSessLow
+
+swingShowHighFinal = swingPatternEnabled and swingHighOk and passExtremeSh
+swingShowLowFinal = swingPatternEnabled and swingLowOk and passExtremeSl
 
 plotshape(swingShowHighFinal, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
 plotshape(swingShowLowFinal, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)

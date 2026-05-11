@@ -134,6 +134,18 @@ input int InpSwingMinReactionSepPoints = 1;
 input bool InpSwingConfirmBos = true;
 input bool InpSwingBullDivEnabled = true;
 input int InpSwingRsiLen = 14;
+enum ENUM_SWING_RSI_MODE
+{
+   SWING_RSI_AGGRESSIVE = 0,
+   SWING_RSI_CONSERVATIVE = 1
+};
+input bool InpSwingRsiFilterEnabled = false;
+input ENUM_SWING_RSI_MODE InpSwingRsiMode = SWING_RSI_CONSERVATIVE;
+input int InpSwingRsiBuyAgg = 30;
+input int InpSwingRsiBuyCons = 40;
+input int InpSwingRsiSellAgg = 70;
+input int InpSwingRsiSellCons = 60;
+input bool InpSwingMacdConfirmEnabled = false;
 input bool InpSwingShowDiv = true;
 input bool InpSwingDivUseRsiThresholds = true;
 input double InpSwingDivBullPrevRsiMax = 40.0;
@@ -315,6 +327,7 @@ input int InpMtfSlBufferPoints = 0;
    datetime g_es_last_sp_sh_time = 0;
    datetime g_es_last_sp_sl_time = 0;
    int g_rsi_handle = INVALID_HANDLE;
+   int g_macd_handle = INVALID_HANDLE;
    bool g_swing_last_sl_has = false;
    double g_swing_last_sl_price = 0.0;
    double g_swing_last_sl_rsi = 0.0;
@@ -407,6 +420,43 @@ input int InpMtfSlBufferPoints = 0;
       if(CopyBuffer(g_rsi_handle, 0, shift, 1, buf) <= 0) return false;
       rsiVal = buf[0];
       return true;
+   }
+
+   bool GetMacdAtTime(const datetime tBarOpen, double &mainVal, double &signalVal)
+   {
+      mainVal = 0.0;
+      signalVal = 0.0;
+      if(g_macd_handle == INVALID_HANDLE) return false;
+      int shift = iBarShift(_Symbol, _Period, tBarOpen, true);
+      if(shift < 0) return false;
+      double m[1], s[1];
+      if(CopyBuffer(g_macd_handle, 0, shift, 1, m) <= 0) return false;
+      if(CopyBuffer(g_macd_handle, 1, shift, 1, s) <= 0) return false;
+      mainVal = m[0];
+      signalVal = s[0];
+      return true;
+   }
+
+   bool MacdBullCrossAtTime(const datetime tBarOpen)
+   {
+      if(g_macd_handle == INVALID_HANDLE) return false;
+      int shift = iBarShift(_Symbol, _Period, tBarOpen, true);
+      if(shift < 0) return false;
+      double m[2], s[2];
+      if(CopyBuffer(g_macd_handle, 0, shift, 2, m) <= 0) return false;
+      if(CopyBuffer(g_macd_handle, 1, shift, 2, s) <= 0) return false;
+      return (m[0] > s[0] && m[1] <= s[1]);
+   }
+
+   bool MacdBearCrossAtTime(const datetime tBarOpen)
+   {
+      if(g_macd_handle == INVALID_HANDLE) return false;
+      int shift = iBarShift(_Symbol, _Period, tBarOpen, true);
+      if(shift < 0) return false;
+      double m[2], s[2];
+      if(CopyBuffer(g_macd_handle, 0, shift, 2, m) <= 0) return false;
+      if(CopyBuffer(g_macd_handle, 1, shift, 2, s) <= 0) return false;
+      return (m[0] < s[0] && m[1] >= s[1]);
    }
 
    double MtfLowestPrevLow(const int look)
@@ -2128,15 +2178,26 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                bool passExtremeSh = (!extremeOn) || nearDailyHigh || nearSessHigh;
                bool passExtremeSl = (!extremeOn) || nearDailyLow || nearSessLow;
 
-               if(sh && passOppForSh && passSessionSh && passExtremeSh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh) && g_es_last_sp_sh_time != tPivot)
+               double rsiPivot = 0.0;
+               bool hasRsiPivot = ((InpSwingBullDivEnabled || InpSwingRsiFilterEnabled) && GetRsiAtTime(tPivot, rsiPivot));
+               double buyThr = (InpSwingRsiMode == SWING_RSI_AGGRESSIVE ? (double)InpSwingRsiBuyAgg : (double)InpSwingRsiBuyCons);
+               double sellThr = (InpSwingRsiMode == SWING_RSI_AGGRESSIVE ? (double)InpSwingRsiSellAgg : (double)InpSwingRsiSellCons);
+               bool passMacdSh = (!InpSwingMacdConfirmEnabled) || MacdBearCrossAtTime(tBarOpen);
+               bool passMacdSl = (!InpSwingMacdConfirmEnabled) || MacdBullCrossAtTime(tBarOpen);
+
+               bool shCore = (sh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh));
+               bool shNormal = (shCore && passOppForSh && passSessionSh && passExtremeSh && passMacdSh);
+               bool shRsiOverride = (shCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot >= sellThr);
+               bool shFinal = (shNormal || shRsiOverride);
+
+               if(shFinal && g_es_last_sp_sh_time != tPivot)
                {
                   datetime prevShTime = g_swing_last_sh_time;
                   double prevShPrice = g_swing_last_sh_price;
                   double prevShRsi = g_swing_last_sh_rsi;
                   bool prevShHas = g_swing_last_sh_has;
 
-                  double rsiPivot = 0.0;
-                  bool hasRsi = (InpSwingBullDivEnabled && GetRsiAtTime(tPivot, rsiPivot));
+                  bool hasRsi = (InpSwingBullDivEnabled && hasRsiPivot);
                   bool bearDiv = false;
                   if(hasRsi && prevShHas && hC > prevShPrice && rsiPivot < (prevShRsi - InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevShRsi >= InpSwingDivBearPrevRsiMin))
                      bearDiv = true;
@@ -2186,15 +2247,19 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   (InpSwingRequireAsiaSweep && g_swing_asia_swept_l) ||
                   (InpSwingRequireIBSweep && g_swing_ib_swept_l);
 
-               if(sl && passOppForSl && passSessionSl && passExtremeSl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl) && g_es_last_sp_sl_time != tPivot)
+               bool slCore = (sl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl));
+               bool slNormal = (slCore && passOppForSl && passSessionSl && passExtremeSl && passMacdSl);
+               bool slRsiOverride = (slCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot <= buyThr);
+               bool slFinal = (slNormal || slRsiOverride);
+
+               if(slFinal && g_es_last_sp_sl_time != tPivot)
                {
                   datetime prevSlTime = g_swing_last_sl_time;
                   double prevSlPrice = g_swing_last_sl_price;
                   double prevSlRsi = g_swing_last_sl_rsi;
                   bool prevSlHas = g_swing_last_sl_has;
 
-                  double rsiPivot = 0.0;
-                  bool hasRsi = (InpSwingBullDivEnabled && GetRsiAtTime(tPivot, rsiPivot));
+                  bool hasRsi = (InpSwingBullDivEnabled && hasRsiPivot);
                   bool bullDiv = false;
                   if(hasRsi && prevSlHas && lC < prevSlPrice && rsiPivot > (prevSlRsi + InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevSlRsi <= InpSwingDivBullPrevRsiMax))
                      bullDiv = true;
@@ -2574,6 +2639,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       UpdateChartComment("CAP_IND loaded");
       if(g_rsi_handle != INVALID_HANDLE) IndicatorRelease(g_rsi_handle);
       g_rsi_handle = iRSI(_Symbol, _Period, InpSwingRsiLen, PRICE_CLOSE);
+      if(g_macd_handle != INVALID_HANDLE) IndicatorRelease(g_macd_handle);
+      g_macd_handle = iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE);
       DeleteByToken("TEST_");
       DeleteByToken("LUX_");
       LuxReset();
@@ -2596,6 +2663,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       {
          IndicatorRelease(g_rsi_handle);
          g_rsi_handle = INVALID_HANDLE;
+      }
+      if(g_macd_handle != INVALID_HANDLE)
+      {
+         IndicatorRelease(g_macd_handle);
+         g_macd_handle = INVALID_HANDLE;
       }
    }
 

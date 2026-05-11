@@ -108,6 +108,13 @@ swingDivUseRsiThresholds = input.bool(true, "Filtro soglie RSI", group="Swing Pa
 swingDivBullPrevRsiMax = input.int(40, "RSI max 1° low", minval=1, maxval=50, group="Swing Pattern")
 swingDivBearPrevRsiMin = input.int(60, "RSI min 1° high", minval=50, maxval=99, group="Swing Pattern")
 swingDivMinRsiDelta = input.float(0.0, "Min delta RSI", minval=0.0, step=0.1, group="Swing Pattern")
+swingRsiFilterEnabled = input.bool(false, "Filtro RSI (SH/SL)", group="Swing Pattern")
+swingRsiMode = input.string("Conservative", "RSI Mode", options=["Aggressive", "Conservative"], group="Swing Pattern")
+swingRsiBuyAgg = input.int(30, "RSI BUY Aggressive (≤)", minval=1, maxval=50, group="Swing Pattern")
+swingRsiBuyCons = input.int(40, "RSI BUY Conservative (≤)", minval=1, maxval=50, group="Swing Pattern")
+swingRsiSellAgg = input.int(70, "RSI SELL Aggressive (≥)", minval=50, maxval=99, group="Swing Pattern")
+swingRsiSellCons = input.int(60, "RSI SELL Conservative (≥)", minval=50, maxval=99, group="Swing Pattern")
+swingMacdConfirmEnabled = input.bool(false, "Conferma MACD cross", group="Swing Pattern")
 
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
@@ -808,6 +815,16 @@ swingCenter = swingLbR
 hasSwingWindow = bar_index >= swingWin
 
 swingRsi = ta.rsi(close, swingBullDivRsiLen)
+[macdLine, macdSignal, _] = ta.macd(close, 12, 26, 9)
+macdBullCross = ta.crossover(macdLine, macdSignal)
+macdBearCross = ta.crossunder(macdLine, macdSignal)
+
+buyThr = swingRsiMode == "Aggressive" ? swingRsiBuyAgg : swingRsiBuyCons
+sellThr = swingRsiMode == "Aggressive" ? swingRsiSellAgg : swingRsiSellCons
+passRsiSh = not swingRsiFilterEnabled or swingRsi[swingCenter] >= sellThr
+passRsiSl = not swingRsiFilterEnabled or swingRsi[swingCenter] <= buyThr
+passMacdSh = not swingMacdConfirmEnabled or macdBearCross
+passMacdSl = not swingMacdConfirmEnabled or macdBullCross
 swingEps = syminfo.mintick * 0.1
 swingSep = swingMinReactionSepTicks * syminfo.mintick
 swingMinSwingRange = swingMinSwingRangeTicks * syminfo.mintick
@@ -997,8 +1014,12 @@ extremeFilterOn = swingShowDailyExtremeShSl or swingShowSessionExtremeShSl
 passExtremeSh = not extremeFilterOn or nearDailyHigh or nearSessHigh
 passExtremeSl = not extremeFilterOn or nearDailyLow or nearSessLow
 
-swingShowHighFinal = swingPatternEnabled and swingHighOk and passExtremeSh
-swingShowLowFinal = swingPatternEnabled and swingLowOk and passExtremeSl
+normalShowHigh = swingPatternEnabled and swingHighOk and passExtremeSh and passMacdSh
+normalShowLow = swingPatternEnabled and swingLowOk and passExtremeSl and passMacdSl
+rsiOverrideHigh = swingRsiFilterEnabled and swingPatternEnabled and swingHighOkBase and passRsiSh
+rsiOverrideLow = swingRsiFilterEnabled and swingPatternEnabled and swingLowOkBase and passRsiSl
+swingShowHighFinal = normalShowHigh or rsiOverrideHigh
+swingShowLowFinal = normalShowLow or rsiOverrideLow
 
 plotshape(swingShowHighFinal, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
 plotshape(swingShowLowFinal, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)

@@ -92,6 +92,19 @@ input int InpSwingRightBars = 2;
 input int InpSwingMinSwingRangePoints = 80;
 input int InpSwingMinReactionSepPoints = 10;
 input bool InpSwingConfirmBos = true;
+input int InpSwingRsiLen = 14;
+enum ENUM_SWING_RSI_MODE
+{
+   SWING_RSI_AGGRESSIVE = 0,
+   SWING_RSI_CONSERVATIVE = 1
+};
+input bool InpSwingRsiFilterEnabled = false;
+input ENUM_SWING_RSI_MODE InpSwingRsiMode = SWING_RSI_CONSERVATIVE;
+input int InpSwingRsiBuyAgg = 30;
+input int InpSwingRsiBuyCons = 40;
+input int InpSwingRsiSellAgg = 70;
+input int InpSwingRsiSellCons = 60;
+input bool InpSwingMacdConfirmEnabled = false;
 
 enum ENUM_MTF_RETEST_ZONE_TYPE
 {
@@ -124,6 +137,8 @@ input bool InpNotifyHistorical = false;
 CTrade trade;
 
 int g_atr_handle = INVALID_HANDLE;
+int g_rsi_handle = INVALID_HANDLE;
+int g_macd_handle = INVALID_HANDLE;
 string g_prefix = "CAP_EA_";
 datetime g_last_bar_time = 0;
 int g_day_key = 0;
@@ -562,6 +577,34 @@ bool GetAtrValue(const int shift, double &atrValue)
    if(CopyBuffer(g_atr_handle, 0, shift, 1, buf) <= 0) return false;
    atrValue = buf[0];
    return (atrValue > 0.0);
+}
+
+bool GetRsiValue(const int shift, double &rsiValue)
+{
+   rsiValue = 0.0;
+   if(g_rsi_handle == INVALID_HANDLE) return false;
+   double buf[1];
+   if(CopyBuffer(g_rsi_handle, 0, shift, 1, buf) <= 0) return false;
+   rsiValue = buf[0];
+   return true;
+}
+
+bool MacdBullCross(const int shift)
+{
+   if(g_macd_handle == INVALID_HANDLE) return false;
+   double m[2], s[2];
+   if(CopyBuffer(g_macd_handle, 0, shift, 2, m) <= 0) return false;
+   if(CopyBuffer(g_macd_handle, 1, shift, 2, s) <= 0) return false;
+   return (m[0] > s[0] && m[1] <= s[1]);
+}
+
+bool MacdBearCross(const int shift)
+{
+   if(g_macd_handle == INVALID_HANDLE) return false;
+   double m[2], s[2];
+   if(CopyBuffer(g_macd_handle, 0, shift, 2, m) <= 0) return false;
+   if(CopyBuffer(g_macd_handle, 1, shift, 2, s) <= 0) return false;
+   return (m[0] < s[0] && m[1] >= s[1]);
 }
 
 bool SpreadOk()
@@ -1730,8 +1773,21 @@ void ProcessSignalOnNewBar()
             bool passExtremeSh = (!extremeOn) || nearDailyHigh || nearSessHigh;
             bool passExtremeSl = (!extremeOn) || nearDailyLow || nearSessLow;
 
-            bool slTrade = (slOk && passExtremeSl);
-            bool shTrade = (shOk && passExtremeSh);
+            bool shCore = sh;
+            bool slCore = sl;
+            double rsiVal = 0.0;
+            bool hasRsi = (InpSwingRsiFilterEnabled && GetRsiValue(centerShift, rsiVal));
+            double buyThr = (InpSwingRsiMode == SWING_RSI_AGGRESSIVE ? (double)InpSwingRsiBuyAgg : (double)InpSwingRsiBuyCons);
+            double sellThr = (InpSwingRsiMode == SWING_RSI_AGGRESSIVE ? (double)InpSwingRsiSellAgg : (double)InpSwingRsiSellCons);
+            bool passMacdSh = (!InpSwingMacdConfirmEnabled) || MacdBearCross(1);
+            bool passMacdSl = (!InpSwingMacdConfirmEnabled) || MacdBullCross(1);
+
+            bool slNormal = (slOk && passExtremeSl && passMacdSl);
+            bool shNormal = (shOk && passExtremeSh && passMacdSh);
+            bool slRsiOverride = (slCore && InpSwingRsiFilterEnabled && hasRsi && rsiVal <= buyThr);
+            bool shRsiOverride = (shCore && InpSwingRsiFilterEnabled && hasRsi && rsiVal >= sellThr);
+            bool slTrade = (slNormal || slRsiOverride);
+            bool shTrade = (shNormal || shRsiOverride);
 
             if(slTrade && !shTrade)
             {
@@ -2062,6 +2118,10 @@ int OnInit()
    g_day_key = 0;
    if(g_atr_handle != INVALID_HANDLE) IndicatorRelease(g_atr_handle);
    g_atr_handle = iATR(_Symbol, _Period, InpAtrPeriod);
+   if(g_rsi_handle != INVALID_HANDLE) IndicatorRelease(g_rsi_handle);
+   g_rsi_handle = iRSI(_Symbol, _Period, InpSwingRsiLen, PRICE_CLOSE);
+   if(g_macd_handle != INVALID_HANDLE) IndicatorRelease(g_macd_handle);
+   g_macd_handle = iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE);
    return INIT_SUCCEEDED;
 }
 
@@ -2072,6 +2132,16 @@ void OnDeinit(const int reason)
    {
       IndicatorRelease(g_atr_handle);
       g_atr_handle = INVALID_HANDLE;
+   }
+   if(g_rsi_handle != INVALID_HANDLE)
+   {
+      IndicatorRelease(g_rsi_handle);
+      g_rsi_handle = INVALID_HANDLE;
+   }
+   if(g_macd_handle != INVALID_HANDLE)
+   {
+      IndicatorRelease(g_macd_handle);
+      g_macd_handle = INVALID_HANDLE;
    }
 }
 

@@ -73,6 +73,8 @@ SmtPivotLen_H1 = input.int(1, "H1 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen_H4 = input.int(1, "H4 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen = input.int(1, "Pivot candele (fallback)", minval=1, group="SMT")
 SmtShowLabels = input.bool(true, "Mostra etichette", group="SMT")
+SmtShowDailyExtreme = input.bool(false, "Mostra SMT vicino a Daily High/Low", group="SMT")
+SmtDailyExtremeBufferTicks = input.int(0, "Distanza max SMT da Daily High/Low (ticks)", minval=0, group="SMT")
 
 dashEnabled = input.bool(true, "Dashboard SH/SL (H1/H4)", group="Dashboard")
 dashPos = input.string("Top Right", "Posizione", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Dashboard")
@@ -1095,6 +1097,11 @@ smtPh1_1 = inv1 ? ta.pivotlow(SmtLow1, SmtPivot, SmtPivot) : ta.pivothigh(SmtHig
 smtPl1_1 = inv1 ? ta.pivothigh(SmtHigh1, SmtPivot, SmtPivot) : ta.pivotlow(SmtLow1, SmtPivot, SmtPivot)
 smtPh1_2 = inv2 ? ta.pivotlow(SmtLow2, SmtPivot, SmtPivot) : ta.pivothigh(SmtHigh2, SmtPivot, SmtPivot)
 smtPl1_2 = inv2 ? ta.pivothigh(SmtHigh2, SmtPivot, SmtPivot) : ta.pivotlow(SmtLow2, SmtPivot, SmtPivot)
+smtDailyBuf = SmtDailyExtremeBufferTicks * syminfo.mintick
+dHighAtSmtPivot = dHigh[SmtPivot]
+dLowAtSmtPivot = dLow[SmtPivot]
+smtNearDailyHigh = SmtShowDailyExtreme and not na(dHighAtSmtPivot) and not na(mainPh1) and math.abs(mainPh1 - dHighAtSmtPivot) <= smtDailyBuf
+smtNearDailyLow = SmtShowDailyExtreme and not na(dLowAtSmtPivot) and not na(mainPl1) and math.abs(mainPl1 - dLowAtSmtPivot) <= smtDailyBuf
 
 var float lastMainPh1 = na
 var float lastMainPl1 = na
@@ -1122,7 +1129,7 @@ smtBearSig2 = false
 smtBullSig2 = false
 if SmtEnabled and showUntilNyClose
     if not na(mainPh1) and not na(smtPh1_1) and not na(lastMainPh1) and not na(lastSmtPh1_1)
-        smtBearSig1 := mainPh1 > lastMainPh1 and smtPh1_1 <= lastSmtPh1_1
+        smtBearSig1 := (not SmtShowDailyExtreme or smtNearDailyHigh) and (mainPh1 > lastMainPh1 and smtPh1_1 <= lastSmtPh1_1)
         pivotBar = bar_index - SmtPivot
         if smtBearSig1 and SmtShowLabels and (na(lastSmtBearPivotBar1) or lastSmtBearPivotBar1 != pivotBar)
             label.new(pivotBar, mainPh1, "SMT1", style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
@@ -1130,7 +1137,7 @@ if SmtEnabled and showUntilNyClose
         if smtBearSig1 and not na(lastMainPh1Bar)
             f_addSmtLine(lastMainPh1Bar, lastMainPh1, pivotBar, mainPh1, color.new(color.fuchsia, 0))
     if not na(mainPl1) and not na(smtPl1_1) and not na(lastMainPl1) and not na(lastSmtPl1_1)
-        smtBullSig1 := mainPl1 < lastMainPl1 and smtPl1_1 >= lastSmtPl1_1
+        smtBullSig1 := (not SmtShowDailyExtreme or smtNearDailyLow) and (mainPl1 < lastMainPl1 and smtPl1_1 >= lastSmtPl1_1)
         pivotBar = bar_index - SmtPivot
         if smtBullSig1 and SmtShowLabels and (na(lastSmtBullPivotBar1) or lastSmtBullPivotBar1 != pivotBar)
             label.new(pivotBar, mainPl1, "SMT1", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
@@ -1140,7 +1147,7 @@ if SmtEnabled and showUntilNyClose
 
     if SmtUseSymbol2
         if not na(mainPh1) and not na(smtPh1_2) and not na(lastMainPh1) and not na(lastSmtPh1_2)
-            smtBearSig2 := mainPh1 > lastMainPh1 and smtPh1_2 <= lastSmtPh1_2
+            smtBearSig2 := (not SmtShowDailyExtreme or smtNearDailyHigh) and (mainPh1 > lastMainPh1 and smtPh1_2 <= lastSmtPh1_2)
             pivotBar = bar_index - SmtPivot
             if smtBearSig2 and SmtShowLabels and (na(lastSmtBearPivotBar2) or lastSmtBearPivotBar2 != pivotBar)
                 label.new(pivotBar, mainPh1, "SMT2", style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
@@ -1148,7 +1155,7 @@ if SmtEnabled and showUntilNyClose
             if smtBearSig2 and not na(lastMainPh1Bar)
                 f_addSmtLine(lastMainPh1Bar, lastMainPh1, pivotBar, mainPh1, color.new(color.fuchsia, 0))
         if not na(mainPl1) and not na(smtPl1_2) and not na(lastMainPl1) and not na(lastSmtPl1_2)
-            smtBullSig2 := mainPl1 < lastMainPl1 and smtPl1_2 >= lastSmtPl1_2
+            smtBullSig2 := (not SmtShowDailyExtreme or smtNearDailyLow) and (mainPl1 < lastMainPl1 and smtPl1_2 >= lastSmtPl1_2)
             pivotBar = bar_index - SmtPivot
             if smtBullSig2 and SmtShowLabels and (na(lastSmtBullPivotBar2) or lastSmtBullPivotBar2 != pivotBar)
                 label.new(pivotBar, mainPl1, "SMT2", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)

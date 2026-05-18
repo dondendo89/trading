@@ -31,6 +31,8 @@ retestToleranceTicks = input.int(5, "Tolleranza Bacio (Ticks)", minval=0, group=
 requireSweepBeforeKiss = input.bool(true, "Richiedi Sweep prima del Bacio", group="Logica Matteo Capital")
 sweepOutsideKillzone = input.bool(false, "Sweep fuori Killzone", group="Logica Matteo Capital")
 kissOutsideKillzone = input.bool(false, "KISS fuori Killzone", group="Logica Matteo Capital")
+kissSignalsEnabled = input.bool(true, "Segnali KISS (BUY/SELL)", group="Logica Matteo Capital")
+buySellSignalsEnabled = input.bool(true, "Segnali BUY/SELL", group="Logica Matteo Capital")
 
 luxEnabled = input.bool(true, "Swing Patterns Lux", group="Lux Swing")
 luxLen = input.int(21, "Length", minval=1, group="Lux Swing")
@@ -58,6 +60,19 @@ instBullColor = input.color(color.new(color.teal, 0), title="Bullish Color:", gr
 instBearWidth = input.int(1, title="Line Width:", group="Sweep institutional Bearish")
 instBearStyle = input.string("Dashed", title="Line Style:", options=["Solid", "Dotted", "Dashed"], group="Sweep institutional Bearish")
 instBearColor = input.color(color.new(color.maroon, 0), title="Bearish Color:", group="Sweep institutional Bearish")
+
+SmtEnabled = input.bool(false, "SMT", group="SMT")
+SmtSymbol1 = input.symbol("TVC:DXY", "SMT Symbol 1", group="SMT")
+SmtUseSymbol2 = input.bool(false, "Usa Symbol 2", group="SMT")
+SmtSymbol2 = input.symbol("OANDA:EURUSD", "SMT Symbol 2", group="SMT")
+SmtInverseOn = input.string("Nessuno", "Inversione", options=["Nessuno", "Symbol 1", "Symbol 2"], group="SMT")
+SmtUseTfPivots = input.bool(true, "Usa pivot per TF (M1/M15/H1/H4)", group="SMT")
+SmtPivotLen_M1 = input.int(1, "M1 - Pivot candele", minval=1, group="SMT")
+SmtPivotLen_M15 = input.int(1, "M15 - Pivot candele", minval=1, group="SMT")
+SmtPivotLen_H1 = input.int(1, "H1 - Pivot candele", minval=1, group="SMT")
+SmtPivotLen_H4 = input.int(1, "H4 - Pivot candele", minval=1, group="SMT")
+SmtPivotLen = input.int(1, "Pivot candele (fallback)", minval=1, group="SMT")
+SmtShowLabels = input.bool(true, "Mostra etichette", group="SMT")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
@@ -329,7 +344,16 @@ plot(showUntilNyClose and show02CandleLines and isAfter02 ? c02L : na, "02 Low",
 
 is_1300 = hour(time, tz) == 13 and minute(time, tz) == 0
 c02AboveLondon = not na(c02H) and not na(c02L) and not na(londonHighLive) and c02H > londonHighLive and c02L > londonHighLive
-plotshape(useAsiaLondonSell13 and is_1300 and c02AboveLondon, title="Sell 13 (02>London)", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
+var label[] mcSigLabels = array.new_label()
+f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
+    lb = label.new(_x, _y, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
+    array.push(mcSigLabels, lb)
+    if array.size(mcSigLabels) > 450
+        label.delete(array.shift(mcSigLabels))
+    lb
+
+if useAsiaLondonSell13 and is_1300 and c02AboveLondon
+    f_addSigLabel(bar_index, high, "SELL", color.red, color.white, label.style_label_down, size.small)
 
 midCandleHigh = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, tz) == 0 and minute(time, tz) == 0, high, 0), barmerge.gaps_off, barmerge.lookahead_on)
 midCandleLow  = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, tz) == 0 and minute(time, tz) == 0, low, 0), barmerge.gaps_off, barmerge.lookahead_on)
@@ -448,8 +472,8 @@ if isKill or sweepOutsideKillzone
 
 tol = retestToleranceTicks * syminfo.mintick
 kissWindowOk = isKill or kissOutsideKillzone
-validKISS_BUY = kissWindowOk and not na(orangeL) and (not requireSweepBeforeKiss or sweptL) and not bacioDoneB and low <= (orangeL + tol) and close > orangeL
-validKISS_SELL = kissWindowOk and not na(orangeH) and (not requireSweepBeforeKiss or sweptH) and not bacioDoneS and high >= (orangeH - tol) and close < orangeH
+validKISS_BUY = kissSignalsEnabled and kissWindowOk and not na(orangeL) and (not requireSweepBeforeKiss or sweptL) and not bacioDoneB and low <= (orangeL + tol) and close > orangeL
+validKISS_SELL = kissSignalsEnabled and kissWindowOk and not na(orangeH) and (not requireSweepBeforeKiss or sweptH) and not bacioDoneS and high >= (orangeH - tol) and close < orangeH
 
 if validKISS_BUY
     bacioDoneB := true
@@ -463,30 +487,39 @@ ibOkS = (not useIbMidFilter) or (close < ibMid)
 manipOkB = (not requireManipulation) or midSweepDown or ibSweepDown
 manipOkS = (not requireManipulation) or midSweepUp or ibSweepUp
 
-validB = close > orangeH and isKill and not bDone and dailyOkB and ibOkB and manipOkB
-validS = close < orangeL and isKill and not sDone and dailyOkS and ibOkS and manipOkS
+validB = buySellSignalsEnabled and close > orangeH and isKill and not bDone and dailyOkB and ibOkB and manipOkB
+validS = buySellSignalsEnabled and close < orangeL and isKill and not sDone and dailyOkS and ibOkS and manipOkS
 
 if validB
     bDone := true
 if validS
     sDone := true
 
-plotshape(validKISS_BUY, "KISS BUY", shape.labelup, location.belowbar, color.green, size=size.small, text="KISS\nBUY", textcolor=color.white)
-plotshape(validKISS_SELL, "KISS SELL", shape.labeldown, location.abovebar, color.red, size=size.small, text="KISS\nSELL", textcolor=color.white)
-plotshape(sweptL and not sweptL[1], "Sweep Low", shape.xcross, location.belowbar, color.red, size=size.tiny, text="Swept")
-plotshape(sweptH and not sweptH[1], "Sweep High", shape.xcross, location.abovebar, color.red, size=size.tiny, text="Swept")
+if validKISS_BUY
+    f_addSigLabel(bar_index, low, "KISS\nBUY", color.green, color.white, label.style_label_up, size.small)
+if validKISS_SELL
+    f_addSigLabel(bar_index, high, "KISS\nSELL", color.red, color.white, label.style_label_down, size.small)
+if sweptL and not sweptL[1]
+    f_addSigLabel(bar_index, low, "Swept", color.red, color.white, label.style_label_up, size.tiny)
+if sweptH and not sweptH[1]
+    f_addSigLabel(bar_index, high, "Swept", color.red, color.white, label.style_label_down, size.tiny)
 
 overLowBuf = swingOverLowL13BufferTicks * syminfo.mintick
 overLowL13 = showUntilNyClose and orangeIsToday and not na(orangeL) and ta.crossunder(low, orangeL - overLowBuf)
-plotshape(swingShowOverLowL13 and overLowL13, title="Over Low (L13)", location=location.belowbar, style=shape.labelup, color=color.new(color.red, 0), text="OVER\nLOW", textcolor=color.white, size=size.tiny)
+if swingShowOverLowL13 and overLowL13
+    f_addSigLabel(bar_index, low, "OVER\nLOW", color.new(color.red, 0), color.white, label.style_label_up, size.tiny)
 alertcondition(not swingPatternOnlyAlerts and swingShowOverLowL13 and overLowL13, title="Over Low (L13)", message="{{ticker}} Over Low (sotto L13)")
 
-plotshape(validB, "BUY", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY")
-plotshape(validS, "SELL", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
 plotshape(isStar13, title="13:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
 plotshape(isStar16, title="16:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
-plotshape(showAsiaBiasArrow and asiaBiasBuy, title="Asia Bias Buy", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="A")
-plotshape(showAsiaBiasArrow and asiaBiasSell, title="Asia Bias Sell", style=shape.triangledown, location=location.belowbar, color=color.red, size=size.small, text="A")
+if validB
+    f_addSigLabel(bar_index, low, "BUY", color.green, color.white, label.style_label_up, size.small)
+if validS
+    f_addSigLabel(bar_index, high, "SELL", color.red, color.white, label.style_label_down, size.small)
+if showAsiaBiasArrow and asiaBiasBuy
+    f_addSigLabel(bar_index, low, "A", color.green, color.white, label.style_label_up, size.small)
+if showAsiaBiasArrow and asiaBiasSell
+    f_addSigLabel(bar_index, low, "A", color.red, color.white, label.style_label_down, size.small)
 
 hsIsGreen = open < close
 hsIsRed = open > close
@@ -1021,6 +1054,95 @@ rsiOverrideLow = swingRsiFilterEnabled and swingPatternEnabled and swingLowOkBas
 swingShowHighFinal = normalShowHigh or rsiOverrideHigh
 swingShowLowFinal = normalShowLow or rsiOverrideLow
 
+SmtHigh1 = request.security(SmtSymbol1, timeframe.period, high)
+SmtLow1 = request.security(SmtSymbol1, timeframe.period, low)
+SmtHigh2 = request.security(SmtSymbol2, timeframe.period, high)
+SmtLow2 = request.security(SmtSymbol2, timeframe.period, low)
+SmtPivot = SmtUseTfPivots ? (timeframe.isminutes and timeframe.multiplier == 1 ? SmtPivotLen_M1 : timeframe.isminutes and timeframe.multiplier == 15 ? SmtPivotLen_M15 : timeframe.isminutes and timeframe.multiplier == 60 ? SmtPivotLen_H1 : timeframe.isminutes and timeframe.multiplier == 240 ? SmtPivotLen_H4 : SmtPivotLen) : SmtPivotLen
+mainPh1 = ta.pivothigh(high, SmtPivot, SmtPivot)
+mainPl1 = ta.pivotlow(low, SmtPivot, SmtPivot)
+inv1 = SmtInverseOn == "Symbol 1"
+inv2 = SmtInverseOn == "Symbol 2"
+smtPh1_1 = inv1 ? ta.pivotlow(SmtLow1, SmtPivot, SmtPivot) : ta.pivothigh(SmtHigh1, SmtPivot, SmtPivot)
+smtPl1_1 = inv1 ? ta.pivothigh(SmtHigh1, SmtPivot, SmtPivot) : ta.pivotlow(SmtLow1, SmtPivot, SmtPivot)
+smtPh1_2 = inv2 ? ta.pivotlow(SmtLow2, SmtPivot, SmtPivot) : ta.pivothigh(SmtHigh2, SmtPivot, SmtPivot)
+smtPl1_2 = inv2 ? ta.pivothigh(SmtHigh2, SmtPivot, SmtPivot) : ta.pivotlow(SmtLow2, SmtPivot, SmtPivot)
+
+var float lastMainPh1 = na
+var float lastMainPl1 = na
+var int lastMainPh1Bar = na
+var int lastMainPl1Bar = na
+var float lastSmtPh1_1 = na
+var float lastSmtPl1_1 = na
+var float lastSmtPh1_2 = na
+var float lastSmtPl1_2 = na
+var int lastSmtBearPivotBar1 = na
+var int lastSmtBullPivotBar1 = na
+var int lastSmtBearPivotBar2 = na
+var int lastSmtBullPivotBar2 = na
+var line[] smtDivLines = array.new_line()
+f_addSmtLine(_x1, _y1, _x2, _y2, _clr) =>
+    ln = line.new(_x1, _y1, _x2, _y2, xloc=xloc.bar_index, extend=extend.none, color=_clr, width=2)
+    array.push(smtDivLines, ln)
+    if array.size(smtDivLines) > 200
+        line.delete(array.shift(smtDivLines))
+    ln
+
+smtBearSig1 = false
+smtBullSig1 = false
+smtBearSig2 = false
+smtBullSig2 = false
+if SmtEnabled and showUntilNyClose
+    if not na(mainPh1) and not na(smtPh1_1) and not na(lastMainPh1) and not na(lastSmtPh1_1)
+        smtBearSig1 := mainPh1 > lastMainPh1 and smtPh1_1 <= lastSmtPh1_1
+        pivotBar = bar_index - SmtPivot
+        if smtBearSig1 and SmtShowLabels and (na(lastSmtBearPivotBar1) or lastSmtBearPivotBar1 != pivotBar)
+            label.new(pivotBar, mainPh1, "SMT1", style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+            lastSmtBearPivotBar1 := pivotBar
+        if smtBearSig1 and not na(lastMainPh1Bar)
+            f_addSmtLine(lastMainPh1Bar, lastMainPh1, pivotBar, mainPh1, color.new(color.fuchsia, 0))
+    if not na(mainPl1) and not na(smtPl1_1) and not na(lastMainPl1) and not na(lastSmtPl1_1)
+        smtBullSig1 := mainPl1 < lastMainPl1 and smtPl1_1 >= lastSmtPl1_1
+        pivotBar = bar_index - SmtPivot
+        if smtBullSig1 and SmtShowLabels and (na(lastSmtBullPivotBar1) or lastSmtBullPivotBar1 != pivotBar)
+            label.new(pivotBar, mainPl1, "SMT1", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+            lastSmtBullPivotBar1 := pivotBar
+        if smtBullSig1 and not na(lastMainPl1Bar)
+            f_addSmtLine(lastMainPl1Bar, lastMainPl1, pivotBar, mainPl1, color.new(color.aqua, 0))
+
+    if SmtUseSymbol2
+        if not na(mainPh1) and not na(smtPh1_2) and not na(lastMainPh1) and not na(lastSmtPh1_2)
+            smtBearSig2 := mainPh1 > lastMainPh1 and smtPh1_2 <= lastSmtPh1_2
+            pivotBar = bar_index - SmtPivot
+            if smtBearSig2 and SmtShowLabels and (na(lastSmtBearPivotBar2) or lastSmtBearPivotBar2 != pivotBar)
+                label.new(pivotBar, mainPh1, "SMT2", style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+                lastSmtBearPivotBar2 := pivotBar
+            if smtBearSig2 and not na(lastMainPh1Bar)
+                f_addSmtLine(lastMainPh1Bar, lastMainPh1, pivotBar, mainPh1, color.new(color.fuchsia, 0))
+        if not na(mainPl1) and not na(smtPl1_2) and not na(lastMainPl1) and not na(lastSmtPl1_2)
+            smtBullSig2 := mainPl1 < lastMainPl1 and smtPl1_2 >= lastSmtPl1_2
+            pivotBar = bar_index - SmtPivot
+            if smtBullSig2 and SmtShowLabels and (na(lastSmtBullPivotBar2) or lastSmtBullPivotBar2 != pivotBar)
+                label.new(pivotBar, mainPl1, "SMT2", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+                lastSmtBullPivotBar2 := pivotBar
+            if smtBullSig2 and not na(lastMainPl1Bar)
+                f_addSmtLine(lastMainPl1Bar, lastMainPl1, pivotBar, mainPl1, color.new(color.aqua, 0))
+    if not na(mainPh1)
+        lastMainPh1 := mainPh1
+        lastMainPh1Bar := bar_index - SmtPivot
+    if not na(mainPl1)
+        lastMainPl1 := mainPl1
+        lastMainPl1Bar := bar_index - SmtPivot
+    if not na(smtPh1_1)
+        lastSmtPh1_1 := smtPh1_1
+    if not na(smtPl1_1)
+        lastSmtPl1_1 := smtPl1_1
+    if SmtUseSymbol2
+        if not na(smtPh1_2)
+            lastSmtPh1_2 := smtPh1_2
+        if not na(smtPl1_2)
+            lastSmtPl1_2 := smtPl1_2
+
 plotshape(swingShowHighFinal, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
 plotshape(swingShowLowFinal, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
 plotshape(swingBullDiv, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
@@ -1030,3 +1152,12 @@ alertcondition(swingPatternOnlyAlerts and swingShowHighFinal, title="Swing High"
 alertcondition(swingPatternOnlyAlerts and swingShowLowFinal, title="Swing Low", message="{{ticker}} Swing Low")
 alertcondition(swingPatternOnlyAlerts and swingBullDiv, title="Bullish Divergence", message="{{ticker}} Bullish Divergence (RSI)")
 alertcondition(swingPatternOnlyAlerts and swingBearDiv, title="Bearish Divergence", message="{{ticker}} Bearish Divergence (RSI)")
+smtBearAny = smtBearSig1 or smtBearSig2
+smtBullAny = smtBullSig1 or smtBullSig2
+
+alertcondition(SmtEnabled and smtBearSig1, title="SMT1 Bearish", message="{{ticker}} SMT Bearish vs SMT Symbol 1")
+alertcondition(SmtEnabled and smtBullSig1, title="SMT1 Bullish", message="{{ticker}} SMT Bullish vs SMT Symbol 1")
+alertcondition(SmtEnabled and SmtUseSymbol2 and smtBearSig2, title="SMT2 Bearish", message="{{ticker}} SMT Bearish vs SMT Symbol 2")
+alertcondition(SmtEnabled and SmtUseSymbol2 and smtBullSig2, title="SMT2 Bullish", message="{{ticker}} SMT Bullish vs SMT Symbol 2")
+alertcondition(SmtEnabled and smtBearAny, title="SMT Bearish (Any)", message="{{ticker}} SMT Bearish")
+alertcondition(SmtEnabled and smtBullAny, title="SMT Bullish (Any)", message="{{ticker}} SMT Bullish")

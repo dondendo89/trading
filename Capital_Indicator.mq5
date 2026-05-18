@@ -35,6 +35,8 @@
    input bool InpNotifyDiv = true;
    input bool InpNotifyLux = true;
    input bool InpNotifyMtf = true;
+   input bool InpNotifyDailyTouch = true;
+   input bool InpDailyTouchOncePerDay = true;
 
    input group "Logic"
    input bool InpUseDailyOpenFilter = true;
@@ -50,6 +52,8 @@
    input bool InpRequireSweepBeforeKiss = true;
    input bool InpSweepOutsideKillzone = false;
    input bool InpKissOutsideKillzone = false;
+   input bool InpKissSignalsEnabled = true;
+   input bool InpBuySellSignalsEnabled = true;
 
    input group "Hammer/Shooting"
    input bool InpHammerShootingEnabled = true;
@@ -145,6 +149,14 @@ input int InpSwingRsiBuyAgg = 30;
 input int InpSwingRsiBuyCons = 40;
 input int InpSwingRsiSellAgg = 70;
 input int InpSwingRsiSellCons = 60;
+enum ENUM_RSI_MA_TYPE
+{
+   RSI_MA_SMA = 0,
+   RSI_MA_EMA = 1
+};
+input bool InpSwingRsiMaCrossEnabled = false;
+input ENUM_RSI_MA_TYPE InpSwingRsiMaType = RSI_MA_SMA;
+input int InpSwingRsiMaLen = 14;
 input bool InpSwingMacdConfirmEnabled = false;
 input bool InpSwingShowDiv = true;
 input bool InpSwingDivUseRsiThresholds = true;
@@ -210,6 +222,8 @@ input int InpMtfSlBufferPoints = 0;
 
    double g_daily_open = 0.0, g_daily_high = 0.0, g_daily_low = 0.0;
    bool g_daily_has = false;
+   bool g_daily_touch_high_done = false;
+   bool g_daily_touch_low_done = false;
 
    double g_ny_open = 0.0;
    bool g_ny_has = false;
@@ -457,6 +471,55 @@ input int InpMtfSlBufferPoints = 0;
       if(CopyBuffer(g_macd_handle, 0, shift, 2, m) <= 0) return false;
       if(CopyBuffer(g_macd_handle, 1, shift, 2, s) <= 0) return false;
       return (m[0] < s[0] && m[1] >= s[1]);
+   }
+
+   bool GetRsiMaAtShift(const int shift, const int len, const ENUM_RSI_MA_TYPE maType, double &maValue)
+   {
+      maValue = 0.0;
+      if(g_rsi_handle == INVALID_HANDLE) return false;
+      int n = len;
+      if(n < 1) n = 1;
+      double rsiArr[];
+      ArrayResize(rsiArr, n);
+      ArraySetAsSeries(rsiArr, true);
+      if(CopyBuffer(g_rsi_handle, 0, shift, n, rsiArr) <= 0) return false;
+
+      if(maType == RSI_MA_SMA)
+      {
+         double sum = 0.0;
+         for(int i = 0; i < n; i++) sum += rsiArr[i];
+         maValue = sum / (double)n;
+         return true;
+      }
+
+      double k = 2.0 / ((double)n + 1.0);
+      double ema = rsiArr[n - 1];
+      for(int i = n - 2; i >= 0; i--)
+         ema = k * rsiArr[i] + (1.0 - k) * ema;
+      maValue = ema;
+      return true;
+   }
+
+   bool RsiCrossAtTime(const datetime tPivot, const bool bullish)
+   {
+      if(!InpSwingRsiMaCrossEnabled) return true;
+      int shift = iBarShift(_Symbol, _Period, tPivot, true);
+      if(shift < 0) return false;
+      int prevShift = shift + 1;
+
+      double rsiNow = 0.0, rsiPrev = 0.0;
+      double b0[1], b1[1];
+      if(CopyBuffer(g_rsi_handle, 0, shift, 1, b0) <= 0) return false;
+      if(CopyBuffer(g_rsi_handle, 0, prevShift, 1, b1) <= 0) return false;
+      rsiNow = b0[0];
+      rsiPrev = b1[0];
+
+      double maNow = 0.0, maPrev = 0.0;
+      if(!GetRsiMaAtShift(shift, InpSwingRsiMaLen, InpSwingRsiMaType, maNow)) return false;
+      if(!GetRsiMaAtShift(prevShift, InpSwingRsiMaLen, InpSwingRsiMaType, maPrev)) return false;
+
+      if(bullish) return (rsiNow > maNow && rsiPrev <= maPrev);
+      return (rsiNow < maNow && rsiPrev >= maPrev);
    }
 
    double MtfLowestPrevLow(const int look)
@@ -962,7 +1025,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          bool isDiv = (StringFind(txt, "DIV") == 0);
          bool isLux = (StringFind(txt, "LUX") == 0);
          bool isMtf = (StringFind(txt, "BUY MTF") == 0 || StringFind(txt, "SELL MTF") == 0);
-         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf))) return;
+         bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
+         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch))) return;
       }
       if(!InpNotifyHistorical)
       {
@@ -992,17 +1056,25 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          DeleteByToken("LBL_");
          return;
       }
+      bool beforeNyClose = (MinuteOfDayLocal(tLastBar) < 21 * 60);
       datetime tAnchor = tLastBar + (datetime)PeriodSeconds(_Period) * 2;
       string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
 
-      if(InpShowDailyHL && g_daily_has)
+      if(beforeNyClose && InpShowDailyHL && g_daily_has)
       {
          CreateOrUpdateText(dayPfx + "LBL_D_HIGH", tAnchor, g_daily_high, "Daily High", clrRed, ANCHOR_RIGHT);
          CreateOrUpdateText(dayPfx + "LBL_D_LOW", tAnchor, g_daily_low, "Daily Low", clrRed, ANCHOR_RIGHT);
       }
+      else
+      {
+         ObjectDelete(0, dayPfx + "LBL_D_HIGH");
+         ObjectDelete(0, dayPfx + "LBL_D_LOW");
+      }
 
-      if(InpShowNYOpen && g_ny_has)
+      if(beforeNyClose && InpShowNYOpen && g_ny_has)
          CreateOrUpdateText(dayPfx + "LBL_NY_OPEN", tAnchor, g_ny_open, "NY Open", clrRed, ANCHOR_RIGHT);
+      else
+         ObjectDelete(0, dayPfx + "LBL_NY_OPEN");
    }
 
    void UpdateSessionTag(
@@ -1027,6 +1099,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       g_day_key = dayKey;
       g_day_start_time = 0;
       g_daily_open = 0.0; g_daily_high = 0.0; g_daily_low = 0.0; g_daily_has = false;
+      g_daily_touch_high_done = false;
+      g_daily_touch_low_done = false;
       g_ny_open = 0.0; g_ny_has = false; g_ny_time = 0;
       g_ib_high = 0.0; g_ib_low = 0.0; g_ib_has = false; g_ib_time = 0;
       g_h13_high = 0.0; g_h13_low = 0.0; g_h13_has = false; g_h13_time = 0;
@@ -1105,8 +1179,29 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
       double prevLow = g_prev_bar_low_has ? g_prev_bar_low : l;
 
+      bool hadDaily = g_daily_has;
+      double prevDailyHigh = g_daily_high;
+      double prevDailyLow = g_daily_low;
+
       if(!g_daily_has) { g_day_start_time = tBarOpen; g_daily_open = o; g_daily_high = h; g_daily_low = l; g_daily_has = true; }
       else { if(h > g_daily_high) g_daily_high = h; if(l < g_daily_low) g_daily_low = l; }
+
+      if(InpNotifyDailyTouch && hadDaily)
+      {
+         double eps = _Point * 0.1;
+         bool touchHigh = (prevDailyHigh > 0.0 && h >= (prevDailyHigh - eps) && l <= (prevDailyHigh + eps));
+         bool touchLow = (prevDailyLow > 0.0 && l <= (prevDailyLow + eps) && h >= (prevDailyLow - eps));
+         if(touchHigh && (!InpDailyTouchOncePerDay || !g_daily_touch_high_done))
+         {
+            g_daily_touch_high_done = true;
+            NotifySignal("DAILY TOUCH HIGH", tBarOpen);
+         }
+         if(touchLow && (!InpDailyTouchOncePerDay || !g_daily_touch_low_done))
+         {
+            g_daily_touch_low_done = true;
+            NotifySignal("DAILY TOUCH LOW", tBarOpen);
+         }
+      }
 
       if(IsLocalTime(tBarOpen, 0, 0))
       {
@@ -1126,6 +1221,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          g_ib_sweep_up_bar = -1;
          g_buy_done = false;
          g_sell_done = false;
+         g_daily_touch_high_done = false;
+         g_daily_touch_low_done = false;
          g_kiss_swept_h = false;
          g_kiss_swept_l = false;
          g_kiss_done_b = false;
@@ -1231,15 +1328,34 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
       if(g_daily_has)
       {
+         datetime tStart = (g_day_start_time == 0 ? tBarOpen : g_day_start_time);
+         datetime tEnd = tBarOpen + (datetime)PeriodSeconds(_Period);
+         MqlDateTime dtClose;
+         TimeToStruct(LocalTime(tBarOpen), dtClose);
+         dtClose.hour = 21; dtClose.min = 0; dtClose.sec = 0;
+         datetime nyCloseServer = StructToTime(dtClose) - (datetime)InpItalyOffsetHours * 3600;
+         if(tEnd > nyCloseServer) tEnd = nyCloseServer;
+
          if(showOther && InpShowDailyOpen)
-            CreateOrUpdateRay(dayPfx + "D_OPEN", g_day_start_time == 0 ? tBarOpen : g_day_start_time, g_daily_open, InpDailyOpenColor, STYLE_SOLID, 1);
+         {
+            if(beforeNyClose)
+               CreateOrUpdateTrendSegment(dayPfx + "D_OPEN", tStart, g_daily_open, tEnd, g_daily_open, InpDailyOpenColor, STYLE_SOLID, 1);
+         }
          else
             DeleteByToken("_D_OPEN");
+
          if(showOther && InpShowDailyHL)
          {
-            datetime tStart = (g_day_start_time == 0 ? tBarOpen : g_day_start_time);
-            CreateOrUpdateRay(dayPfx + "D_HIGH", tStart, g_daily_high, InpDailyHLColor, STYLE_SOLID, 1);
-            CreateOrUpdateRay(dayPfx + "D_LOW", tStart, g_daily_low, InpDailyHLColor, STYLE_SOLID, 1);
+            if(beforeNyClose)
+            {
+               CreateOrUpdateTrendSegment(dayPfx + "D_HIGH", tStart, g_daily_high, tEnd, g_daily_high, InpDailyHLColor, STYLE_SOLID, 1);
+               CreateOrUpdateTrendSegment(dayPfx + "D_LOW", tStart, g_daily_low, tEnd, g_daily_low, InpDailyHLColor, STYLE_SOLID, 1);
+            }
+         }
+         else
+         {
+            DeleteByToken("_D_HIGH");
+            DeleteByToken("_D_LOW");
          }
       }
 
@@ -1377,13 +1493,13 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
          double tol = (double)InpRetestToleranceTicks * _Point;
          bool allowKiss = (isKill || InpKissOutsideKillzone);
-         bool validKissBuy = allowKiss && (!InpRequireSweepBeforeKiss || g_kiss_swept_l) && !g_kiss_done_b && l <= (g_h13_low + tol) && c > g_h13_low;
-         bool validKissSell = allowKiss && (!InpRequireSweepBeforeKiss || g_kiss_swept_h) && !g_kiss_done_s && h >= (g_h13_high - tol) && c < g_h13_high;
+         bool validKissBuy = InpKissSignalsEnabled && allowKiss && (!InpRequireSweepBeforeKiss || g_kiss_swept_l) && !g_kiss_done_b && l <= (g_h13_low + tol) && c > g_h13_low;
+         bool validKissSell = InpKissSignalsEnabled && allowKiss && (!InpRequireSweepBeforeKiss || g_kiss_swept_h) && !g_kiss_done_s && h >= (g_h13_high - tol) && c < g_h13_high;
 
          if(validKissBuy) g_kiss_done_b = true;
          if(validKissSell) g_kiss_done_s = true;
 
-         if(showOther && InpShowSignals)
+         if(showOther && InpShowSignals && InpKissSignalsEnabled)
          {
             if(validKissBuy)
             {
@@ -1623,8 +1739,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          bool ibOkS = (!InpUseIbMidFilter || (c < mid));
          bool manipOkB = (!InpRequireManipulation || g_mid_sweep_down || g_ib_sweep_down);
          bool manipOkS = (!InpRequireManipulation || g_mid_sweep_up || g_ib_sweep_up);
-         bool buy = (c > g_h13_high && isKill && !g_buy_done && dailyOkB && ibOkB && manipOkB);
-         bool sell = (c < g_h13_low && isKill && !g_sell_done && dailyOkS && ibOkS && manipOkS);
+         bool buy = (InpBuySellSignalsEnabled && c > g_h13_high && isKill && !g_buy_done && dailyOkB && ibOkB && manipOkB);
+         bool sell = (InpBuySellSignalsEnabled && c < g_h13_low && isKill && !g_sell_done && dailyOkS && ibOkS && manipOkS);
          if(buy)
          {
             g_buy_done = true;
@@ -2187,8 +2303,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
                bool shCore = (sh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh));
                bool shNormal = (shCore && passOppForSh && passSessionSh && passExtremeSh && passMacdSh);
-               bool shRsiOverride = (shCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot >= sellThr);
-               bool shFinal = (shNormal || shRsiOverride);
+               bool shRsiOverride = (shCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot >= sellThr && RsiCrossAtTime(tPivot, false) && passMacdSh);
+               bool shFinal = (InpSwingRsiFilterEnabled ? shRsiOverride : shNormal);
 
                if(shFinal && g_es_last_sp_sh_time != tPivot)
                {
@@ -2249,8 +2365,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
                bool slCore = (sl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl));
                bool slNormal = (slCore && passOppForSl && passSessionSl && passExtremeSl && passMacdSl);
-               bool slRsiOverride = (slCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot <= buyThr);
-               bool slFinal = (slNormal || slRsiOverride);
+               bool slRsiOverride = (slCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot <= buyThr && RsiCrossAtTime(tPivot, true) && passMacdSl);
+               bool slFinal = (InpSwingRsiFilterEnabled ? slRsiOverride : slNormal);
 
                if(slFinal && g_es_last_sp_sl_time != tPivot)
                {

@@ -104,6 +104,14 @@ input int InpSwingRsiBuyAgg = 30;
 input int InpSwingRsiBuyCons = 40;
 input int InpSwingRsiSellAgg = 70;
 input int InpSwingRsiSellCons = 60;
+enum ENUM_RSI_MA_TYPE
+{
+   RSI_MA_SMA = 0,
+   RSI_MA_EMA = 1
+};
+input bool InpSwingRsiMaCrossEnabled = false;
+input ENUM_RSI_MA_TYPE InpSwingRsiMaType = RSI_MA_SMA;
+input int InpSwingRsiMaLen = 14;
 input bool InpSwingMacdConfirmEnabled = false;
 
 enum ENUM_MTF_RETEST_ZONE_TYPE
@@ -605,6 +613,51 @@ bool MacdBearCross(const int shift)
    if(CopyBuffer(g_macd_handle, 0, shift, 2, m) <= 0) return false;
    if(CopyBuffer(g_macd_handle, 1, shift, 2, s) <= 0) return false;
    return (m[0] < s[0] && m[1] >= s[1]);
+}
+
+bool GetRsiMaValue(const int shift, const int len, const ENUM_RSI_MA_TYPE maType, double &maValue)
+{
+   maValue = 0.0;
+   if(g_rsi_handle == INVALID_HANDLE) return false;
+   int n = len;
+   if(n < 1) n = 1;
+   double rsiArr[];
+   ArrayResize(rsiArr, n);
+   ArraySetAsSeries(rsiArr, true);
+   if(CopyBuffer(g_rsi_handle, 0, shift, n, rsiArr) <= 0) return false;
+
+   if(maType == RSI_MA_SMA)
+   {
+      double sum = 0.0;
+      for(int i = 0; i < n; i++) sum += rsiArr[i];
+      maValue = sum / (double)n;
+      return true;
+   }
+
+   double k = 2.0 / ((double)n + 1.0);
+   double ema = rsiArr[n - 1];
+   for(int i = n - 2; i >= 0; i--)
+      ema = k * rsiArr[i] + (1.0 - k) * ema;
+   maValue = ema;
+   return true;
+}
+
+bool RsiCrossAtPivot(const int pivotShift, const bool bullish)
+{
+   if(!InpSwingRsiMaCrossEnabled) return true;
+   if(pivotShift < 0) return false;
+   int prevShift = pivotShift + 1;
+
+   double rsiNow = 0.0, rsiPrev = 0.0;
+   if(!GetRsiValue(pivotShift, rsiNow)) return false;
+   if(!GetRsiValue(prevShift, rsiPrev)) return false;
+
+   double maNow = 0.0, maPrev = 0.0;
+   if(!GetRsiMaValue(pivotShift, InpSwingRsiMaLen, InpSwingRsiMaType, maNow)) return false;
+   if(!GetRsiMaValue(prevShift, InpSwingRsiMaLen, InpSwingRsiMaType, maPrev)) return false;
+
+   if(bullish) return (rsiNow > maNow && rsiPrev <= maPrev);
+   return (rsiNow < maNow && rsiPrev >= maPrev);
 }
 
 bool SpreadOk()
@@ -1738,12 +1791,10 @@ void ProcessSignalOnNewBar()
                g_liq_opp_swept_for_sl = false;
             }
 
-            bool extremeOn = (InpSwingShowDailyExtremeShSl || InpSwingShowSessionExtremeShSl);
             bool nearDailyHigh = false;
             bool nearDailyLow = false;
             bool nearSessHigh = false;
             bool nearSessLow = false;
-            if(InpSwingShowDailyExtremeShSl)
             {
                double buf = (double)InpSwingDailyExtremeBufferPoints * _Point;
                if(buf < 0.0) buf = 0.0;
@@ -1770,8 +1821,8 @@ void ProcessSignalOnNewBar()
                   nearSessLow = nearSessLow || (MathAbs(lC - g_ny_low) <= buf);
                }
             }
-            bool passExtremeSh = (!extremeOn) || nearDailyHigh || nearSessHigh;
-            bool passExtremeSl = (!extremeOn) || nearDailyLow || nearSessLow;
+            bool passExtremeSh = nearDailyHigh;
+            bool passExtremeSl = nearDailyLow;
 
             bool shCore = sh;
             bool slCore = sl;
@@ -1784,10 +1835,15 @@ void ProcessSignalOnNewBar()
 
             bool slNormal = (slOk && passExtremeSl && passMacdSl);
             bool shNormal = (shOk && passExtremeSh && passMacdSh);
-            bool slRsiOverride = (slCore && InpSwingRsiFilterEnabled && hasRsi && rsiVal <= buyThr);
-            bool shRsiOverride = (shCore && InpSwingRsiFilterEnabled && hasRsi && rsiVal >= sellThr);
-            bool slTrade = (slNormal || slRsiOverride);
-            bool shTrade = (shNormal || shRsiOverride);
+            bool slRsiOverride = false;
+            bool shRsiOverride = false;
+            if(InpSwingRsiFilterEnabled && hasRsi)
+            {
+               slRsiOverride = (slCore && passExtremeSl && rsiVal <= buyThr && RsiCrossAtPivot(centerShift, true) && passMacdSl);
+               shRsiOverride = (shCore && passExtremeSh && rsiVal >= sellThr && RsiCrossAtPivot(centerShift, false) && passMacdSh);
+            }
+            bool slTrade = (InpSwingRsiFilterEnabled ? slRsiOverride : slNormal);
+            bool shTrade = (InpSwingRsiFilterEnabled ? shRsiOverride : shNormal);
 
             if(slTrade && !shTrade)
             {

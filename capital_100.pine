@@ -74,6 +74,10 @@ SmtPivotLen_H4 = input.int(1, "H4 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen = input.int(1, "Pivot candele (fallback)", minval=1, group="SMT")
 SmtShowLabels = input.bool(true, "Mostra etichette", group="SMT")
 
+dashEnabled = input.bool(true, "Dashboard SH/SL (H1/H4)", group="Dashboard")
+dashPos = input.string("Top Right", "Posizione", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Dashboard")
+dashTextSize = input.string("Small", "Testo", options=["Tiny", "Small", "Normal"], group="Dashboard")
+
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
 earlyLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Early Swing")
@@ -140,13 +144,35 @@ showUntilNyClose = not isAfterNyClose
 instLineStyle(s) =>
     s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
 
+f_dashPos(_s) =>
+    _s == "Top Left" ? position.top_left : _s == "Bottom Right" ? position.bottom_right : _s == "Bottom Left" ? position.bottom_left : position.top_right
+
+f_dashSize(_s) =>
+    _s == "Tiny" ? size.tiny : _s == "Normal" ? size.normal : size.small
+
+f_pivotStats(_left, _right) =>
+    ph = ta.pivothigh(high, _left, _right)
+    pl = ta.pivotlow(low, _left, _right)
+    shTime = ta.valuewhen(not na(ph), time[_right], 0)
+    shPrice = ta.valuewhen(not na(ph), ph, 0)
+    slTime = ta.valuewhen(not na(pl), time[_right], 0)
+    slPrice = ta.valuewhen(not na(pl), pl, 0)
+    [shTime, shPrice, slTime, slPrice]
+
+f_lastType(_shTime, _slTime) =>
+    na(_shTime) and na(_slTime) ? "—" : na(_slTime) ? "SH" : na(_shTime) ? "SL" : _shTime > _slTime ? "SH" : _slTime > _shTime ? "SL" : "SH/SL"
+
+f_cellTxt(_t, _p) =>
+    na(_t) ? "—" : str.format("{0,date,dd/MM HH:mm}", _t) + "\n" + str.tostring(_p, format.mintick)
+
 // --- 1. DAILY OPEN, HIGH, LOW ---
 is_0000 = hour(time, tz) == 0 and minute(time, tz) == 0
+isNewDay = year(time, tz) != year(time[1], tz) or month(time, tz) != month(time[1], tz) or dayofmonth(time, tz) != dayofmonth(time[1], tz)
 var float dHigh = na
 var float dLow = na
 var float dailyOpen = na
 
-if is_0000
+if is_0000 or isNewDay
     dailyOpen := open
     dHigh := high
     dLow := low
@@ -1025,8 +1051,10 @@ if swingPatternEnabled and swingHighOk
 swingDailyBuf = swingDailyExtremeBufferTicks * syminfo.mintick
 swingSessBuf = swingSessionExtremeBufferTicks * syminfo.mintick
 
-nearDailyHigh = (swingShowDailyExtremeShSl and not na(dHigh) and math.abs(high[swingCenter] - dHigh) <= swingDailyBuf)
-nearDailyLow = (swingShowDailyExtremeShSl and not na(dLow) and math.abs(low[swingCenter] - dLow) <= swingDailyBuf)
+dHighAtPivot = dHigh[swingCenter]
+dLowAtPivot = dLow[swingCenter]
+nearDailyHigh = (swingShowDailyExtremeShSl and not na(dHighAtPivot) and math.abs(high[swingCenter] - dHighAtPivot) <= swingDailyBuf)
+nearDailyLow = (swingShowDailyExtremeShSl and not na(dLowAtPivot) and math.abs(low[swingCenter] - dLowAtPivot) <= swingDailyBuf)
 
 asiaHas = not na(asiaHigh) and not na(asiaLow)
 londonHas = not na(londonHighLive) and not na(londonLowLive)
@@ -1049,8 +1077,8 @@ passExtremeSl = not extremeFilterOn or nearDailyLow or nearSessLow
 
 normalShowHigh = swingPatternEnabled and swingHighOk and passExtremeSh and passMacdSh
 normalShowLow = swingPatternEnabled and swingLowOk and passExtremeSl and passMacdSl
-rsiOverrideHigh = swingRsiFilterEnabled and swingPatternEnabled and swingHighOkBase and passRsiSh
-rsiOverrideLow = swingRsiFilterEnabled and swingPatternEnabled and swingLowOkBase and passRsiSl
+rsiOverrideHigh = swingRsiFilterEnabled and swingPatternEnabled and swingHighOkBase and passExtremeSh and passRsiSh
+rsiOverrideLow = swingRsiFilterEnabled and swingPatternEnabled and swingLowOkBase and passExtremeSl and passRsiSl
 swingShowHighFinal = normalShowHigh or rsiOverrideHigh
 swingShowLowFinal = normalShowLow or rsiOverrideLow
 
@@ -1147,6 +1175,58 @@ plotshape(swingShowHighFinal, title="Swing High", location=location.abovebar, st
 plotshape(swingShowLowFinal, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
 plotshape(swingBullDiv, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
 plotshape(swingBearDiv, title="Bearish Divergence", location=location.abovebar, style=shape.labeldown, color=color.new(color.fuchsia, 0), text="DIV", textcolor=color.white, size=size.tiny, offset=-swingCenter)
+
+leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
+rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
+leftH4 = swingPatternUseTfBars ? swingPatternLeftBars_H4 : swingPatternLeftBars
+rightH4 = swingPatternUseTfBars ? swingPatternRightBars_H4 : swingPatternRightBars
+
+[dashH1ShT, dashH1ShP, dashH1SlT, dashH1SlP] = request.security(syminfo.tickerid, "60", f_pivotStats(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
+[dashH4ShT, dashH4ShP, dashH4SlT, dashH4SlP] = request.security(syminfo.tickerid, "240", f_pivotStats(leftH4, rightH4), barmerge.gaps_off, barmerge.lookahead_off)
+
+var table dashTbl = na
+var string dashPosPrev = na
+if barstate.isfirst or dashPosPrev != dashPos
+    if not na(dashTbl)
+        table.delete(dashTbl)
+    dashTbl := table.new(f_dashPos(dashPos), 4, 3, border_width=1)
+    dashPosPrev := dashPos
+
+if barstate.islast and not na(dashTbl)
+    sz = f_dashSize(dashTextSize)
+    if dashEnabled
+        hdrBg = color.new(color.black, 0)
+        hdrTx = color.white
+        table.cell(dashTbl, 0, 0, "TF", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
+        table.cell(dashTbl, 1, 0, "LAST", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
+        table.cell(dashTbl, 2, 0, "SH", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
+        table.cell(dashTbl, 3, 0, "SL", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
+
+        h1Last = f_lastType(dashH1ShT, dashH1SlT)
+        h4Last = f_lastType(dashH4ShT, dashH4SlT)
+        bg1 = color.new(color.black, 80)
+        table.cell(dashTbl, 0, 1, "H1", bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 1, 1, h1Last, bgcolor=bg1, text_color=h1Last == "SH" ? color.red : h1Last == "SL" ? color.lime : color.white, text_size=sz)
+        table.cell(dashTbl, 2, 1, f_cellTxt(dashH1ShT, dashH1ShP), bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 3, 1, f_cellTxt(dashH1SlT, dashH1SlP), bgcolor=bg1, text_color=color.white, text_size=sz)
+
+        table.cell(dashTbl, 0, 2, "H4", bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 1, 2, h4Last, bgcolor=bg1, text_color=h4Last == "SH" ? color.red : h4Last == "SL" ? color.lime : color.white, text_size=sz)
+        table.cell(dashTbl, 2, 2, f_cellTxt(dashH4ShT, dashH4ShP), bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 3, 2, f_cellTxt(dashH4SlT, dashH4SlP), bgcolor=bg1, text_color=color.white, text_size=sz)
+    else
+        table.cell(dashTbl, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 1, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 2, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 3, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 0, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 1, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 2, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 3, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 0, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 1, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 2, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 3, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
 
 alertcondition(swingPatternOnlyAlerts and swingShowHighFinal, title="Swing High", message="{{ticker}} Swing High")
 alertcondition(swingPatternOnlyAlerts and swingShowLowFinal, title="Swing Low", message="{{ticker}} Swing Low")

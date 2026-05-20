@@ -36,6 +36,7 @@
    input bool InpNotifyLux = true;
    input bool InpNotifyMtf = true;
    input bool InpNotifyDailyTouch = true;
+   input bool InpNotifyRsiCross = true;
    input bool InpDailyTouchOncePerDay = true;
 
    input group "Logic"
@@ -126,6 +127,8 @@ input int InpSwingIBSweepEndHour = 13;
 input int InpSwingIBSweepEndMinute = 0;
 input bool InpSwingOverLowL13Enabled = false;
 input int InpSwingOverLowL13BufferPoints = 0;
+input bool InpSwingOverHighH13Enabled = false;
+input int InpSwingOverHighH13BufferPoints = 0;
 input bool InpSwingShowDailyExtremeShSl = false;
 input int InpSwingDailyExtremeBufferPoints = 0;
 input bool InpSwingShowSessionExtremeShSl = false;
@@ -163,6 +166,21 @@ input bool InpSwingDivUseRsiThresholds = true;
 input double InpSwingDivBullPrevRsiMax = 40.0;
 input double InpSwingDivBearPrevRsiMin = 60.0;
 input double InpSwingDivMinRsiDelta = 0.0;
+input bool InpSwingDivShowDailyExtreme = true;
+input int InpSwingDivDailyExtremeBufferPoints = 0;
+
+input group "RSI Cross"
+input bool InpRsiCrossEnabled = true;
+input bool InpRsiCrossShowLabels = true;
+input ENUM_RSI_MA_TYPE InpRsiCrossMaType = RSI_MA_SMA;
+input int InpRsiCrossMaLen = 14;
+input bool InpRsiCrossUseDailyExtreme = true;
+input int InpRsiCrossDailyExtremeBufferPoints = 0;
+input bool InpRsiCrossUseSessionExtreme = true;
+input bool InpRsiCrossSessionUseAsia = true;
+input bool InpRsiCrossSessionUseLondon = true;
+input bool InpRsiCrossSessionUseNy = true;
+input int InpRsiCrossSessionExtremeBufferPoints = 0;
 
 enum ENUM_MTF_RETEST_ZONE_TYPE
 {
@@ -332,6 +350,14 @@ input int InpMtfSlBufferPoints = 0;
    double g_es_low[ES_CAP];
    double g_es_close[ES_CAP];
    long g_es_vol[ES_CAP];
+   double g_es_daily_high[ES_CAP];
+   double g_es_daily_low[ES_CAP];
+   double g_es_asia_high[ES_CAP];
+   double g_es_asia_low[ES_CAP];
+   double g_es_london_high[ES_CAP];
+   double g_es_london_low[ES_CAP];
+   double g_es_ny_high[ES_CAP];
+   double g_es_ny_low[ES_CAP];
    int g_es_head = -1;
    int g_es_count = 0;
    datetime g_es_last_early_low_time = 0;
@@ -372,7 +398,10 @@ input int InpMtfSlBufferPoints = 0;
    bool g_swing_ib_swept_l = false;
    double g_prev_bar_low = 0.0;
    bool g_prev_bar_low_has = false;
+   double g_prev_bar_high = 0.0;
+   bool g_prev_bar_high_has = false;
    datetime g_last_over_low_time = 0;
+   datetime g_last_over_high_time = 0;
 
    datetime g_mtf_last_h1_sl_time = 0;
    double g_mtf_last_h1_sl_price = 0.0;
@@ -498,6 +527,29 @@ input int InpMtfSlBufferPoints = 0;
          ema = k * rsiArr[i] + (1.0 - k) * ema;
       maValue = ema;
       return true;
+   }
+
+   bool RsiCrossSignalAtTime(const datetime tPivot, const bool bullish)
+   {
+      if(!InpRsiCrossEnabled) return false;
+      if(g_rsi_handle == INVALID_HANDLE) return false;
+      int shift = iBarShift(_Symbol, _Period, tPivot, true);
+      if(shift < 0) return false;
+      int prevShift = shift + 1;
+
+      double rsiNow = 0.0, rsiPrev = 0.0;
+      double b0[1], b1[1];
+      if(CopyBuffer(g_rsi_handle, 0, shift, 1, b0) <= 0) return false;
+      if(CopyBuffer(g_rsi_handle, 0, prevShift, 1, b1) <= 0) return false;
+      rsiNow = b0[0];
+      rsiPrev = b1[0];
+
+      double maNow = 0.0, maPrev = 0.0;
+      if(!GetRsiMaAtShift(shift, InpRsiCrossMaLen, InpRsiCrossMaType, maNow)) return false;
+      if(!GetRsiMaAtShift(prevShift, InpRsiCrossMaLen, InpRsiCrossMaType, maPrev)) return false;
+
+      if(bullish) return (rsiNow > maNow && rsiPrev <= maPrev);
+      return (rsiNow < maNow && rsiPrev >= maPrev);
    }
 
    bool RsiCrossAtTime(const datetime tPivot, const bool bullish)
@@ -812,6 +864,14 @@ void EsPushBar(const datetime t, const double o, const double h, const double l,
    g_es_low[g_es_head] = l;
    g_es_close[g_es_head] = c;
    g_es_vol[g_es_head] = v;
+   g_es_daily_high[g_es_head] = (g_daily_has ? g_daily_high : 0.0);
+   g_es_daily_low[g_es_head] = (g_daily_has ? g_daily_low : 0.0);
+   g_es_asia_high[g_es_head] = (g_asia_has ? g_asia_high : 0.0);
+   g_es_asia_low[g_es_head] = (g_asia_has ? g_asia_low : 0.0);
+   g_es_london_high[g_es_head] = (g_london_has ? g_london_high : 0.0);
+   g_es_london_low[g_es_head] = (g_london_has ? g_london_low : 0.0);
+   g_es_ny_high[g_es_head] = (g_ny_sess_has ? g_ny_high : 0.0);
+   g_es_ny_low[g_es_head] = (g_ny_sess_has ? g_ny_low : 0.0);
    if(g_es_count < ES_CAP) g_es_count++;
 }
 
@@ -1026,7 +1086,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          bool isLux = (StringFind(txt, "LUX") == 0);
          bool isMtf = (StringFind(txt, "BUY MTF") == 0 || StringFind(txt, "SELL MTF") == 0);
          bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
-         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch))) return;
+         bool isRsiCross = (StringFind(txt, "RSI CROSS") == 0);
+         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyRsiCross && isRsiCross))) return;
       }
       if(!InpNotifyHistorical)
       {
@@ -1138,6 +1199,9 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       g_prev_bar_low = 0.0;
       g_prev_bar_low_has = false;
       g_last_over_low_time = 0;
+      g_prev_bar_high = 0.0;
+      g_prev_bar_high_has = false;
+      g_last_over_high_time = 0;
       g_mtf_last_h1_sl_time = 0;
       g_mtf_last_h1_sl_price = 0.0;
       g_mtf_last_h1_sh_time = 0;
@@ -1178,6 +1242,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       if(dk != g_day_key) ResetDay(dk);
 
       double prevLow = g_prev_bar_low_has ? g_prev_bar_low : l;
+      double prevHigh = g_prev_bar_high_has ? g_prev_bar_high : h;
 
       bool hadDaily = g_daily_has;
       double prevDailyHigh = g_daily_high;
@@ -1450,6 +1515,19 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             CreateOrUpdateText(n, tBarOpen, l - 12 * _Point, "OVER\nLOW", clrRed, ANCHOR_LEFT_LOWER);
             NotifySignal("OVER LOW (L13)", tBarOpen);
             g_last_over_low_time = tBarOpen;
+         }
+      }
+
+      if(InpSwingOverHighH13Enabled && beforeNyClose && g_h13_has)
+      {
+         double buf = (double)InpSwingOverHighH13BufferPoints * _Point;
+         double level = g_h13_high + buf;
+         if(prevHigh <= level && h > level && g_last_over_high_time != tBarOpen)
+         {
+            string n = dayPfx + "SP_OVERHIGH_H13_" + IntegerToString((long)tBarOpen);
+            CreateOrUpdateText(n, tBarOpen, h + 12 * _Point, "OVER\nHIGH", clrLimeGreen, ANCHOR_LEFT_UPPER);
+            NotifySignal("OVER HIGH (H13)", tBarOpen);
+            g_last_over_high_time = tBarOpen;
          }
       }
 
@@ -2268,27 +2346,29 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                if(InpSwingShowDailyExtremeShSl)
                {
                   double buf = (double)InpSwingDailyExtremeBufferPoints * _Point;
-                  nearDailyHigh = (g_daily_has && buf >= 0.0 && MathAbs(hC - g_daily_high) <= buf);
-                  nearDailyLow = (g_daily_has && buf >= 0.0 && MathAbs(lC - g_daily_low) <= buf);
+                  double dHi = g_es_daily_high[centerIdx];
+                  double dLo = g_es_daily_low[centerIdx];
+                  nearDailyHigh = (dHi > 0.0 && buf >= 0.0 && MathAbs(hC - dHi) <= buf);
+                  nearDailyLow = (dLo > 0.0 && buf >= 0.0 && MathAbs(lC - dLo) <= buf);
                }
                if(InpSwingShowSessionExtremeShSl)
                {
                   double buf = (double)InpSwingSessionExtremeBufferPoints * _Point;
                   if(buf < 0.0) buf = 0.0;
-                  if(InpSwingSessionUseAsia && g_asia_has)
+                  if(InpSwingSessionUseAsia && g_es_asia_high[centerIdx] > 0.0)
                   {
-                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_asia_high) <= buf);
-                     nearSessLow = nearSessLow || (MathAbs(lC - g_asia_low) <= buf);
+                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_es_asia_high[centerIdx]) <= buf);
+                     nearSessLow = nearSessLow || (MathAbs(lC - g_es_asia_low[centerIdx]) <= buf);
                   }
-                  if(InpSwingSessionUseLondon && g_london_has)
+                  if(InpSwingSessionUseLondon && g_es_london_high[centerIdx] > 0.0)
                   {
-                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_london_high) <= buf);
-                     nearSessLow = nearSessLow || (MathAbs(lC - g_london_low) <= buf);
+                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_es_london_high[centerIdx]) <= buf);
+                     nearSessLow = nearSessLow || (MathAbs(lC - g_es_london_low[centerIdx]) <= buf);
                   }
-                  if(InpSwingSessionUseNy && g_ny_sess_has)
+                  if(InpSwingSessionUseNy && g_es_ny_high[centerIdx] > 0.0)
                   {
-                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_ny_high) <= buf);
-                     nearSessLow = nearSessLow || (MathAbs(lC - g_ny_low) <= buf);
+                     nearSessHigh = nearSessHigh || (MathAbs(hC - g_es_ny_high[centerIdx]) <= buf);
+                     nearSessLow = nearSessLow || (MathAbs(lC - g_es_ny_low[centerIdx]) <= buf);
                   }
                }
                bool passExtremeSh = (!extremeOn) || nearDailyHigh || nearSessHigh;
@@ -2303,7 +2383,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
                bool shCore = (sh && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sh));
                bool shNormal = (shCore && passOppForSh && passSessionSh && passExtremeSh && passMacdSh);
-               bool shRsiOverride = (shCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot >= sellThr && RsiCrossAtTime(tPivot, false) && passMacdSh);
+               bool shRsiOverride = (shCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot >= sellThr && RsiCrossAtTime(tPivot, false) && passExtremeSh && passMacdSh);
                bool shFinal = (InpSwingRsiFilterEnabled ? shRsiOverride : shNormal);
 
                if(shFinal && g_es_last_sp_sh_time != tPivot)
@@ -2315,7 +2395,14 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
                   bool hasRsi = (InpSwingBullDivEnabled && hasRsiPivot);
                   bool bearDiv = false;
-                  if(hasRsi && prevShHas && hC > prevShPrice && rsiPivot < (prevShRsi - InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevShRsi >= InpSwingDivBearPrevRsiMin))
+                  bool divNearDailyHigh = true;
+                  if(InpSwingDivShowDailyExtreme)
+                  {
+                     double buf = (double)InpSwingDivDailyExtremeBufferPoints * _Point;
+                     double dHi = g_es_daily_high[centerIdx];
+                     divNearDailyHigh = (dHi > 0.0 && buf >= 0.0 && MathAbs(hC - dHi) <= buf);
+                  }
+                  if(hasRsi && prevShHas && divNearDailyHigh && hC > prevShPrice && rsiPivot < (prevShRsi - InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevShRsi >= InpSwingDivBearPrevRsiMin))
                      bearDiv = true;
 
                   if(hasRsi)
@@ -2347,6 +2434,30 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                      string n = dayPfx + "SP_SH_" + IntegerToString((long)tPivot);
                      CreateOrUpdateText(n, tPivot, hC + 10 * _Point, "SH", clrRed, ANCHOR_LEFT_UPPER);
                   }
+                  if(InpRsiCrossEnabled)
+                  {
+                     double bufD = (double)InpRsiCrossDailyExtremeBufferPoints * _Point;
+                     double bufS = (double)InpRsiCrossSessionExtremeBufferPoints * _Point;
+                     bool crossNearD = (!InpRsiCrossUseDailyExtreme) || (g_es_daily_high[centerIdx] > 0.0 && MathAbs(hC - g_es_daily_high[centerIdx]) <= bufD);
+                     bool crossNearS = true;
+                     if(InpRsiCrossUseSessionExtreme)
+                     {
+                        crossNearS = false;
+                        if(InpRsiCrossSessionUseAsia && g_es_asia_high[centerIdx] > 0.0) crossNearS = crossNearS || (MathAbs(hC - g_es_asia_high[centerIdx]) <= bufS);
+                        if(InpRsiCrossSessionUseLondon && g_es_london_high[centerIdx] > 0.0) crossNearS = crossNearS || (MathAbs(hC - g_es_london_high[centerIdx]) <= bufS);
+                        if(InpRsiCrossSessionUseNy && g_es_ny_high[centerIdx] > 0.0) crossNearS = crossNearS || (MathAbs(hC - g_es_ny_high[centerIdx]) <= bufS);
+                     }
+                     bool crossOk = crossNearD && crossNearS;
+                     if(crossOk && RsiCrossSignalAtTime(tPivot, false))
+                     {
+                        if(InpRsiCrossShowLabels)
+                        {
+                           string n2 = dayPfx + "RSI_CROSS_DN_" + IntegerToString((long)tPivot);
+                           CreateOrUpdateText(n2, tPivot, hC + 22 * _Point, "RSI↓", clrOrange, ANCHOR_LEFT_UPPER);
+                        }
+                        NotifySignal("RSI CROSS DOWN", tBarOpen);
+                     }
+                  }
                   NotifySignal("SH", tBarOpen);
                   g_es_last_sp_sh_time = tPivot;
 
@@ -2365,7 +2476,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
                bool slCore = (sl && (!InpSwingRequireReclaimAfterSweep || g_swing_allow_sl));
                bool slNormal = (slCore && passOppForSl && passSessionSl && passExtremeSl && passMacdSl);
-               bool slRsiOverride = (slCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot <= buyThr && RsiCrossAtTime(tPivot, true) && passMacdSl);
+               bool slRsiOverride = (slCore && InpSwingRsiFilterEnabled && hasRsiPivot && rsiPivot <= buyThr && RsiCrossAtTime(tPivot, true) && passExtremeSl && passMacdSl);
                bool slFinal = (InpSwingRsiFilterEnabled ? slRsiOverride : slNormal);
 
                if(slFinal && g_es_last_sp_sl_time != tPivot)
@@ -2377,7 +2488,14 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
                   bool hasRsi = (InpSwingBullDivEnabled && hasRsiPivot);
                   bool bullDiv = false;
-                  if(hasRsi && prevSlHas && lC < prevSlPrice && rsiPivot > (prevSlRsi + InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevSlRsi <= InpSwingDivBullPrevRsiMax))
+                  bool divNearDailyLow = true;
+                  if(InpSwingDivShowDailyExtreme)
+                  {
+                     double buf = (double)InpSwingDivDailyExtremeBufferPoints * _Point;
+                     double dLo = g_es_daily_low[centerIdx];
+                     divNearDailyLow = (dLo > 0.0 && buf >= 0.0 && MathAbs(lC - dLo) <= buf);
+                  }
+                  if(hasRsi && prevSlHas && divNearDailyLow && lC < prevSlPrice && rsiPivot > (prevSlRsi + InpSwingDivMinRsiDelta) && (!InpSwingDivUseRsiThresholds || prevSlRsi <= InpSwingDivBullPrevRsiMax))
                      bullDiv = true;
 
                   if(hasRsi)
@@ -2408,6 +2526,30 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                   {
                      string n = dayPfx + "SP_SL_" + IntegerToString((long)tPivot);
                      CreateOrUpdateText(n, tPivot, lC - 10 * _Point, "SL", clrLimeGreen, ANCHOR_LEFT_LOWER);
+                  }
+                  if(InpRsiCrossEnabled)
+                  {
+                     double bufD = (double)InpRsiCrossDailyExtremeBufferPoints * _Point;
+                     double bufS = (double)InpRsiCrossSessionExtremeBufferPoints * _Point;
+                     bool crossNearD = (!InpRsiCrossUseDailyExtreme) || (g_es_daily_low[centerIdx] > 0.0 && MathAbs(lC - g_es_daily_low[centerIdx]) <= bufD);
+                     bool crossNearS = true;
+                     if(InpRsiCrossUseSessionExtreme)
+                     {
+                        crossNearS = false;
+                        if(InpRsiCrossSessionUseAsia && g_es_asia_low[centerIdx] > 0.0) crossNearS = crossNearS || (MathAbs(lC - g_es_asia_low[centerIdx]) <= bufS);
+                        if(InpRsiCrossSessionUseLondon && g_es_london_low[centerIdx] > 0.0) crossNearS = crossNearS || (MathAbs(lC - g_es_london_low[centerIdx]) <= bufS);
+                        if(InpRsiCrossSessionUseNy && g_es_ny_low[centerIdx] > 0.0) crossNearS = crossNearS || (MathAbs(lC - g_es_ny_low[centerIdx]) <= bufS);
+                     }
+                     bool crossOk = crossNearD && crossNearS;
+                     if(crossOk && RsiCrossSignalAtTime(tPivot, true))
+                     {
+                        if(InpRsiCrossShowLabels)
+                        {
+                           string n2 = dayPfx + "RSI_CROSS_UP_" + IntegerToString((long)tPivot);
+                           CreateOrUpdateText(n2, tPivot, lC - 22 * _Point, "RSI↑", clrAqua, ANCHOR_LEFT_LOWER);
+                        }
+                        NotifySignal("RSI CROSS UP", tBarOpen);
+                     }
                   }
                   NotifySignal("SL", tBarOpen);
                   g_es_last_sp_sl_time = tPivot;
@@ -2746,6 +2888,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       CreateOrUpdateStatusLabel(st);
       g_prev_bar_low = l;
       g_prev_bar_low_has = true;
+      g_prev_bar_high = h;
+      g_prev_bar_high_has = true;
    }
 
    int OnInit()

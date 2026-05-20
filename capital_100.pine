@@ -80,6 +80,18 @@ dashEnabled = input.bool(true, "Dashboard SH/SL (H1/H4)", group="Dashboard")
 dashPos = input.string("Top Right", "Posizione", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Dashboard")
 dashTextSize = input.string("Small", "Testo", options=["Tiny", "Small", "Normal"], group="Dashboard")
 
+rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
+rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
+rsiCrossMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI Cross")
+rsiCrossMaLen = input.int(14, "RSI-MA Length", minval=1, group="RSI Cross")
+rsiCrossUseDailyExtreme = input.bool(false, "Filtro Daily High/Low", group="RSI Cross")
+rsiCrossDailyExtremeBufferTicks = input.int(0, "Distanza max da Daily High/Low (ticks)", minval=0, group="RSI Cross")
+rsiCrossUseSessionExtreme = input.bool(false, "Filtro Session High/Low (Asia/London/NY)", group="RSI Cross")
+rsiCrossSessionUseAsia = input.bool(true, "Usa Asia", group="RSI Cross")
+rsiCrossSessionUseLondon = input.bool(true, "Usa London", group="RSI Cross")
+rsiCrossSessionUseNy = input.bool(true, "Usa NY", group="RSI Cross")
+rsiCrossSessionExtremeBufferTicks = input.int(0, "Distanza max da Session High/Low (ticks)", minval=0, group="RSI Cross")
+
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
 earlyLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Early Swing")
@@ -113,6 +125,10 @@ swingRequireIBSweep = input.bool(false, "Richiedi sweep IB High/Low", group="Swi
 swingIBSweepWindow = input.session("1000-1300", "Finestra sweep IB", group="Swing Pattern")
 swingShowOverLowL13 = input.bool(false, "Segnale Over Low (sotto L13)", group="Swing Pattern")
 swingOverLowL13BufferTicks = input.int(0, "Buffer Over Low L13 (ticks)", minval=0, group="Swing Pattern")
+swingShowOverHighH13 = input.bool(false, "Segnale Over High (sopra H13)", group="Swing Pattern")
+swingOverHighH13BufferTicks = input.int(0, "Buffer Over High H13 (ticks)", minval=0, group="Swing Pattern")
+swingShowOverDaily = input.bool(false, "Segnale Over Daily High/Low", group="Swing Pattern")
+swingOverDailyBufferTicks = input.int(0, "Buffer Over Daily (ticks)", minval=0, group="Swing Pattern")
 swingShowDailyExtremeShSl = input.bool(false, "Mostra SH vicino a Daily High e SL vicino a Daily Low", group="Swing Pattern")
 swingDailyExtremeBufferTicks = input.int(0, "Distanza max da Daily High/Low (ticks)", minval=0, group="Swing Pattern")
 swingShowSessionExtremeShSl = input.bool(false, "Filtro Session High/Low (Asia/London/NY)", group="Swing Pattern")
@@ -129,6 +145,8 @@ swingDivUseRsiThresholds = input.bool(true, "Filtro soglie RSI", group="Swing Pa
 swingDivBullPrevRsiMax = input.int(40, "RSI max 1° low", minval=1, maxval=50, group="Swing Pattern")
 swingDivBearPrevRsiMin = input.int(60, "RSI min 1° high", minval=50, maxval=99, group="Swing Pattern")
 swingDivMinRsiDelta = input.float(0.0, "Min delta RSI", minval=0.0, step=0.1, group="Swing Pattern")
+swingDivShowDailyExtreme = input.bool(false, "Mostra DIV vicino a Daily High/Low", group="Swing Pattern")
+swingDivDailyExtremeBufferTicks = input.int(0, "Distanza max DIV da Daily High/Low (ticks)", minval=0, group="Swing Pattern")
 swingRsiFilterEnabled = input.bool(false, "Filtro RSI (SH/SL)", group="Swing Pattern")
 swingRsiMode = input.string("Conservative", "RSI Mode", options=["Aggressive", "Conservative"], group="Swing Pattern")
 swingRsiBuyAgg = input.int(30, "RSI BUY Aggressive (≤)", minval=1, maxval=50, group="Swing Pattern")
@@ -183,8 +201,8 @@ else
     dLow := math.min(dLow, low)
 
 plot(showUntilNyClose and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
-plot(showUntilNyClose and showDailyHL ? dHigh : na, "Daily High", color.white, 1, plot.style_linebr)
-plot(showUntilNyClose and showDailyHL ? dLow : na, "Daily Low", color.white, 1, plot.style_linebr)
+plot(showUntilNyClose and showDailyHL ? dHigh : na, "Daily High", color.red, 1, plot.style_linebr)
+plot(showUntilNyClose and showDailyHL ? dLow : na, "Daily Low", color.lime, 1, plot.style_linebr)
 
 var label dHighLbl = na
 var label dLowLbl = na
@@ -538,6 +556,22 @@ if swingShowOverLowL13 and overLowL13
     f_addSigLabel(bar_index, low, "OVER\nLOW", color.new(color.red, 0), color.white, label.style_label_up, size.tiny)
 alertcondition(not swingPatternOnlyAlerts and swingShowOverLowL13 and overLowL13, title="Over Low (L13)", message="{{ticker}} Over Low (sotto L13)")
 
+overHighBuf = swingOverHighH13BufferTicks * syminfo.mintick
+overHighH13 = showUntilNyClose and orangeIsToday and not na(orangeH) and ta.crossover(high, orangeH + overHighBuf)
+if swingShowOverHighH13 and overHighH13
+    f_addSigLabel(bar_index, high, "OVER\nHIGH", color.new(color.lime, 0), color.black, label.style_label_down, size.tiny)
+alertcondition(not swingPatternOnlyAlerts and swingShowOverHighH13 and overHighH13, title="Over High (H13)", message="{{ticker}} Over High (sopra H13)")
+
+overDailyBuf = swingOverDailyBufferTicks * syminfo.mintick
+overDailyLow = showUntilNyClose and not na(dLow) and ta.crossunder(low, dLow - overDailyBuf)
+overDailyHigh = showUntilNyClose and not na(dHigh) and ta.crossover(high, dHigh + overDailyBuf)
+if swingShowOverDaily and overDailyLow
+    f_addSigLabel(bar_index, low, "OVER\nD LOW", color.new(color.red, 0), color.white, label.style_label_up, size.tiny)
+if swingShowOverDaily and overDailyHigh
+    f_addSigLabel(bar_index, high, "OVER\nD HIGH", color.new(color.lime, 0), color.black, label.style_label_down, size.tiny)
+alertcondition(not swingPatternOnlyAlerts and swingShowOverDaily and overDailyLow, title="Over Daily Low", message="{{ticker}} Over Daily Low")
+alertcondition(not swingPatternOnlyAlerts and swingShowOverDaily and overDailyHigh, title="Over Daily High", message="{{ticker}} Over Daily High")
+
 plotshape(isStar13, title="13:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
 plotshape(isStar16, title="16:00", style=shape.labelup, location=location.belowbar, color=color.yellow, text="★", textcolor=color.black, size=size.tiny)
 if validB
@@ -876,6 +910,27 @@ swingCenter = swingLbR
 hasSwingWindow = bar_index >= swingWin
 
 swingRsi = ta.rsi(close, swingBullDivRsiLen)
+rsiMa = rsiCrossMaType == "EMA" ? ta.ema(swingRsi, rsiCrossMaLen) : ta.sma(swingRsi, rsiCrossMaLen)
+rsiCrossDailyBuf = rsiCrossDailyExtremeBufferTicks * syminfo.mintick
+rsiCrossSessBuf = rsiCrossSessionExtremeBufferTicks * syminfo.mintick
+rsiCrossNearDailyHigh = rsiCrossUseDailyExtreme and not na(dHigh[swingCenter]) and math.abs(high[swingCenter] - dHigh[swingCenter]) <= rsiCrossDailyBuf
+rsiCrossNearDailyLow = rsiCrossUseDailyExtreme and not na(dLow[swingCenter]) and math.abs(low[swingCenter] - dLow[swingCenter]) <= rsiCrossDailyBuf
+rsiCrossNearSessHigh = rsiCrossUseSessionExtreme and (
+     (rsiCrossSessionUseAsia and not na(asiaHigh[swingCenter]) and math.abs(high[swingCenter] - asiaHigh[swingCenter]) <= rsiCrossSessBuf) or
+     (rsiCrossSessionUseLondon and not na(londonHighLive[swingCenter]) and math.abs(high[swingCenter] - londonHighLive[swingCenter]) <= rsiCrossSessBuf) or
+     (rsiCrossSessionUseNy and not na(nyHighLive[swingCenter]) and math.abs(high[swingCenter] - nyHighLive[swingCenter]) <= rsiCrossSessBuf)
+ )
+rsiCrossNearSessLow = rsiCrossUseSessionExtreme and (
+     (rsiCrossSessionUseAsia and not na(asiaLow[swingCenter]) and math.abs(low[swingCenter] - asiaLow[swingCenter]) <= rsiCrossSessBuf) or
+     (rsiCrossSessionUseLondon and not na(londonLowLive[swingCenter]) and math.abs(low[swingCenter] - londonLowLive[swingCenter]) <= rsiCrossSessBuf) or
+     (rsiCrossSessionUseNy and not na(nyLowLive[swingCenter]) and math.abs(low[swingCenter] - nyLowLive[swingCenter]) <= rsiCrossSessBuf)
+ )
+rsiCrossExtremeFilterOn = rsiCrossUseDailyExtreme or rsiCrossUseSessionExtreme
+rsiCrossUpAtPivot = rsiCrossEnabled and swingRsi[swingCenter] > rsiMa[swingCenter] and swingRsi[swingCenter + 1] <= rsiMa[swingCenter + 1]
+rsiCrossDnAtPivot = rsiCrossEnabled and swingRsi[swingCenter] < rsiMa[swingCenter] and swingRsi[swingCenter + 1] >= rsiMa[swingCenter + 1]
+rsiCrossUpOkAtPivot = not rsiCrossExtremeFilterOn or rsiCrossNearDailyLow or rsiCrossNearSessLow
+rsiCrossDnOkAtPivot = not rsiCrossExtremeFilterOn or rsiCrossNearDailyHigh or rsiCrossNearSessHigh
+
 [macdLine, macdSignal, _] = ta.macd(close, 12, 26, 9)
 macdBullCross = ta.crossover(macdLine, macdSignal)
 macdBearCross = ta.crossunder(macdLine, macdSignal)
@@ -1057,6 +1112,9 @@ dHighAtPivot = dHigh[swingCenter]
 dLowAtPivot = dLow[swingCenter]
 nearDailyHigh = (swingShowDailyExtremeShSl and not na(dHighAtPivot) and math.abs(high[swingCenter] - dHighAtPivot) <= swingDailyBuf)
 nearDailyLow = (swingShowDailyExtremeShSl and not na(dLowAtPivot) and math.abs(low[swingCenter] - dLowAtPivot) <= swingDailyBuf)
+divDailyBuf = swingDivDailyExtremeBufferTicks * syminfo.mintick
+divNearDailyHigh = not na(dHighAtPivot) and math.abs(high[swingCenter] - dHighAtPivot) <= divDailyBuf
+divNearDailyLow = not na(dLowAtPivot) and math.abs(low[swingCenter] - dLowAtPivot) <= divDailyBuf
 
 asiaHas = not na(asiaHigh) and not na(asiaLow)
 londonHas = not na(londonHighLive) and not na(londonLowLive)
@@ -1178,10 +1236,20 @@ if SmtEnabled and showUntilNyClose
         if not na(smtPl1_2)
             lastSmtPl1_2 := smtPl1_2
 
+rsiCrossPivotBar = bar_index - swingCenter
+rsiCrossUpSig = rsiCrossUpAtPivot and rsiCrossUpOkAtPivot and swingShowLowFinal
+rsiCrossDnSig = rsiCrossDnAtPivot and rsiCrossDnOkAtPivot and swingShowHighFinal
+if rsiCrossShowLabels and rsiCrossUpSig
+    f_addSigLabel(rsiCrossPivotBar, low[swingCenter], "RSI↑", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny)
+if rsiCrossShowLabels and rsiCrossDnSig
+    f_addSigLabel(rsiCrossPivotBar, high[swingCenter], "RSI↓", color.new(color.orange, 0), color.black, label.style_label_down, size.tiny)
+
 plotshape(swingShowHighFinal, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
 plotshape(swingShowLowFinal, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
-plotshape(swingBullDiv, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
-plotshape(swingBearDiv, title="Bearish Divergence", location=location.abovebar, style=shape.labeldown, color=color.new(color.fuchsia, 0), text="DIV", textcolor=color.white, size=size.tiny, offset=-swingCenter)
+swingBullDivPlot = swingBullDiv and (not swingDivShowDailyExtreme or divNearDailyLow)
+swingBearDivPlot = swingBearDiv and (not swingDivShowDailyExtreme or divNearDailyHigh)
+plotshape(swingBullDivPlot, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
+plotshape(swingBearDivPlot, title="Bearish Divergence", location=location.abovebar, style=shape.labeldown, color=color.new(color.fuchsia, 0), text="DIV", textcolor=color.white, size=size.tiny, offset=-swingCenter)
 
 leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
 rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
@@ -1237,8 +1305,10 @@ if barstate.islast and not na(dashTbl)
 
 alertcondition(swingPatternOnlyAlerts and swingShowHighFinal, title="Swing High", message="{{ticker}} Swing High")
 alertcondition(swingPatternOnlyAlerts and swingShowLowFinal, title="Swing Low", message="{{ticker}} Swing Low")
-alertcondition(swingPatternOnlyAlerts and swingBullDiv, title="Bullish Divergence", message="{{ticker}} Bullish Divergence (RSI)")
-alertcondition(swingPatternOnlyAlerts and swingBearDiv, title="Bearish Divergence", message="{{ticker}} Bearish Divergence (RSI)")
+alertcondition(swingPatternOnlyAlerts and swingBullDivPlot, title="Bullish Divergence", message="{{ticker}} Bullish Divergence (RSI)")
+alertcondition(swingPatternOnlyAlerts and swingBearDivPlot, title="Bearish Divergence", message="{{ticker}} Bearish Divergence (RSI)")
+alertcondition(rsiCrossUpSig, title="RSI Cross Up", message="{{ticker}} RSI cross UP vs RSI-MA")
+alertcondition(rsiCrossDnSig, title="RSI Cross Down", message="{{ticker}} RSI cross DOWN vs RSI-MA")
 smtBearAny = smtBearSig1 or smtBearSig2
 smtBullAny = smtBullSig1 or smtBullSig2
 

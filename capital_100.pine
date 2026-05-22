@@ -107,6 +107,43 @@ rsiPatternShowLabels = input.bool(true, "Mostra etichette", group="RSI Pattern")
 rsiPatternUseDailyExtreme = input.bool(false, "Filtro Daily High/Low", group="RSI Pattern")
 rsiPatternDailyExtremeBufferTicks = input.int(0, "Distanza max da Daily High/Low (ticks)", minval=0, group="RSI Pattern")
 
+crtEnabled = input.bool(false, "CRT (Candle Range Theory)", group="CRT")
+crtTf = input.string("15", "Timeframe CRT", options=["1", "15", "60", "240"], group="CRT")
+crtSweepBufferTicks = input.int(0, "Sweep buffer (ticks)", minval=0, group="CRT")
+crtUseDailyExtreme = input.bool(false, "Filtro Daily High/Low", group="CRT")
+crtDailyExtremeBufferTicks = input.int(0, "Distanza max da Daily High/Low (ticks)", minval=0, group="CRT")
+crtUseKillzone = input.bool(false, "Solo in Killzone (14:30-16:30)", group="CRT")
+crtRequireRsiConfirm = input.bool(false, "Conferma RSI (soglie BUY/SELL)", group="CRT")
+crtRequireShSlConfirm = input.bool(false, "Conferma SH/SL (Swing Pattern)", group="CRT")
+crtConfirmShSlMaxBars = input.int(200, "Max barre da ultimo SH/SL", minval=1, group="CRT")
+crtShowLines = input.bool(true, "Mostra linee High/Low/EQ", group="CRT")
+crtShowLabels = input.bool(true, "Mostra etichette", group="CRT")
+
+sfpEnabled = input.bool(false, "Swing Failure Pattern (LuxAlgo)", group="SFP Lux")
+sfpLen = input.int(5, "Swings", minval=1, group="SFP Lux")
+sfpBull = input.bool(true, "Bullish SFP", group="SFP Lux")
+sfpBear = input.bool(true, "Bearish SFP", group="SFP Lux")
+
+sfpIVal = input.string("None", "Validation", group="SFP Lux - Volume Validation", options=["Volume outside swing < Threshold", "Volume outside swing > Threshold", "None"])
+sfpPercent = input.float(25, "Volume Threshold %", minval=0, maxval=100, group="SFP Lux - Volume Validation")
+sfpAuto = input.bool(true, "Auto", group="SFP Lux - Volume Validation")
+sfpMlt = input.int(50, "Auto Mult", group="SFP Lux - Volume Validation")
+sfpRes = input.timeframe("1", "LTF", group="SFP Lux - Volume Validation")
+sfpPrem = input.bool(false, "Premium", group="SFP Lux - Volume Validation")
+
+sfpShowDash = input.bool(true, "Show Dashboard", group="SFP Lux - Dashboard")
+sfpDashLoc = input.string("Top Right", "Location", options=["Top Right", "Bottom Right", "Bottom Left"], group="SFP Lux - Dashboard")
+sfpTextSize = input.string("Normal", "Size", options=["Tiny", "Small", "Normal"], group="SFP Lux - Dashboard")
+
+sfpSwingLine = input.bool(true, "Swing Lines", group="SFP Lux - Style")
+sfpOpposLine = input.bool(true, "Confirmation Lines", group="SFP Lux - Style")
+sfpSfpLine = input.bool(true, "Swing Failure Wick", group="SFP Lux - Style")
+sfpSfpLabel = input.bool(true, "Swing Failure Label", group="SFP Lux - Style")
+sfpColBl = input.color(#089981, "Lines / Labels (Bullish)", group="SFP Lux - Style")
+sfpColBr = input.color(#f23645, "Lines / Labels (Bearish)", group="SFP Lux - Style")
+sfpColBl2 = input.color(#08998180, "SFP Wicks (Bullish)", group="SFP Lux - Style")
+sfpColBr2 = input.color(#f2364580, "SFP Wicks (Bearish)", group="SFP Lux - Style")
+
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
 earlyLeftBars = input.int(2, "Candele Sinistra", minval=1, group="Early Swing")
@@ -205,6 +242,66 @@ f_cellTxt(_t, _p) =>
 f_alert(_cond, _msg) =>
     if alertsEnabled and _cond
         alert(_msg, alert.freq_once_per_bar_close)
+
+crtConfirmLeft = swingPatternUseTfBars ? (crtTf == "1" ? swingPatternLeftBars_M1 : crtTf == "15" ? swingPatternLeftBars_M15 : crtTf == "60" ? swingPatternLeftBars_H1 : crtTf == "240" ? swingPatternLeftBars_H4 : swingPatternLeftBars) : swingPatternLeftBars
+crtConfirmRight = swingPatternUseTfBars ? (crtTf == "1" ? swingPatternRightBars_M1 : crtTf == "15" ? swingPatternRightBars_M15 : crtTf == "60" ? swingPatternRightBars_H1 : crtTf == "240" ? swingPatternRightBars_H4 : swingPatternRightBars) : swingPatternRightBars
+
+f_crt() =>
+    buf = crtSweepBufferTicks * syminfo.mintick
+    rh = high[1]
+    rl = low[1]
+    bullSoup = not na(rh) and not na(rl) and low < (rl - buf) and close > rl and close < rh
+    bearSoup = not na(rh) and not na(rl) and high > (rh + buf) and close < rh and close > rl
+    soup = bullSoup or bearSoup
+    var float rangeH = na
+    var float rangeL = na
+    var float eq = na
+    var float soupH = na
+    var float soupL = na
+    var int dir = 0
+    var int soupT = na
+    var float soupDayH = na
+    var float soupDayL = na
+    var bool soupInKill = false
+
+    is_0000_c = hour(time, tz) == 0 and minute(time, tz) == 0
+    isNewDayC = year(time, tz) != year(time[1], tz) or month(time, tz) != month(time[1], tz) or dayofmonth(time, tz) != dayofmonth(time[1], tz)
+    var float dH = na
+    var float dL = na
+    if is_0000_c or isNewDayC
+        dH := high
+        dL := low
+    else
+        dH := math.max(dH, high)
+        dL := math.min(dL, low)
+
+    hh = hour(time_close, tz)
+    mm = minute(time_close, tz)
+    inKill = (hh > 14 or (hh == 14 and mm >= 30)) and (hh < 16 or (hh == 16 and mm <= 30))
+
+    rsiC = ta.rsi(close, swingBullDivRsiLen)
+
+    ph = ta.pivothigh(high, crtConfirmLeft, crtConfirmRight)
+    pl = ta.pivotlow(low, crtConfirmLeft, crtConfirmRight)
+    shT = ta.valuewhen(not na(ph), time[crtConfirmRight], 0)
+    slT = ta.valuewhen(not na(pl), time[crtConfirmRight], 0)
+
+    if soup
+        rangeH := rh
+        rangeL := rl
+        eq := (rh + rl) / 2.0
+        dir := bullSoup ? 1 : -1
+        soupH := high
+        soupL := low
+        soupT := time
+        soupDayH := dH
+        soupDayL := dL
+        soupInKill := inKill
+    barsSince = ta.barssince(soup)
+    isDist = barsSince == 1
+    entryLong = dir == 1 and isDist and low < open and close > open
+    entryShort = dir == -1 and isDist and high > open and close < open
+    [rangeH, rangeL, eq, dir, soupH, soupL, entryLong, entryShort, soupT, soup, bullSoup, bearSoup, dH, dL, inKill, rsiC, shT, slT, soupDayH, soupDayL, soupInKill]
 
 // --- 1. DAILY OPEN, HIGH, LOW ---
 is_0000 = hour(time, tz) == 0 and minute(time, tz) == 0
@@ -437,7 +534,7 @@ f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
     else
         lb = label.new(_x, _y, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
         array.push(mcSigLabels, lb)
-        if array.size(mcSigLabels) > 450
+        if array.size(mcSigLabels) > 250
             label.delete(array.shift(mcSigLabels))
         lb
 
@@ -945,6 +1042,49 @@ tfIsM15 = timeframe.isminutes and timeframe.multiplier == 15
 tfIsH1 = timeframe.isminutes and timeframe.multiplier == 60
 tfIsH4 = timeframe.isminutes and timeframe.multiplier == 240
 
+[crtRangeH, crtRangeL, crtEq, crtDir, crtSoupH, crtSoupL, crtEntryLong, crtEntryShort, crtSoupT, crtSoup, crtBullSoup, crtBearSoup, crtDayH, crtDayL, crtInKill, crtRsi, crtLastShT, crtLastSlT, crtSoupDayH, crtSoupDayL, crtSoupInKill] = request.security(syminfo.tickerid, crtTf, f_crt(), barmerge.gaps_off, barmerge.lookahead_off)
+crtDailyBuf = crtDailyExtremeBufferTicks * syminfo.mintick
+crtBullOk = not crtUseDailyExtreme or (not na(crtSoupDayL) and not na(crtSoupL) and math.abs(crtSoupL - crtSoupDayL) <= crtDailyBuf)
+crtBearOk = not crtUseDailyExtreme or (not na(crtSoupDayH) and not na(crtSoupH) and math.abs(crtSoupH - crtSoupDayH) <= crtDailyBuf)
+crtSoupOk = (crtDir == 1 and crtBullOk) or (crtDir == -1 and crtBearOk)
+crtSoupKillOk = not crtUseKillzone or crtSoupInKill
+
+var line crtLineH = na
+var line crtLineL = na
+var line crtLineEq = na
+var int crtLastSoupTime = na
+var label crtSoupLbl = na
+var label crtEntryLbl = na
+crtNewSoup = crtEnabled and not onlyShSlMode and crtSoup and crtSoupOk and crtSoupKillOk and not na(crtSoupT) and (na(crtLastSoupTime) or crtSoupT != crtLastSoupTime)
+if crtNewSoup
+    if not na(crtLineH)
+        line.delete(crtLineH)
+        crtLineH := na
+    if not na(crtLineL)
+        line.delete(crtLineL)
+        crtLineL := na
+    if not na(crtLineEq)
+        line.delete(crtLineEq)
+        crtLineEq := na
+    if crtShowLines and not na(crtRangeH) and not na(crtRangeL)
+        crtLineH := line.new(bar_index, crtRangeH, bar_index + 1, crtRangeH, extend=extend.right, color=color.new(color.orange, 0), width=1)
+        crtLineL := line.new(bar_index, crtRangeL, bar_index + 1, crtRangeL, extend=extend.right, color=color.new(color.aqua, 0), width=1)
+        if not na(crtEq)
+            crtLineEq := line.new(bar_index, crtEq, bar_index + 1, crtEq, extend=extend.right, color=color.new(color.gray, 40), width=1, style=line.style_dashed)
+    if crtShowLabels
+        if not na(crtSoupLbl)
+            label.delete(crtSoupLbl)
+        crtSoupLbl := label.new(bar_index, close, crtDir == 1 ? "CRT\nBULL" : "CRT\nBEAR", xloc=xloc.bar_index, style=crtDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.black, 0), textcolor=color.white, size=size.tiny)
+    crtLastSoupTime := crtSoupT
+
+if (not crtEnabled) or onlyShSlMode or (not crtShowLabels) or (crtUseKillzone and not crtSoupKillOk)
+    if not na(crtSoupLbl)
+        label.delete(crtSoupLbl)
+        crtSoupLbl := na
+
+crtEntryLongRaw = crtEnabled and not onlyShSlMode and crtEntryLong and crtBullOk and crtSoupKillOk
+crtEntryShortRaw = crtEnabled and not onlyShSlMode and crtEntryShort and crtBearOk and crtSoupKillOk
+
 swingLbL = swingPatternUseTfBars ? (tfIsM1 ? swingPatternLeftBars_M1 : tfIsM15 ? swingPatternLeftBars_M15 : tfIsH1 ? swingPatternLeftBars_H1 : tfIsH4 ? swingPatternLeftBars_H4 : swingPatternLeftBars) : swingPatternLeftBars
 swingLbR = swingPatternUseTfBars ? (tfIsM1 ? swingPatternRightBars_M1 : tfIsM15 ? swingPatternRightBars_M15 : tfIsH1 ? swingPatternRightBars_H1 : tfIsH4 ? swingPatternRightBars_H4 : swingPatternRightBars) : swingPatternRightBars
 
@@ -1279,6 +1419,32 @@ passHammerSl = not swingRequireHammerShootingForShSl or pivotHammerOk
 swingShowHighOut = swingShowHighFinal and passHammerSh
 swingShowLowOut = swingShowLowFinal and passHammerSl
 
+crtKillOk = not crtUseKillzone or crtInKill
+crtRsiOkLong = not crtRequireRsiConfirm or crtRsi <= buyThr
+crtRsiOkShort = not crtRequireRsiConfirm or crtRsi >= sellThr
+crtTfMin = crtTf == "1" ? 1 : crtTf == "15" ? 15 : crtTf == "60" ? 60 : crtTf == "240" ? 240 : 0
+crtMaxAgeMs = crtConfirmShSlMaxBars * crtTfMin * 60 * 1000
+crtLastType = f_lastType(crtLastShT, crtLastSlT)
+crtShSlOkLong = not crtRequireShSlConfirm or (crtLastType == "SL" and not na(crtLastSlT) and (time_close - crtLastSlT) <= crtMaxAgeMs)
+crtShSlOkShort = not crtRequireShSlConfirm or (crtLastType == "SH" and not na(crtLastShT) and (time_close - crtLastShT) <= crtMaxAgeMs)
+crtEntryLongOk = crtEntryLongRaw and crtKillOk and crtRsiOkLong and crtShSlOkLong
+crtEntryShortOk = crtEntryShortRaw and crtKillOk and crtRsiOkShort and crtShSlOkShort
+if crtShowLabels and crtEntryLongOk
+    if not na(crtEntryLbl)
+        label.delete(crtEntryLbl)
+    crtEntryLbl := label.new(bar_index, low, "CRT\nBUY", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+if crtShowLabels and crtEntryShortOk
+    if not na(crtEntryLbl)
+        label.delete(crtEntryLbl)
+    crtEntryLbl := label.new(bar_index, high, "CRT\nSELL", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.black, size=size.tiny)
+f_alert(crtEntryLongOk, syminfo.ticker + " CRT BUY")
+f_alert(crtEntryShortOk, syminfo.ticker + " CRT SELL")
+
+if (not crtEnabled) or onlyShSlMode or (not crtShowLabels)
+    if not na(crtEntryLbl)
+        label.delete(crtEntryLbl)
+        crtEntryLbl := na
+
 SmtHigh1 = request.security(SmtSymbol1, timeframe.period, high)
 SmtLow1 = request.security(SmtSymbol1, timeframe.period, low)
 SmtHigh2 = request.security(SmtSymbol2, timeframe.period, high)
@@ -1463,3 +1629,191 @@ f_alert(not onlyShSlMode and SmtEnabled and SmtUseSymbol2 and smtBearSig2, symin
 f_alert(not onlyShSlMode and SmtEnabled and SmtUseSymbol2 and smtBullSig2, syminfo.ticker + " SMT2 Bullish vs SMT Symbol 2")
 f_alert(not onlyShSlMode and SmtEnabled and smtBearAny, syminfo.ticker + " SMT Bearish")
 f_alert(not onlyShSlMode and SmtEnabled and smtBullAny, syminfo.ticker + " SMT Bullish")
+
+type sfp_piv
+    float swing_prc
+    int swing_bix
+    float oppos_prc
+    int oppos_bix
+    bool active
+    bool confirmed
+    line swing_line
+    line oppos_line
+    line wicky_line
+    label wicky_label
+
+type sfp_swing
+    int bix
+    float prc
+
+method n(float piv) => bool out = not na(piv)
+
+sfpINV = color(na)
+sfpValidate = sfpIVal != "None"
+sfpValHigher = sfpIVal == "Volume outside swing > Threshold"
+sfpValLower = sfpIVal == "Volume outside swing < Threshold"
+
+sfpTablePosition = sfpDashLoc == "Bottom Left" ? position.bottom_left : sfpDashLoc == "Top Right" ? position.top_right : position.bottom_right
+sfpTableSize = sfpTextSize == "Tiny" ? size.tiny : sfpTextSize == "Small" ? size.small : size.normal
+
+var table sfpTb = na
+var string sfpDashLocPrev = na
+if (barstate.isfirst or sfpDashLocPrev != sfpDashLoc)
+    if not na(sfpTb)
+        table.delete(sfpTb)
+    sfpTb := table.new(sfpTablePosition, 2, 3, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
+    sfpDashLocPrev := sfpDashLoc
+
+var sfp_swing sfpSwingH = sfp_swing.new()
+var sfp_swing sfpSwingL = sfp_swing.new()
+var sfp_piv sfpPivH = sfp_piv.new()
+var sfp_piv sfpPivL = sfp_piv.new()
+
+sfpTfS = timeframe.in_seconds(sfpRes)
+sfpTfC = timeframe.in_seconds(timeframe.period)
+sfpRs = sfpAuto ? sfpTfC / sfpMlt : sfpTfS
+if not sfpValidate
+    sfpRes := timeframe.period
+else
+    sfpRs := sfpPrem ? sfpRs : math.max(60, sfpRs)
+    sfpRes := timeframe.from_seconds(math.min(sfpTfC, sfpRs))
+
+sfpPh = ta.pivothigh(sfpLen, 1)
+sfpPl = ta.pivotlow(sfpLen, 1)
+
+[sfpLtfClose, sfpLtfVolume] = request.security_lower_tf(syminfo.tickerid, sfpRes, [close, volume])
+sfpLtfSize = sfpLtfClose.size()
+
+if sfpEnabled
+    if sfpValidate
+        if sfpLtfSize > 0 and sfpLtfSize[1] == 0
+            line.new(bar_index, close, bar_index, close + syminfo.mintick, color=color.silver, style=line.style_dotted, extend=extend.both)
+
+    if sfpBear
+        if sfpPh.n()
+            sfpSwingH.bix := bar_index - 1
+            sfpSwingH.prc := sfpPh
+
+        sw = sfpSwingH.prc
+        bx = sfpSwingH.bix
+        if high > sw and open < sw and close < sw
+            valid = true
+            if sfpValidate
+                if sfpLtfClose.size() > 0
+                    outsideVolume = 0.0
+                    totalVolume = sfpLtfVolume.sum()
+                    for j = 0 to sfpLtfClose.size() - 1
+                        if sfpLtfClose.get(j) > sw
+                            outsideVolume += sfpLtfVolume.get(j)
+                    if (sfpValHigher ? 100 / totalVolume * outsideVolume < sfpPercent : 100 / totalVolume * outsideVolume > sfpPercent)
+                        valid := false
+
+            if valid
+                opposL = sw
+                opposB = bar_index
+                for i = 1 to bar_index - bx - 1
+                    if low[i] < opposL
+                        opposL := low[i]
+                        opposB := bar_index - i
+
+                if not sfpPivH.confirmed
+                    sfpPivH.swing_line.delete()
+                    sfpPivH.oppos_line.delete()
+                    sfpPivH.wicky_line.delete()
+                    sfpPivH.wicky_label.delete()
+
+                sfpPivH := sfp_piv.new(sw, bx, opposL, opposB, true, false)
+
+                if sfpSwingLine
+                    sfpPivH.swing_line := line.new(bx, sw, bar_index, sw, color=sfpColBr)
+                if sfpOpposLine
+                    sfpPivH.oppos_line := line.new(opposB, opposL, bar_index, opposL, color=sfpColBr, style=line.style_dotted)
+                if sfpSfpLine
+                    sfpPivH.wicky_line := line.new(bar_index, high, bar_index, sw, color=sfpColBr2, width=3)
+                if sfpSfpLabel
+                    sfpPivH.wicky_label := label.new(bar_index, high, style=label.style_label_down, text="SFP", textcolor=sfpColBr, color=sfpINV, size=size.normal)
+
+        if sfpPivH.active and not sfpPivH.confirmed
+            sfpPivH.swing_line.set_x2(bar_index)
+            sfpPivH.oppos_line.set_x2(bar_index)
+            if close < sfpPivH.oppos_prc
+                sfpPivH.confirmed := true
+                if sfpPivH.wicky_label.get_x() == bar_index
+                    sfpPivH.wicky_label.set_text("SFP\n▼")
+                else
+                    label.new(bar_index, high, style=label.style_label_down, text="▼", textcolor=sfpColBr, color=sfpINV, size=size.normal)
+
+        if (bar_index - sfpPivH.swing_bix > 500) or close > sfpPivH.swing_prc
+            sfpPivH.active := false
+            if not sfpPivH.confirmed
+                sfpPivH.swing_line.delete()
+                sfpPivH.oppos_line.delete()
+                sfpPivH.wicky_line.delete()
+                sfpPivH.wicky_label.delete()
+
+    if sfpBull
+        if sfpPl.n()
+            sfpSwingL.bix := bar_index - 1
+            sfpSwingL.prc := sfpPl
+
+        sw = sfpSwingL.prc
+        bx = sfpSwingL.bix
+        if low < sw and open > sw and close > sw
+            valid = true
+            if sfpValidate
+                if sfpLtfClose.size() > 0
+                    outsideVolume = 0.0
+                    totalVolume = sfpLtfVolume.sum()
+                    for j = 0 to sfpLtfClose.size() - 1
+                        if sfpLtfClose.get(j) < sw
+                            outsideVolume += sfpLtfVolume.get(j)
+                    if (sfpValHigher ? 100 / totalVolume * outsideVolume < sfpPercent : 100 / totalVolume * outsideVolume > sfpPercent)
+                        valid := false
+
+            if valid
+                opposH = sw
+                opposB = bar_index
+                for i = 1 to bar_index - bx - 1
+                    if high[i] > opposH
+                        opposH := high[i]
+                        opposB := bar_index - i
+
+                if not sfpPivL.confirmed
+                    sfpPivL.swing_line.delete()
+                    sfpPivL.oppos_line.delete()
+                    sfpPivL.wicky_line.delete()
+                    sfpPivL.wicky_label.delete()
+
+                sfpPivL := sfp_piv.new(sw, bx, opposH, opposB, true, false)
+
+                if sfpSwingLine
+                    sfpPivL.swing_line := line.new(bx, sw, bar_index, sw, color=sfpColBl)
+                if sfpOpposLine
+                    sfpPivL.oppos_line := line.new(opposB, opposH, bar_index, opposH, color=sfpColBl, style=line.style_dotted)
+                if sfpSfpLine
+                    sfpPivL.wicky_line := line.new(bar_index, low, bar_index, sw, color=sfpColBl2, width=3)
+                if sfpSfpLabel
+                    sfpPivL.wicky_label := label.new(bar_index, low, style=label.style_label_up, text="SFP", textcolor=sfpColBl, color=sfpINV, size=size.normal)
+
+        if sfpPivL.active and not sfpPivL.confirmed
+            sfpPivL.swing_line.set_x2(bar_index)
+            sfpPivL.oppos_line.set_x2(bar_index)
+            if close > sfpPivL.oppos_prc
+                sfpPivL.confirmed := true
+                if sfpPivL.wicky_label.get_x() == bar_index
+                    sfpPivL.wicky_label.set_text("▲\nSFP")
+                else
+                    label.new(bar_index, low, style=label.style_label_up, text="▲", textcolor=sfpColBl, color=sfpINV, size=size.normal)
+
+        if (bar_index - sfpPivL.swing_bix > 500) or close < sfpPivL.swing_prc
+            sfpPivL.active := false
+            if not sfpPivL.confirmed
+                sfpPivL.swing_line.delete()
+                sfpPivL.oppos_line.delete()
+                sfpPivL.wicky_line.delete()
+                sfpPivL.wicky_label.delete()
+
+if barstate.islast and sfpEnabled and sfpValidate and sfpShowDash and not na(sfpTb)
+    table.cell(sfpTb, 0, 0, str.format("LTF: {0}", sfpRes), text_color=color.white, text_size=sfpTableSize)
+else if barstate.islast and not na(sfpTb) and (not sfpEnabled or not sfpShowDash)
+    table.cell(sfpTb, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sfpTableSize)

@@ -82,6 +82,9 @@ dashTextSize = input.string("Small", "Testo", options=["Tiny", "Small", "Normal"
 
 alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
 
+labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
+labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="Layout")
+
 rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
 rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
 rsiCrossMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI Cross")
@@ -528,11 +531,23 @@ plot(not onlyShSlMode and showUntilNyClose and show02CandleLines and isAfter02 ?
 is_1300 = hour(time, tz) == 13 and minute(time, tz) == 0
 c02AboveLondon = not na(c02H) and not na(c02L) and not na(londonHighLive) and c02H > londonHighLive and c02L > londonHighLive
 var label[] mcSigLabels = array.new_label()
+f_sigSlot(_txt) =>
+    str.contains(_txt, "CRT") ? 6 :
+     str.contains(_txt, "RSI") ? 5 :
+     str.contains(_txt, "DIV") ? 4 :
+     str.contains(_txt, "SH") ? 3 :
+     str.contains(_txt, "SL") ? 3 :
+     str.contains(_txt, "OVER") ? 2 :
+     str.contains(_txt, "KISS") ? 1 :
+     _txt == "BUY" or _txt == "SELL" ? 1 : 0
 f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
     if onlyShSlMode
         na
     else
-        lb = label.new(_x, _y, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
+        step = labelStackTicks * syminfo.mintick
+        slot = labelAutoStack and (_style == label.style_label_up or _style == label.style_label_down) ? f_sigSlot(_txt) : 0
+        yAdj = _style == label.style_label_up ? (_y - slot * step) : _style == label.style_label_down ? (_y + slot * step) : _y
+        lb = label.new(_x, yAdj, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
         array.push(mcSigLabels, lb)
         if array.size(mcSigLabels) > 250
             label.delete(array.shift(mcSigLabels))
@@ -1553,12 +1568,46 @@ if rsiCrossShowLabels and rsiCrossUpSig
 if rsiCrossShowLabels and rsiCrossDnSig
     f_addSigLabel(rsiCrossPivotBar, high[swingCenter], "RSI↓", color.new(color.orange, 0), color.black, label.style_label_down, size.tiny)
 
-plotshape(swingShowHighOut, title="Swing High", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SH", offset=-swingCenter)
-plotshape(swingShowLowOut, title="Swing Low", location=location.belowbar, style=shape.triangleup, color=color.new(color.lime, 0), size=size.small, text="SL", offset=-swingCenter)
 swingBullDivPlot = not onlyShSlMode and swingBullDiv and (not swingDivShowDailyExtreme or divNearDailyLow)
 swingBearDivPlot = not onlyShSlMode and swingBearDiv and (not swingDivShowDailyExtreme or divNearDailyHigh)
-plotshape(swingBullDivPlot, title="Bullish Divergence", location=location.belowbar, style=shape.labelup, color=color.new(color.aqua, 0), text="DIV", textcolor=color.black, size=size.tiny, offset=-swingCenter)
-plotshape(swingBearDivPlot, title="Bearish Divergence", location=location.abovebar, style=shape.labeldown, color=color.new(color.fuchsia, 0), text="DIV", textcolor=color.white, size=size.tiny, offset=-swingCenter)
+swingPivotBar = bar_index - swingCenter
+swingStep = labelStackTicks * syminfo.mintick
+var int lastShLblBar = na
+var int lastSlLblBar = na
+var int lastDivBullLblBar = na
+var int lastDivBearLblBar = na
+
+if swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
+    y = high[swingCenter] + (labelAutoStack ? 3 * swingStep : 0)
+    lb = label.new(swingPivotBar, y, "SH", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+    array.push(mcSigLabels, lb)
+    if array.size(mcSigLabels) > 250
+        label.delete(array.shift(mcSigLabels))
+    lastShLblBar := swingPivotBar
+
+if swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
+    y = low[swingCenter] - (labelAutoStack ? 3 * swingStep : 0)
+    lb = label.new(swingPivotBar, y, "SL", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
+    array.push(mcSigLabels, lb)
+    if array.size(mcSigLabels) > 250
+        label.delete(array.shift(mcSigLabels))
+    lastSlLblBar := swingPivotBar
+
+if swingBullDivPlot and (na(lastDivBullLblBar) or lastDivBullLblBar != swingPivotBar)
+    y = low[swingCenter] - (labelAutoStack ? 4 * swingStep : 0)
+    lb = label.new(swingPivotBar, y, "DIV", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+    array.push(mcSigLabels, lb)
+    if array.size(mcSigLabels) > 250
+        label.delete(array.shift(mcSigLabels))
+    lastDivBullLblBar := swingPivotBar
+
+if swingBearDivPlot and (na(lastDivBearLblBar) or lastDivBearLblBar != swingPivotBar)
+    y = high[swingCenter] + (labelAutoStack ? 4 * swingStep : 0)
+    lb = label.new(swingPivotBar, y, "DIV", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+    array.push(mcSigLabels, lb)
+    if array.size(mcSigLabels) > 250
+        label.delete(array.shift(mcSigLabels))
+    lastDivBearLblBar := swingPivotBar
 
 leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
 rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars

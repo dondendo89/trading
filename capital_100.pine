@@ -1,5 +1,5 @@
 //@version=5
-indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500, max_lines_count=500)
+indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
 
 // --- INPUT ---
 showSessions = input.bool(false, "Mostra Box Sessioni (Asia, London, NY)")
@@ -84,6 +84,17 @@ alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Ale
 
 labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
 labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="Layout")
+
+vpEnabled = input.bool(false, "Volume Profile (Asia→NY)", group="Volume Profile")
+vpBinTicks = input.int(10, "Bin size (ticks)", minval=1, group="Volume Profile")
+vpMaxBinsDraw = input.int(80, "Max bins disegnati", minval=10, maxval=300, group="Volume Profile")
+vpWidthBars = input.int(30, "Larghezza max (barre)", minval=5, maxval=200, group="Volume Profile")
+vpValueAreaPct = input.int(70, "Value Area %", minval=50, maxval=95, group="Volume Profile")
+vpShowPoc = input.bool(true, "Mostra POC", group="Volume Profile")
+vpShowVa = input.bool(true, "Mostra Value Area", group="Volume Profile")
+vpColor = input.color(color.new(color.blue, 70), "Colore", group="Volume Profile")
+vpVaColor = input.color(color.new(color.orange, 70), "Colore Value Area", group="Volume Profile")
+vpPocColor = input.color(color.new(color.white, 0), "Colore POC", group="Volume Profile")
 
 rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
 rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
@@ -246,6 +257,24 @@ f_alert(_cond, _msg) =>
     if alertsEnabled and _cond
         alert(_msg, alert.freq_once_per_bar_close)
 
+f_vpVa(_arr, _poc, _pct) =>
+    n = array.size(_arr)
+    tot = array.sum(_arr)
+    target = tot * _pct / 100.0
+    lo = _poc
+    hi = _poc
+    cum = array.get(_arr, _poc)
+    while cum < target and (lo > 0 or hi < n - 1)
+        nextLo = lo > 0 ? array.get(_arr, lo - 1) : -1.0
+        nextHi = hi < n - 1 ? array.get(_arr, hi + 1) : -1.0
+        if nextHi >= nextLo
+            hi += 1
+            cum += nextHi
+        else
+            lo -= 1
+            cum += nextLo
+    [lo, hi]
+
 crtConfirmLeft = swingPatternUseTfBars ? (crtTf == "1" ? swingPatternLeftBars_M1 : crtTf == "15" ? swingPatternLeftBars_M15 : crtTf == "60" ? swingPatternLeftBars_H1 : crtTf == "240" ? swingPatternLeftBars_H4 : swingPatternLeftBars) : swingPatternLeftBars
 crtConfirmRight = swingPatternUseTfBars ? (crtTf == "1" ? swingPatternRightBars_M1 : crtTf == "15" ? swingPatternRightBars_M15 : crtTf == "60" ? swingPatternRightBars_H1 : crtTf == "240" ? swingPatternRightBars_H4 : swingPatternRightBars) : swingPatternRightBars
 
@@ -345,6 +374,140 @@ else
     if not na(dLowLbl)
         label.delete(dLowLbl)
         dLowLbl := na
+
+vpBin = vpBinTicks * syminfo.mintick
+var float vpOrigin = na
+var float vpSessLow = na
+var float vpSessHigh = na
+var float[] vpVol = array.new_float()
+var box[] vpBoxes = array.new_box()
+var line vpPocLine = na
+var line vpVaLowLine = na
+var line vpVaHighLine = na
+
+vpReset = is_0000 or isNewDay
+if vpReset
+    vpOrigin := na
+    vpSessLow := na
+    vpSessHigh := na
+    while array.size(vpVol) > 0
+        array.pop(vpVol)
+    while array.size(vpBoxes) > 0
+        box.delete(array.pop(vpBoxes))
+    if not na(vpPocLine)
+        line.delete(vpPocLine)
+        vpPocLine := na
+    if not na(vpVaLowLine)
+        line.delete(vpVaLowLine)
+        vpVaLowLine := na
+    if not na(vpVaHighLine)
+        line.delete(vpVaHighLine)
+        vpVaHighLine := na
+
+vpEnd = (not showUntilNyClose) and showUntilNyClose[1]
+if vpEnabled and not onlyShSlMode and vpEnd
+    vpOrigin := na
+    vpSessLow := na
+    vpSessHigh := na
+    while array.size(vpVol) > 0
+        array.pop(vpVol)
+    while array.size(vpBoxes) > 0
+        box.delete(array.pop(vpBoxes))
+    if not na(vpPocLine)
+        line.delete(vpPocLine)
+        vpPocLine := na
+    if not na(vpVaLowLine)
+        line.delete(vpVaLowLine)
+        vpVaLowLine := na
+    if not na(vpVaHighLine)
+        line.delete(vpVaHighLine)
+        vpVaHighLine := na
+
+vpActive = vpEnabled and not onlyShSlMode and showUntilNyClose
+if vpActive
+    vpSessLow := na(vpSessLow) ? low : math.min(vpSessLow, low)
+    vpSessHigh := na(vpSessHigh) ? high : math.max(vpSessHigh, high)
+    if na(vpOrigin)
+        vpOrigin := vpSessLow
+        array.push(vpVol, 0.0)
+    if vpSessLow < vpOrigin
+        shiftBins = int(math.ceil((vpOrigin - vpSessLow) / vpBin))
+        for _ = 0 to shiftBins - 1
+            array.unshift(vpVol, 0.0)
+        vpOrigin -= shiftBins * vpBin
+    needHigh = vpOrigin + array.size(vpVol) * vpBin
+    if vpSessHigh > needHigh
+        addBins = int(math.ceil((vpSessHigh - needHigh) / vpBin))
+        for _ = 0 to addBins
+            array.push(vpVol, 0.0)
+    idx = int(math.floor((hlc3 - vpOrigin) / vpBin))
+    idx := math.max(0, math.min(idx, array.size(vpVol) - 1))
+    array.set(vpVol, idx, array.get(vpVol, idx) + volume)
+
+if vpEnabled and not onlyShSlMode and showUntilNyClose and not na(vpOrigin) and array.size(vpVol) > 0 and barstate.islast
+    bins = array.size(vpVol)
+    maxVol = array.max(vpVol)
+    poc = 0
+    for i = 0 to bins - 1
+        if array.get(vpVol, i) == maxVol
+            poc := i
+            break
+    [vaLo, vaHi] = f_vpVa(vpVol, poc, vpValueAreaPct)
+    stride = int(math.max(1, math.ceil(bins / vpMaxBinsDraw)))
+    groups = int(math.ceil(bins / stride))
+    while array.size(vpBoxes) > groups
+        box.delete(array.pop(vpBoxes))
+    while array.size(vpBoxes) < groups
+        array.push(vpBoxes, box.new(bar_index, close, bar_index, close, bgcolor=vpColor, border_width=0))
+    for g = 0 to groups - 1
+        s = g * stride
+        e = math.min(bins - 1, s + stride - 1)
+        vSum = 0.0
+        for j = s to e
+            vSum += array.get(vpVol, j)
+        w = maxVol > 0 ? int(math.round(vSum / maxVol * vpWidthBars)) : 0
+        pLo = vpOrigin + s * vpBin
+        pHi = vpOrigin + (e + 1) * vpBin
+        inVa = vpShowVa and (s <= vaHi and e >= vaLo)
+        bg = inVa ? vpVaColor : vpColor
+        b = array.get(vpBoxes, g)
+        box.set_left(b, bar_index - w)
+        box.set_right(b, bar_index)
+        box.set_bottom(b, pLo)
+        box.set_top(b, pHi)
+        box.set_bgcolor(b, bg)
+        box.set_border_width(b, 0)
+    pocY = vpOrigin + (poc + 0.5) * vpBin
+    if vpShowPoc
+        if na(vpPocLine)
+            vpPocLine := line.new(bar_index - vpWidthBars, pocY, bar_index, pocY, xloc=xloc.bar_index, extend=extend.none, color=vpPocColor, width=2)
+        else
+            line.set_xy1(vpPocLine, bar_index - vpWidthBars, pocY)
+            line.set_xy2(vpPocLine, bar_index, pocY)
+    else
+        if not na(vpPocLine)
+            line.delete(vpPocLine)
+            vpPocLine := na
+    if vpShowVa
+        vaLoY = vpOrigin + vaLo * vpBin
+        vaHiY = vpOrigin + (vaHi + 1) * vpBin
+        if na(vpVaLowLine)
+            vpVaLowLine := line.new(bar_index - vpWidthBars, vaLoY, bar_index, vaLoY, xloc=xloc.bar_index, extend=extend.none, color=color.new(vpPocColor, 40), width=1)
+        else
+            line.set_xy1(vpVaLowLine, bar_index - vpWidthBars, vaLoY)
+            line.set_xy2(vpVaLowLine, bar_index, vaLoY)
+        if na(vpVaHighLine)
+            vpVaHighLine := line.new(bar_index - vpWidthBars, vaHiY, bar_index, vaHiY, xloc=xloc.bar_index, extend=extend.none, color=color.new(vpPocColor, 40), width=1)
+        else
+            line.set_xy1(vpVaHighLine, bar_index - vpWidthBars, vaHiY)
+            line.set_xy2(vpVaHighLine, bar_index, vaHiY)
+    else
+        if not na(vpVaLowLine)
+            line.delete(vpVaLowLine)
+            vpVaLowLine := na
+        if not na(vpVaHighLine)
+            line.delete(vpVaHighLine)
+            vpVaHighLine := na
 
 // --- 2. NY OPEN (14:30) ---
 var float nyOpenPrice = na

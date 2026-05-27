@@ -157,6 +157,20 @@ sfpColBl = input.color(#089981, "Lines / Labels (Bullish)", group="SFP Lux - Sty
 sfpColBr = input.color(#f23645, "Lines / Labels (Bearish)", group="SFP Lux - Style")
 sfpColBl2 = input.color(#08998180, "SFP Wicks (Bullish)", group="SFP Lux - Style")
 sfpColBr2 = input.color(#f2364580, "SFP Wicks (Bearish)", group="SFP Lux - Style")
+sfpUseKillzone = input.bool(true, "Solo in Killzone (14:30-16:30)", group="SFP Lux - Filtri")
+sfpUseDailyExtreme = input.bool(true, "Solo vicino a Daily High/Low", group="SFP Lux - Filtri")
+sfpDailyExtremeBufferTicks = input.int(20, "Distanza max da Daily (ticks)", minval=0, group="SFP Lux - Filtri")
+sfpMinWickTicks = input.int(10, "Min wick oltre swing (ticks)", minval=0, group="SFP Lux - Filtri")
+sfpShowUnconfirmed = input.bool(false, "Mostra pattern non confermato", group="SFP Lux - Filtri")
+
+qmEnabled = input.bool(false, "Quasimodo (TradingFinder)", group="QM")
+qmUseTfPivots = input.bool(true, "Usa pivot per TF (M1/M5/M15/H1/H4)", group="QM")
+qmPp = input.int(5, "Pivot Period (fallback)", minval=1, group="QM")
+qmPp_M1 = input.int(5, "M1 - Pivot Period", minval=1, group="QM")
+qmPp_M5 = input.int(5, "M5 - Pivot Period", minval=1, group="QM")
+qmPp_M15 = input.int(5, "M15 - Pivot Period", minval=1, group="QM")
+qmPp_H1 = input.int(5, "H1 - Pivot Period", minval=1, group="QM")
+qmPp_H4 = input.int(5, "H4 - Pivot Period", minval=1, group="QM")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
@@ -1216,6 +1230,7 @@ f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and earlySwingLow, "Poss
 f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and earlySwingHigh, "Possibile Swing High in formazione")
 
 tfIsM1 = timeframe.isminutes and timeframe.multiplier == 1
+tfIsM5 = timeframe.isminutes and timeframe.multiplier == 5
 tfIsM15 = timeframe.isminutes and timeframe.multiplier == 15
 tfIsH1 = timeframe.isminutes and timeframe.multiplier == 60
 tfIsH4 = timeframe.isminutes and timeframe.multiplier == 240
@@ -1897,6 +1912,10 @@ sfpPl = ta.pivotlow(sfpLen, 1)
 sfpLtfSize = sfpLtfClose.size()
 
 if sfpEnabled
+    sfpDailyBuf = sfpDailyExtremeBufferTicks * syminfo.mintick
+    sfpMinWick = sfpMinWickTicks * syminfo.mintick
+    sfpKillOk = not sfpUseKillzone or isKill
+
     if sfpValidate
         if sfpLtfSize > 0 and sfpLtfSize[1] == 0
             line.new(bar_index, close, bar_index, close + syminfo.mintick, color=color.silver, style=line.style_dotted, extend=extend.both)
@@ -1908,7 +1927,9 @@ if sfpEnabled
 
         sw = sfpSwingH.prc
         bx = sfpSwingH.bix
-        if high > sw and open < sw and close < sw
+        sfpDailyOkBear = not sfpUseDailyExtreme or (not na(dHigh) and math.abs(high - dHigh) <= sfpDailyBuf)
+        sfpWickOkBear = sfpMinWickTicks == 0 or (high - sw) >= sfpMinWick
+        if high > sw and open < sw and close < sw and sfpKillOk and sfpDailyOkBear and sfpWickOkBear
             valid = true
             if sfpValidate
                 if sfpLtfClose.size() > 0
@@ -1940,9 +1961,9 @@ if sfpEnabled
                     sfpPivH.swing_line := line.new(bx, sw, bar_index, sw, color=sfpColBr)
                 if sfpOpposLine
                     sfpPivH.oppos_line := line.new(opposB, opposL, bar_index, opposL, color=sfpColBr, style=line.style_dotted)
-                if sfpSfpLine
+                if sfpShowUnconfirmed and sfpSfpLine
                     sfpPivH.wicky_line := line.new(bar_index, high, bar_index, sw, color=sfpColBr2, width=3)
-                if sfpSfpLabel
+                if sfpShowUnconfirmed and sfpSfpLabel
                     sfpPivH.wicky_label := label.new(bar_index, high, style=label.style_label_down, text="SFP", textcolor=sfpColBr, color=sfpINV, size=size.normal)
 
         if sfpPivH.active and not sfpPivH.confirmed
@@ -1950,10 +1971,11 @@ if sfpEnabled
             sfpPivH.oppos_line.set_x2(bar_index)
             if close < sfpPivH.oppos_prc
                 sfpPivH.confirmed := true
-                if sfpPivH.wicky_label.get_x() == bar_index
-                    sfpPivH.wicky_label.set_text("SFP\n▼")
-                else
-                    label.new(bar_index, high, style=label.style_label_down, text="▼", textcolor=sfpColBr, color=sfpINV, size=size.normal)
+                if sfpSfpLabel
+                    if sfpShowUnconfirmed and sfpPivH.wicky_label.get_x() == bar_index
+                        sfpPivH.wicky_label.set_text("SFP\n▼")
+                    else
+                        label.new(bar_index, high, style=label.style_label_down, text="SFP\n▼", textcolor=sfpColBr, color=sfpINV, size=size.normal)
 
         if (bar_index - sfpPivH.swing_bix > 500) or close > sfpPivH.swing_prc
             sfpPivH.active := false
@@ -1970,7 +1992,9 @@ if sfpEnabled
 
         sw = sfpSwingL.prc
         bx = sfpSwingL.bix
-        if low < sw and open > sw and close > sw
+        sfpDailyOkBull = not sfpUseDailyExtreme or (not na(dLow) and math.abs(low - dLow) <= sfpDailyBuf)
+        sfpWickOkBull = sfpMinWickTicks == 0 or (sw - low) >= sfpMinWick
+        if low < sw and open > sw and close > sw and sfpKillOk and sfpDailyOkBull and sfpWickOkBull
             valid = true
             if sfpValidate
                 if sfpLtfClose.size() > 0
@@ -2002,9 +2026,9 @@ if sfpEnabled
                     sfpPivL.swing_line := line.new(bx, sw, bar_index, sw, color=sfpColBl)
                 if sfpOpposLine
                     sfpPivL.oppos_line := line.new(opposB, opposH, bar_index, opposH, color=sfpColBl, style=line.style_dotted)
-                if sfpSfpLine
+                if sfpShowUnconfirmed and sfpSfpLine
                     sfpPivL.wicky_line := line.new(bar_index, low, bar_index, sw, color=sfpColBl2, width=3)
-                if sfpSfpLabel
+                if sfpShowUnconfirmed and sfpSfpLabel
                     sfpPivL.wicky_label := label.new(bar_index, low, style=label.style_label_up, text="SFP", textcolor=sfpColBl, color=sfpINV, size=size.normal)
 
         if sfpPivL.active and not sfpPivL.confirmed
@@ -2012,10 +2036,11 @@ if sfpEnabled
             sfpPivL.oppos_line.set_x2(bar_index)
             if close > sfpPivL.oppos_prc
                 sfpPivL.confirmed := true
-                if sfpPivL.wicky_label.get_x() == bar_index
-                    sfpPivL.wicky_label.set_text("▲\nSFP")
-                else
-                    label.new(bar_index, low, style=label.style_label_up, text="▲", textcolor=sfpColBl, color=sfpINV, size=size.normal)
+                if sfpSfpLabel
+                    if sfpShowUnconfirmed and sfpPivL.wicky_label.get_x() == bar_index
+                        sfpPivL.wicky_label.set_text("▲\nSFP")
+                    else
+                        label.new(bar_index, low, style=label.style_label_up, text="▲\nSFP", textcolor=sfpColBl, color=sfpINV, size=size.normal)
 
         if (bar_index - sfpPivL.swing_bix > 500) or close < sfpPivL.swing_prc
             sfpPivL.active := false
@@ -2029,3 +2054,233 @@ if barstate.islast and sfpEnabled and sfpValidate and sfpShowDash and not na(sfp
     table.cell(sfpTb, 0, 0, str.format("LTF: {0}", sfpRes), text_color=color.white, text_size=sfpTableSize)
 else if barstate.islast and not na(sfpTb) and (not sfpEnabled or not sfpShowDash)
     table.cell(sfpTb, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sfpTableSize)
+
+qmPPsel = qmUseTfPivots ? (tfIsM1 ? qmPp_M1 : tfIsM5 ? qmPp_M5 : tfIsM15 ? qmPp_M15 : tfIsH1 ? qmPp_H1 : tfIsH4 ? qmPp_H4 : qmPp) : qmPp
+qmATR = ta.atr(21)
+var string[] qmTypes = array.new_string()
+var float[] qmVals = array.new_float()
+var int[] qmIdxs = array.new_int()
+var line[] qmLines = array.new_line()
+var label[] qmLabels = array.new_label()
+qmMaxObjs = 250
+
+f_qmPushLine(_ln) =>
+    array.push(qmLines, _ln)
+    if array.size(qmLines) > qmMaxObjs
+        line.delete(array.shift(qmLines))
+
+f_qmPushLabel(_lb) =>
+    array.push(qmLabels, _lb)
+    if array.size(qmLabels) > qmMaxObjs
+        label.delete(array.shift(qmLabels))
+
+qmHighPivot = ta.pivothigh(qmPPsel, qmPPsel)
+qmLowPivot = ta.pivotlow(qmPPsel, qmPPsel)
+qmHighValue = ta.valuewhen(not na(qmHighPivot), high[qmPPsel], 0)
+qmLowValue = ta.valuewhen(not na(qmLowPivot), low[qmPPsel], 0)
+qmHighIndex = ta.valuewhen(not na(qmHighPivot), bar_index[qmPPsel], 0)
+qmLowIndex = ta.valuewhen(not na(qmLowPivot), bar_index[qmPPsel], 0)
+
+if qmEnabled and not onlyShSlMode
+    if not na(qmHighPivot) and not na(qmLowPivot)
+        if array.size(qmTypes) >= 1
+            last = array.get(qmTypes, array.size(qmTypes) - 1)
+            if (last == "L" or last == "LL")
+                if qmLowPivot < array.get(qmVals, array.size(qmTypes) - 1)
+                    array.remove(qmTypes, array.size(qmTypes) - 1)
+                    array.remove(qmVals, array.size(qmVals) - 1)
+                    array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                    array.push(qmVals, qmLowValue)
+                    array.push(qmIdxs, qmLowIndex)
+                else
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                    array.push(qmVals, qmHighValue)
+                    array.push(qmIdxs, qmHighIndex)
+            else if (last == "H" or last == "HH")
+                if qmHighPivot > array.get(qmVals, array.size(qmTypes) - 1)
+                    array.remove(qmTypes, array.size(qmTypes) - 1)
+                    array.remove(qmVals, array.size(qmVals) - 1)
+                    array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                    array.push(qmVals, qmHighValue)
+                    array.push(qmIdxs, qmHighIndex)
+                else
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                    array.push(qmVals, qmLowValue)
+                    array.push(qmIdxs, qmLowIndex)
+            else if (last == "LH")
+                if qmHighPivot < array.get(qmVals, array.size(qmTypes) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                    array.push(qmVals, qmLowValue)
+                    array.push(qmIdxs, qmLowIndex)
+                else if qmHighPivot > array.get(qmVals, array.size(qmTypes) - 1)
+                    if close < array.get(qmVals, array.size(qmTypes) - 1)
+                        array.remove(qmTypes, array.size(qmTypes) - 1)
+                        array.remove(qmVals, array.size(qmVals) - 1)
+                        array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                        array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                        array.push(qmVals, qmHighValue)
+                        array.push(qmIdxs, qmHighIndex)
+                    else if close > array.get(qmVals, array.size(qmTypes) - 1)
+                        array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                        array.push(qmVals, qmLowValue)
+                        array.push(qmIdxs, qmLowIndex)
+            else if (last == "HL")
+                if qmLowPivot > array.get(qmVals, array.size(qmTypes) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                    array.push(qmVals, qmHighValue)
+                    array.push(qmIdxs, qmHighIndex)
+                else if qmLowPivot < array.get(qmVals, array.size(qmTypes) - 1)
+                    if close > array.get(qmVals, array.size(qmTypes) - 1)
+                        array.remove(qmTypes, array.size(qmTypes) - 1)
+                        array.remove(qmVals, array.size(qmVals) - 1)
+                        array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                        array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                        array.push(qmVals, qmLowValue)
+                        array.push(qmIdxs, qmLowIndex)
+                    else if close < array.get(qmVals, array.size(qmTypes) - 1)
+                        array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                        array.push(qmVals, qmHighValue)
+                        array.push(qmIdxs, qmHighIndex)
+    else if not na(qmHighPivot)
+        if array.size(qmTypes) == 0
+            array.insert(qmTypes, 0, "H")
+            array.insert(qmVals, 0, qmHighValue)
+            array.insert(qmIdxs, 0, qmHighIndex)
+        else
+            last = array.get(qmTypes, array.size(qmTypes) - 1)
+            if (last == "L" or last == "HL" or last == "LL")
+                if qmHighPivot > array.get(qmVals, array.size(qmTypes) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                    array.push(qmVals, qmHighValue)
+                    array.push(qmIdxs, qmHighIndex)
+                else if qmHighPivot < array.get(qmVals, array.size(qmTypes) - 1)
+                    array.remove(qmTypes, array.size(qmTypes) - 1)
+                    array.remove(qmVals, array.size(qmVals) - 1)
+                    array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                    array.push(qmVals, qmLowValue)
+                    array.push(qmIdxs, qmLowIndex)
+            else if (last == "H" or last == "HH" or last == "LH")
+                if array.get(qmVals, array.size(qmVals) - 1) < qmHighValue
+                    array.remove(qmTypes, array.size(qmTypes) - 1)
+                    array.remove(qmVals, array.size(qmVals) - 1)
+                    array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                    array.push(qmVals, qmHighValue)
+                    array.push(qmIdxs, qmHighIndex)
+    else if not na(qmLowPivot)
+        if array.size(qmTypes) == 0
+            array.insert(qmTypes, 0, "L")
+            array.insert(qmVals, 0, qmLowValue)
+            array.insert(qmIdxs, 0, qmLowIndex)
+        else
+            last = array.get(qmTypes, array.size(qmTypes) - 1)
+            if (last == "H" or last == "HH" or last == "LH")
+                if qmLowPivot < array.get(qmVals, array.size(qmTypes) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                    array.push(qmVals, qmLowValue)
+                    array.push(qmIdxs, qmLowIndex)
+                else if qmLowPivot > array.get(qmVals, array.size(qmTypes) - 1)
+                    array.remove(qmTypes, array.size(qmTypes) - 1)
+                    array.remove(qmVals, array.size(qmVals) - 1)
+                    array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmHighValue ? "HH" : "LH" : "H")
+                    array.push(qmVals, qmHighValue)
+                    array.push(qmIdxs, qmHighIndex)
+            else if (last == "L" or last == "HL" or last == "LL")
+                if array.get(qmVals, array.size(qmVals) - 1) > qmLowValue
+                    array.remove(qmTypes, array.size(qmTypes) - 1)
+                    array.remove(qmVals, array.size(qmVals) - 1)
+                    array.remove(qmIdxs, array.size(qmIdxs) - 1)
+                    array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
+                    array.push(qmVals, qmLowValue)
+                    array.push(qmIdxs, qmLowIndex)
+
+var int qmCheckBe = 0
+var int qmCheckBu = 0
+var float qmBearStart = na
+var float qmBullStart = na
+
+if qmEnabled and not onlyShSlMode and array.size(qmTypes) > 5
+    s = array.size(qmTypes)
+    th1 = array.get(qmTypes, s - 1)
+    th2 = array.get(qmTypes, s - 2)
+    th3 = array.get(qmTypes, s - 3)
+    th4 = array.get(qmTypes, s - 4)
+    th5 = array.get(qmTypes, s - 5)
+
+    ih = array.get(qmIdxs, s - 1)
+    ih1 = array.get(qmIdxs, s - 1)
+    ih2 = array.get(qmIdxs, s - 2)
+    ih3 = array.get(qmIdxs, s - 3)
+    ih4 = array.get(qmIdxs, s - 4)
+    ih5 = array.get(qmIdxs, s - 5)
+
+    vh1 = array.get(qmVals, s - 1)
+    vh2 = array.get(qmVals, s - 2)
+    vh3 = array.get(qmVals, s - 3)
+    vh4 = array.get(qmVals, s - 4)
+    vh5 = array.get(qmVals, s - 5)
+
+    tl1 = array.get(qmTypes, s - 1)
+    tl2 = array.get(qmTypes, s - 2)
+    tl3 = array.get(qmTypes, s - 3)
+    tl4 = array.get(qmTypes, s - 4)
+    tl5 = array.get(qmTypes, s - 5)
+
+    il = array.get(qmIdxs, s - 1)
+    il1 = array.get(qmIdxs, s - 1)
+    il2 = array.get(qmIdxs, s - 2)
+    il3 = array.get(qmIdxs, s - 3)
+    il4 = array.get(qmIdxs, s - 4)
+    il5 = array.get(qmIdxs, s - 5)
+
+    vl1 = array.get(qmVals, s - 1)
+    vl2 = array.get(qmVals, s - 2)
+    vl3 = array.get(qmVals, s - 3)
+    vl4 = array.get(qmVals, s - 4)
+    vl5 = array.get(qmVals, s - 5)
+
+    bearQM = th1 == "LL" and th2 == "HH" and th3 == "HL" and th4 == "HH" and vh5 < vh1 and ih == (bar_index - qmPPsel) and qmCheckBe == 0
+    if bearQM
+        qmBearStart := vh2
+        qmCheckBe := 1
+        beMove = int((ih2 - ih4) / 2)
+        f_qmPushLine(line.new(ih5, vh5, ih4, vh4, color=color.rgb(170, 29, 29), width=2))
+        f_qmPushLine(line.new(ih4, vh4, ih3, vh3, color=color.rgb(170, 29, 29), width=2))
+        f_qmPushLine(line.new(ih3, vh3, ih2, vh2, color=color.rgb(170, 29, 29), width=2))
+        f_qmPushLine(line.new(ih2, vh2, ih1, vh1, color=color.rgb(170, 29, 29), width=2))
+        f_qmPushLine(line.new(ih1, vh1, ih1 + beMove - 2, vh4, color=color.rgb(252, 173, 4), width=2, style=line.style_arrow_right))
+        f_qmPushLine(line.new(ih4, vh4, ih1 + beMove, vh4, color=color.rgb(0, 0, 0), width=1, style=line.style_dotted))
+        f_qmPushLine(line.new(ih2, vh2 + (qmATR / 2), ih1 + beMove, vh2 + (qmATR / 2), color=color.rgb(170, 29, 29), width=1, style=line.style_dotted))
+        f_qmPushLine(line.new(ih3, vh3, ih1 + beMove, vh3, color=color.rgb(91, 172, 74), width=1, style=line.style_dotted))
+        f_qmPushLine(line.new(ih1, vh1, ih1 + beMove, vh1, color=color.rgb(91, 172, 74), width=1, style=line.style_dotted))
+        f_qmPushLabel(label.new(ih1 + beMove + 1, vh4, "Entry", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_qmPushLabel(label.new(ih1 + beMove + 1, vh2 + (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_qmPushLabel(label.new(ih1 + beMove + 1, vh3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_qmPushLabel(label.new(ih1 + beMove + 1, vh1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+    if not na(qmBearStart) and qmBearStart != vh2
+        qmCheckBe := 0
+
+    bullQM = tl1 == "HH" and tl2 == "LL" and tl3 == "LH" and tl4 == "LL" and vl5 > vl1 and il == bar_index - qmPPsel and qmCheckBu == 0
+    if bullQM
+        qmBullStart := vl2
+        qmCheckBu := 1
+        buMove = int((il2 - il4) / 2)
+        f_qmPushLine(line.new(il5, vl5, il4, vl4, color=color.rgb(38, 150, 41), width=2))
+        f_qmPushLine(line.new(il4, vl4, il3, vl3, color=color.rgb(38, 150, 41), width=2))
+        f_qmPushLine(line.new(il3, vl3, il2, vl2, color=color.rgb(38, 150, 41), width=2))
+        f_qmPushLine(line.new(il2, vl2, il1, vl1, color=color.rgb(38, 150, 41), width=2))
+        f_qmPushLine(line.new(il1, vl1, il1 + buMove - 2, vl4, color=color.rgb(4, 215, 252), width=2, style=line.style_arrow_right))
+        f_qmPushLine(line.new(il4, vl4, il1 + buMove, vl4, color=color.rgb(0, 0, 0), width=1, style=line.style_dotted))
+        f_qmPushLine(line.new(il2, vl2 - (qmATR / 2), il1 + buMove, vl2 - (qmATR / 2), color=color.rgb(170, 29, 29), width=1, style=line.style_dotted))
+        f_qmPushLine(line.new(il3, vl3, il1 + buMove, vl3, color=color.rgb(91, 172, 74), width=1, style=line.style_dotted))
+        f_qmPushLine(line.new(il1, vl1, il1 + buMove, vl1, color=color.rgb(91, 172, 74), width=1, style=line.style_dotted))
+        f_qmPushLabel(label.new(il1 + buMove + 1, vl4, "Entry", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_qmPushLabel(label.new(il1 + buMove + 1, vl2 - (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_qmPushLabel(label.new(il1 + buMove + 1, vl3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_qmPushLabel(label.new(il1 + buMove + 1, vl1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+    if not na(qmBullStart) and qmBullStart != vl2
+        qmCheckBu := 0

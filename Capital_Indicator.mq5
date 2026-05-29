@@ -32,11 +32,13 @@
    input bool InpNotifyHistorical = false;
    input bool InpNotifyCrossLevels = false;
    input bool InpNotifyOnlySHSL = true;
-   input bool InpNotifyDiv = true;
-   input bool InpNotifyLux = true;
-   input bool InpNotifyMtf = true;
-   input bool InpNotifyDailyTouch = true;
-   input bool InpNotifyRsiCross = true;
+   input bool InpNotifyOnlyQmEntryTouch = true;
+input bool InpNotifyDiv = false;
+input bool InpNotifyLux = false;
+input bool InpNotifyMtf = false;
+input bool InpNotifyDailyTouch = false;
+input bool InpNotifyRsiCross = false;
+input bool InpNotifyQm = true;
    input bool InpDailyTouchOncePerDay = true;
 
    input group "Logic"
@@ -205,6 +207,28 @@ input ENUM_MTF_RETEST_ZONE_TYPE InpMtfRetestZoneType = MTF_ZONE_OB_FVG;
 input int InpMtfObLookbackBars = 5;
 input int InpMtfSlBufferPoints = 0;
 
+input group "Quasimodo (QM)"
+input bool InpQmEnabled = true;
+input bool InpQmOnlyMode = false;
+input bool InpQmShowShSl = false;
+input bool InpQmShowDaily = true;
+input bool InpQmShowSessions = false;
+input bool InpQmUseTfPivots = true;
+input int InpQmPivotFallback = 5;
+input int InpQmPivot_M1 = 5;
+input int InpQmPivot_M5 = 5;
+input int InpQmPivot_M15 = 5;
+input int InpQmPivot_H1 = 5;
+input int InpQmPivot_H4 = 5;
+input bool InpQmLiveEnabled = true;
+input int InpQmLivePoints = 6;
+input bool InpQmLiveToCurrent = true;
+input color InpQmLiveColorW = clrLimeGreen;
+input color InpQmLiveColorM = clrRed;
+input int InpQmLiveWidth = 2;
+input bool InpQmNotifyEntryTouch = true;
+input bool InpQmNotifyOncePerSetup = true;
+
    input group "Colors"
    input color InpDailyOpenColor = clrPurple;
    input color InpDailyHLColor = clrWhite;
@@ -258,6 +282,21 @@ input int InpMtfSlBufferPoints = 0;
    double g_h02_high = 0.0, g_h02_low = 0.0;
    bool g_h02_has = false;
    datetime g_h02_time = 0;
+
+   string g_qm_types[];
+   double g_qm_vals[];
+   datetime g_qm_times[];
+   int g_qm_baridx[];
+   int g_qm_check_be = 0;
+   int g_qm_check_bu = 0;
+   double g_qm_bear_start = 0.0;
+   double g_qm_bull_start = 0.0;
+   datetime g_qm_last_setup_time = 0;
+   bool g_qm_entry_active = false;
+   double g_qm_entry_price = 0.0;
+   int g_qm_entry_dir = 0;
+   datetime g_qm_entry_setup_time = 0;
+   bool g_qm_entry_notified = false;
 
    datetime g_day_start_time = 0;
    bool g_buy_done = false;
@@ -368,6 +407,7 @@ input int InpMtfSlBufferPoints = 0;
    datetime g_es_last_sp_sl_time = 0;
    int g_rsi_handle = INVALID_HANDLE;
    int g_macd_handle = INVALID_HANDLE;
+   int g_atr_handle = INVALID_HANDLE;
    bool g_swing_last_sl_has = false;
    double g_swing_last_sl_price = 0.0;
    double g_swing_last_sl_rsi = 0.0;
@@ -478,6 +518,14 @@ input int InpMtfSlBufferPoints = 0;
       mainVal = m[0];
       signalVal = s[0];
       return true;
+   }
+
+   double AtrCurrent()
+   {
+      if(g_atr_handle == INVALID_HANDLE) return 0.0;
+      double b[1];
+      if(CopyBuffer(g_atr_handle, 0, 0, 1, b) <= 0) return 0.0;
+      return b[0];
    }
 
    bool MacdBullCrossAtTime(const datetime tBarOpen)
@@ -765,6 +813,426 @@ input int InpMtfSlBufferPoints = 0;
       }
    }
 
+   int QmGetPivotPeriod()
+   {
+      if(!InpQmUseTfPivots) return MathMax(1, InpQmPivotFallback);
+      if(_Period == PERIOD_M1) return MathMax(1, InpQmPivot_M1);
+      if(_Period == PERIOD_M5) return MathMax(1, InpQmPivot_M5);
+      if(_Period == PERIOD_M15) return MathMax(1, InpQmPivot_M15);
+      if(_Period == PERIOD_H1) return MathMax(1, InpQmPivot_H1);
+      if(_Period == PERIOD_H4) return MathMax(1, InpQmPivot_H4);
+      return MathMax(1, InpQmPivotFallback);
+   }
+
+   int QmSize()
+   {
+      return ArraySize(g_qm_types);
+   }
+
+   void QmRemoveAt(const int idx)
+   {
+      int n = QmSize();
+      if(idx < 0 || idx >= n) return;
+      for(int i = idx; i < n - 1; i++)
+      {
+         g_qm_types[i] = g_qm_types[i + 1];
+         g_qm_vals[i] = g_qm_vals[i + 1];
+         g_qm_times[i] = g_qm_times[i + 1];
+         g_qm_baridx[i] = g_qm_baridx[i + 1];
+      }
+      ArrayResize(g_qm_types, n - 1);
+      ArrayResize(g_qm_vals, n - 1);
+      ArrayResize(g_qm_times, n - 1);
+      ArrayResize(g_qm_baridx, n - 1);
+   }
+
+   void QmRemoveLast()
+   {
+      int n = QmSize();
+      if(n <= 0) return;
+      ArrayResize(g_qm_types, n - 1);
+      ArrayResize(g_qm_vals, n - 1);
+      ArrayResize(g_qm_times, n - 1);
+      ArrayResize(g_qm_baridx, n - 1);
+   }
+
+   void QmPush(const string ty, const double val, const datetime t, const int barIdx)
+   {
+      int n = QmSize();
+      ArrayResize(g_qm_types, n + 1);
+      ArrayResize(g_qm_vals, n + 1);
+      ArrayResize(g_qm_times, n + 1);
+      ArrayResize(g_qm_baridx, n + 1);
+      g_qm_types[n] = ty;
+      g_qm_vals[n] = val;
+      g_qm_times[n] = t;
+      g_qm_baridx[n] = barIdx;
+   }
+
+   bool QmIsPivotHighAtShift(const int pivotShift, const int pp)
+   {
+      int bars = Bars(_Symbol, _Period);
+      if(pp < 1) return false;
+      if(pivotShift - pp < 0) return false;
+      if(pivotShift + pp >= bars) return false;
+      double v = iHigh(_Symbol, _Period, pivotShift);
+      if(v <= 0.0) return false;
+      for(int j = pivotShift - pp; j <= pivotShift + pp; j++)
+      {
+         if(j == pivotShift) continue;
+         double hj = iHigh(_Symbol, _Period, j);
+         if(hj >= v) return false;
+      }
+      return true;
+   }
+
+   bool QmIsPivotLowAtShift(const int pivotShift, const int pp)
+   {
+      int bars = Bars(_Symbol, _Period);
+      if(pp < 1) return false;
+      if(pivotShift - pp < 0) return false;
+      if(pivotShift + pp >= bars) return false;
+      double v = iLow(_Symbol, _Period, pivotShift);
+      if(v <= 0.0) return false;
+      for(int j = pivotShift - pp; j <= pivotShift + pp; j++)
+      {
+         if(j == pivotShift) continue;
+         double lj = iLow(_Symbol, _Period, j);
+         if(lj <= v) return false;
+      }
+      return true;
+   }
+
+   datetime TimeFromBarIndex(const int barIdx, const datetime baseTime)
+   {
+      int bars = Bars(_Symbol, _Period);
+      int curBarIdx = bars - 1;
+      if(barIdx <= curBarIdx)
+      {
+         int shift = curBarIdx - barIdx;
+         return iTime(_Symbol, _Period, shift);
+      }
+      int delta = barIdx - curBarIdx;
+      return baseTime + (datetime)PeriodSeconds(_Period) * delta;
+   }
+
+   void QmDrawLive(const datetime tNow, const double cNow)
+   {
+      if(!InpQmLiveEnabled)
+      {
+         DeleteByToken("QM_LIVE_");
+         return;
+      }
+      int n = QmSize();
+      int pts = InpQmLivePoints;
+      if(pts < 2) pts = 2;
+      if(pts > 10) pts = 10;
+      if(n < 2)
+      {
+         DeleteByToken("QM_LIVE_");
+         return;
+      }
+      int usePts = MathMin(pts, n);
+      string lastTy = g_qm_types[n - 1];
+      bool isW = (lastTy == "L" || lastTy == "LL" || lastTy == "HL");
+      color col = (isW ? InpQmLiveColorW : InpQmLiveColorM);
+      int width = InpQmLiveWidth;
+      if(width < 1) width = 1;
+      if(width > 5) width = 5;
+
+      int seg = usePts - 1;
+      for(int i = 0; i < seg; i++)
+      {
+         int idx1 = n - usePts + i;
+         int idx2 = idx1 + 1;
+         string nm = g_prefix + "QM_LIVE_" + IntegerToString(i);
+         CreateOrUpdateTrendSegment(nm, g_qm_times[idx1], g_qm_vals[idx1], g_qm_times[idx2], g_qm_vals[idx2], col, STYLE_SOLID, width);
+      }
+      for(int i = seg; i < 20; i++)
+      {
+         string nm = g_prefix + "QM_LIVE_" + IntegerToString(i);
+         ObjectDelete(0, nm);
+      }
+      if(InpQmLiveToCurrent)
+      {
+         string nm = g_prefix + "QM_LIVE_CUR";
+         CreateOrUpdateTrendSegment(nm, g_qm_times[n - 1], g_qm_vals[n - 1], tNow, cNow, col, STYLE_SOLID, width);
+      }
+      else
+      {
+         ObjectDelete(0, g_prefix + "QM_LIVE_CUR");
+      }
+   }
+
+   void QmDrawSetup(const bool bull, const datetime tBarOpen)
+   {
+      int n = QmSize();
+      if(n <= 5) return;
+
+      datetime t1 = g_qm_times[n - 1];
+      double v1 = g_qm_vals[n - 1];
+      datetime t2 = g_qm_times[n - 2];
+      double v2 = g_qm_vals[n - 2];
+      datetime t3 = g_qm_times[n - 3];
+      double v3 = g_qm_vals[n - 3];
+      datetime t4 = g_qm_times[n - 4];
+      double v4 = g_qm_vals[n - 4];
+      datetime t5 = g_qm_times[n - 5];
+      double v5 = g_qm_vals[n - 5];
+
+      int i1 = g_qm_baridx[n - 1];
+      int i2 = g_qm_baridx[n - 2];
+      int i3 = g_qm_baridx[n - 3];
+      int i4 = g_qm_baridx[n - 4];
+      int i5 = g_qm_baridx[n - 5];
+
+      int moveBars = (i2 - i4) / 2;
+      if(moveBars < 1) moveBars = 1;
+
+      int endLegIdx = i1 + moveBars - 2;
+      int endLineIdx = i1 + moveBars;
+      datetime tLegEnd = TimeFromBarIndex(endLegIdx, tBarOpen);
+      datetime tLineEnd = TimeFromBarIndex(endLineIdx, tBarOpen);
+      datetime tLbl = TimeFromBarIndex(endLineIdx + 1, tBarOpen);
+
+      string key = IntegerToString((long)t1);
+      string pfx = g_prefix + "QM_SETUP_" + key + "_";
+
+      color legCol = (bull ? clrGreen : clrMaroon);
+      color arrowCol = (bull ? clrAqua : clrOrange);
+      CreateOrUpdateTrendSegment(pfx + "LEG1", t5, v5, t4, v4, legCol, STYLE_SOLID, 2);
+      CreateOrUpdateTrendSegment(pfx + "LEG2", t4, v4, t3, v3, legCol, STYLE_SOLID, 2);
+      CreateOrUpdateTrendSegment(pfx + "LEG3", t3, v3, t2, v2, legCol, STYLE_SOLID, 2);
+      CreateOrUpdateTrendSegment(pfx + "LEG4", t2, v2, t1, v1, legCol, STYLE_SOLID, 2);
+      CreateOrUpdateTrendSegment(pfx + "LEG5", t1, v1, tLegEnd, v4, arrowCol, STYLE_SOLID, 2);
+
+      double entry = v4;
+      double atr = AtrCurrent();
+      double sl = (bull ? (v2 - (atr / 2.0)) : (v2 + (atr / 2.0)));
+      CreateOrUpdateTrendSegment(pfx + "ENTRY", t4, entry, tLineEnd, entry, clrBlack, STYLE_DOT, 1);
+      CreateOrUpdateTrendSegment(pfx + "SL", t2, sl, tLineEnd, sl, clrMaroon, STYLE_DOT, 1);
+      CreateOrUpdateTrendSegment(pfx + "TP1", t3, v3, tLineEnd, v3, clrGreen, STYLE_DOT, 1);
+      CreateOrUpdateTrendSegment(pfx + "TP2", t1, v1, tLineEnd, v1, clrGreen, STYLE_DOT, 1);
+
+      CreateOrUpdateText(pfx + "LBL_ENTRY", tLbl, entry, "Entry", clrWhite, ANCHOR_LEFT);
+      CreateOrUpdateText(pfx + "LBL_SL", tLbl, sl, "SL", clrWhite, ANCHOR_LEFT);
+      CreateOrUpdateText(pfx + "LBL_TP1", tLbl, v3, "TP1", clrWhite, ANCHOR_LEFT);
+      CreateOrUpdateText(pfx + "LBL_TP2", tLbl, v1, "TP2", clrWhite, ANCHOR_LEFT);
+
+      g_qm_entry_active = true;
+      g_qm_entry_price = entry;
+      g_qm_entry_dir = (bull ? 1 : -1);
+      g_qm_entry_setup_time = t1;
+      g_qm_entry_notified = false;
+   }
+
+   void QmCheckEntryTouchRealtime(const datetime tNow, const double hNow, const double lNow)
+   {
+      if(!InpQmEnabled || !InpQmNotifyEntryTouch) return;
+      if(!g_qm_entry_active || g_qm_entry_price <= 0.0) return;
+      if(InpQmNotifyOncePerSetup && g_qm_entry_notified) return;
+      double eps = _Point * 0.1;
+      bool touch = (hNow >= (g_qm_entry_price - eps) && lNow <= (g_qm_entry_price + eps));
+      if(!touch) return;
+      g_qm_entry_notified = true;
+      NotifySignal("QM ENTRY TOUCH " + string(g_qm_entry_dir > 0 ? "W" : "M"), tNow);
+   }
+
+   void UpdateQm(const datetime tBarOpen, const double cNow)
+   {
+      if(!InpQmEnabled) { DeleteByToken("QM_"); return; }
+      int pp = QmGetPivotPeriod();
+      int curShift = iBarShift(_Symbol, _Period, tBarOpen, true);
+      if(curShift < 0) return;
+      int pivotShift = curShift + pp;
+      int bars = Bars(_Symbol, _Period);
+      if(pivotShift + pp >= bars) return;
+
+      bool hasHigh = QmIsPivotHighAtShift(pivotShift, pp);
+      bool hasLow = QmIsPivotLowAtShift(pivotShift, pp);
+      if(!hasHigh && !hasLow)
+      {
+         QmDrawLive(tBarOpen, cNow);
+         return;
+      }
+
+      datetime tPivot = iTime(_Symbol, _Period, pivotShift);
+      double highVal = iHigh(_Symbol, _Period, pivotShift);
+      double lowVal = iLow(_Symbol, _Period, pivotShift);
+      int curBarIdx = bars - 1 - curShift;
+      int pivBarIdx = bars - 1 - pivotShift;
+
+      int n = QmSize();
+      if(hasHigh && hasLow)
+      {
+         if(n == 0)
+         {
+            QmPush("H", highVal, tPivot, pivBarIdx);
+         }
+         else
+         {
+            string last = g_qm_types[n - 1];
+            if(last == "L" || last == "LL")
+            {
+               if(lowVal < g_qm_vals[n - 1])
+               {
+                  QmRemoveLast();
+                  int nn = QmSize();
+                  string ty = (nn > 2 ? (g_qm_vals[nn - 2] < lowVal ? "HL" : "LL") : "L");
+                  QmPush(ty, lowVal, tPivot, pivBarIdx);
+               }
+               else
+               {
+                  string ty = (n > 2 ? (g_qm_vals[n - 2] < highVal ? "HH" : "LH") : "H");
+                  QmPush(ty, highVal, tPivot, pivBarIdx);
+               }
+            }
+            else if(last == "H" || last == "HH")
+            {
+               if(highVal > g_qm_vals[n - 1])
+               {
+                  QmRemoveLast();
+                  int nn = QmSize();
+                  string ty = (nn > 2 ? (g_qm_vals[nn - 2] < highVal ? "HH" : "LH") : "H");
+                  QmPush(ty, highVal, tPivot, pivBarIdx);
+               }
+               else
+               {
+                  string ty = (n > 2 ? (g_qm_vals[n - 2] < lowVal ? "HL" : "LL") : "L");
+                  QmPush(ty, lowVal, tPivot, pivBarIdx);
+               }
+            }
+         }
+      }
+      else if(hasHigh)
+      {
+         if(n == 0)
+         {
+            QmPush("H", highVal, tPivot, pivBarIdx);
+         }
+         else
+         {
+            string last = g_qm_types[n - 1];
+            if(last == "L" || last == "HL" || last == "LL")
+            {
+               if(highVal > g_qm_vals[n - 1])
+               {
+                  string ty = (n > 2 ? (g_qm_vals[n - 2] < highVal ? "HH" : "LH") : "H");
+                  QmPush(ty, highVal, tPivot, pivBarIdx);
+               }
+               else if(highVal < g_qm_vals[n - 1])
+               {
+                  QmRemoveLast();
+                  int nn = QmSize();
+                  string ty = (nn > 2 ? (g_qm_vals[nn - 2] < lowVal ? "HL" : "LL") : "L");
+                  QmPush(ty, lowVal, tPivot, pivBarIdx);
+               }
+            }
+            else if(last == "H" || last == "HH" || last == "LH")
+            {
+               if(g_qm_vals[n - 1] < highVal)
+               {
+                  QmRemoveLast();
+                  int nn = QmSize();
+                  string ty = (nn > 2 ? (g_qm_vals[nn - 2] < highVal ? "HH" : "LH") : "H");
+                  QmPush(ty, highVal, tPivot, pivBarIdx);
+               }
+            }
+         }
+      }
+      else if(hasLow)
+      {
+         if(n == 0)
+         {
+            QmPush("L", lowVal, tPivot, pivBarIdx);
+         }
+         else
+         {
+            string last = g_qm_types[n - 1];
+            if(last == "H" || last == "HH" || last == "LH")
+            {
+               if(lowVal < g_qm_vals[n - 1])
+               {
+                  string ty = (n > 2 ? (g_qm_vals[n - 2] < lowVal ? "HL" : "LL") : "L");
+                  QmPush(ty, lowVal, tPivot, pivBarIdx);
+               }
+               else if(lowVal > g_qm_vals[n - 1])
+               {
+                  QmRemoveLast();
+                  int nn = QmSize();
+                  string ty = (nn > 2 ? (g_qm_vals[nn - 2] < highVal ? "HH" : "LH") : "H");
+                  QmPush(ty, highVal, tPivot, pivBarIdx);
+               }
+            }
+            else if(last == "L" || last == "HL" || last == "LL")
+            {
+               if(g_qm_vals[n - 1] > lowVal)
+               {
+                  QmRemoveLast();
+                  int nn = QmSize();
+                  string ty = (nn > 2 ? (g_qm_vals[nn - 2] < lowVal ? "HL" : "LL") : "L");
+                  QmPush(ty, lowVal, tPivot, pivBarIdx);
+               }
+            }
+         }
+      }
+
+      QmDrawLive(tBarOpen, cNow);
+
+      int s = QmSize();
+      if(s <= 5) return;
+      string th1 = g_qm_types[s - 1];
+      string th2 = g_qm_types[s - 2];
+      string th3 = g_qm_types[s - 3];
+      string th4 = g_qm_types[s - 4];
+      string th5 = g_qm_types[s - 5];
+
+      int ih = g_qm_baridx[s - 1];
+      int ih2 = g_qm_baridx[s - 2];
+      int ih4 = g_qm_baridx[s - 4];
+
+      double vh1 = g_qm_vals[s - 1];
+      double vh2 = g_qm_vals[s - 2];
+      double vh5 = g_qm_vals[s - 5];
+
+      bool bearQM = (th1 == "LL" && th2 == "HH" && th3 == "HL" && th4 == "HH" && vh5 < vh1 && ih == (curBarIdx - pp) && g_qm_check_be == 0);
+      if(bearQM)
+      {
+         g_qm_bear_start = vh2;
+         g_qm_check_be = 1;
+         if(g_qm_last_setup_time != g_qm_times[s - 1])
+         {
+            QmDrawSetup(false, tBarOpen);
+            g_qm_last_setup_time = g_qm_times[s - 1];
+         }
+      }
+      if(g_qm_bear_start != vh2) g_qm_check_be = 0;
+
+      string tl1 = th1;
+      string tl2 = th2;
+      string tl3 = th3;
+      string tl4 = th4;
+      string tl5 = th5;
+
+      int il = ih;
+      double vl1 = vh1;
+      double vl2 = vh2;
+      double vl5 = vh5;
+
+      bool bullQM = (tl1 == "HH" && tl2 == "LL" && tl3 == "LH" && tl4 == "LL" && vl5 > vl1 && il == (curBarIdx - pp) && g_qm_check_bu == 0);
+      if(bullQM)
+      {
+         g_qm_bull_start = vl2;
+         g_qm_check_bu = 1;
+         if(g_qm_last_setup_time != g_qm_times[s - 1])
+         {
+            QmDrawSetup(true, tBarOpen);
+            g_qm_last_setup_time = g_qm_times[s - 1];
+         }
+      }
+      if(g_qm_bull_start != vl2) g_qm_check_bu = 0;
+   }
+
    void LuxReset()
    {
       g_lux_head = -1;
@@ -919,8 +1387,18 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
    }
 
+   bool AllowObjInQmOnly(const string name)
+   {
+      if(!InpQmOnlyMode) return true;
+      if(StringFind(name, "QM_") >= 0) return true;
+      if(StringFind(name, "STATUS") >= 0) return true;
+      if(InpQmShowShSl && (StringFind(name, "SP_SH_") >= 0 || StringFind(name, "SP_SL_") >= 0)) return true;
+      return false;
+   }
+
    void CreateOrUpdateHLine(const string name, const double price, const color clr, const ENUM_LINE_STYLE style, const int width)
    {
+      if(!AllowObjInQmOnly(name)) { ObjectDelete(0, name); return; }
       if(ObjectFind(0, name) < 0)
       {
          ResetLastError();
@@ -942,6 +1420,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
    void CreateOrUpdateRay(const string name, const datetime t1, const double price, const color clr, const ENUM_LINE_STYLE style, const int width)
    {
+      if(!AllowObjInQmOnly(name)) { ObjectDelete(0, name); return; }
       datetime t2 = NextLocalMidnightServer(t1);
       if(ObjectFind(0, name) < 0)
       {
@@ -967,6 +1446,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
    void CreateOrUpdateTrendSegment(const string name, const datetime t1, const double p1, const datetime t2, const double p2, const color clr, const ENUM_LINE_STYLE style, const int width)
    {
+      if(!AllowObjInQmOnly(name)) { ObjectDelete(0, name); return; }
       if(ObjectFind(0, name) < 0)
       {
          ResetLastError();
@@ -1012,6 +1492,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
    void CreateOrUpdateText(const string name, const datetime t, const double price, const string txt, const color clr, const int anchor)
    {
+      if(!AllowObjInQmOnly(name)) { ObjectDelete(0, name); return; }
       if(ObjectFind(0, name) < 0)
       {
          ResetLastError();
@@ -1034,6 +1515,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
    void CreateOrUpdateRect(const string name, const datetime t1, const double p1, const datetime t2, const double p2, const color c)
    {
+      if(!AllowObjInQmOnly(name)) { ObjectDelete(0, name); return; }
       if(ObjectFind(0, name) < 0)
       {
          ResetLastError();
@@ -1056,6 +1538,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
    void CreateOrUpdateRectAlpha(const string name, const datetime t1, const double p1, const datetime t2, const double p2, const color c, const uchar alpha)
    {
+      if(!AllowObjInQmOnly(name)) { ObjectDelete(0, name); return; }
       if(ObjectFind(0, name) < 0)
       {
          ResetLastError();
@@ -1079,6 +1562,17 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
    void NotifySignal(const string txt, const datetime tBar)
    {
       if(!InpSendAlert && !InpSendPush) return;
+      if(InpNotifyOnlyQmEntryTouch)
+      {
+         bool isQmEntryTouch = (StringFind(txt, "QM ENTRY TOUCH") == 0);
+         if(!isQmEntryTouch) return;
+      }
+      if(InpQmOnlyMode)
+      {
+         bool isQm = (StringFind(txt, "QM") == 0);
+         bool isShSl = (txt == "SH" || txt == "SL");
+         if(!(isQm || (InpQmShowShSl && isShSl))) return;
+      }
       if(InpNotifyOnlySHSL)
       {
          bool isShSl = (txt == "SH" || txt == "SL");
@@ -1087,12 +1581,18 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          bool isMtf = (StringFind(txt, "BUY MTF") == 0 || StringFind(txt, "SELL MTF") == 0);
          bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
          bool isRsiCross = (StringFind(txt, "RSI CROSS") == 0);
-         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyRsiCross && isRsiCross))) return;
+         bool isQm = (StringFind(txt, "QM") == 0);
+         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyRsiCross && isRsiCross) || (InpNotifyQm && isQm))) return;
       }
       if(!InpNotifyHistorical)
       {
          datetime ref = iTime(_Symbol, _Period, 1);
-         if(tBar != ref) return;
+         if(tBar != ref)
+         {
+            bool isQmEntryTouch = (StringFind(txt, "QM ENTRY TOUCH") == 0);
+            datetime cur = iTime(_Symbol, _Period, 0);
+            if(!(isQmEntryTouch && tBar == cur)) return;
+         }
       }
       string msg = txt + " on " + _Symbol + " TF=" + EnumToString(_Period);
       if(InpSendAlert) Alert(msg);
@@ -1323,7 +1823,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       }
 
       string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
-      bool showOther = !InpShowOnlySwingSignals;
+      bool showOther = !InpShowOnlySwingSignals && !InpQmOnlyMode;
       bool inAsia = InWindowLocal(tBarOpen, 0, 0, 8, 0);
       bool inLondon = InWindowLocal(tBarOpen, 9, 0, 17, 30);
       bool inNy = InWindowLocal(tBarOpen, 14, 30, 21, 0);
@@ -2429,7 +2929,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                      }
                   }
 
-                  if(InpSwingShowLabels)
+                  if(InpSwingShowLabels && (!InpQmOnlyMode || InpQmShowShSl))
                   {
                      string n = dayPfx + "SP_SH_" + IntegerToString((long)tPivot);
                      CreateOrUpdateText(n, tPivot, hC + 10 * _Point, "SH", clrRed, ANCHOR_LEFT_UPPER);
@@ -2458,7 +2958,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                         NotifySignal("RSI CROSS DOWN", tBarOpen);
                      }
                   }
-                  NotifySignal("SH", tBarOpen);
+                  if(!InpQmOnlyMode || InpQmShowShSl) NotifySignal("SH", tBarOpen);
                   g_es_last_sp_sh_time = tPivot;
 
                   g_liq_last_sh_has = true;
@@ -2522,7 +3022,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                      }
                   }
 
-                  if(InpSwingShowLabels)
+                  if(InpSwingShowLabels && (!InpQmOnlyMode || InpQmShowShSl))
                   {
                      string n = dayPfx + "SP_SL_" + IntegerToString((long)tPivot);
                      CreateOrUpdateText(n, tPivot, lC - 10 * _Point, "SL", clrLimeGreen, ANCHOR_LEFT_LOWER);
@@ -2551,7 +3051,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                         NotifySignal("RSI CROSS UP", tBarOpen);
                      }
                   }
-                  NotifySignal("SL", tBarOpen);
+                  if(!InpQmOnlyMode || InpQmShowShSl) NotifySignal("SL", tBarOpen);
                   g_es_last_sp_sl_time = tPivot;
 
                   g_liq_last_sl_has = true;
@@ -2883,6 +3383,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
       }
 
+      UpdateQm(tBarOpen, c);
+
       string st = "CAP_IND | it " + IntegerToString(MinuteOfDayLocal(tBarOpen) / 60) + ":" + IntegerToString(MinuteOfDayLocal(tBarOpen) % 60) +
                   " | daily " + (g_daily_has ? "Y" : "N") + " | h02 " + (g_h02_has ? "Y" : "N") + " | h13 " + (g_h13_has ? "Y" : "N");
       CreateOrUpdateStatusLabel(st);
@@ -2901,6 +3403,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       g_rsi_handle = iRSI(_Symbol, _Period, InpSwingRsiLen, PRICE_CLOSE);
       if(g_macd_handle != INVALID_HANDLE) IndicatorRelease(g_macd_handle);
       g_macd_handle = iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE);
+      if(g_atr_handle != INVALID_HANDLE) IndicatorRelease(g_atr_handle);
+      g_atr_handle = iATR(_Symbol, _Period, 21);
       DeleteByToken("TEST_");
       DeleteByToken("LUX_");
       LuxReset();
@@ -2929,6 +3433,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          IndicatorRelease(g_macd_handle);
          g_macd_handle = INVALID_HANDLE;
       }
+      if(g_atr_handle != INVALID_HANDLE)
+      {
+         IndicatorRelease(g_atr_handle);
+         g_atr_handle = INVALID_HANDLE;
+      }
    }
 
    int OnCalculate(const int rates_total,
@@ -2946,6 +3455,14 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       DeleteByToken("TEST_");
 
       bool isSeries = (time[0] > time[rates_total - 1]);
+
+      static bool qmWasOnly = false;
+      if(InpQmOnlyMode && !qmWasOnly)
+      {
+         DeleteByPrefix(g_prefix);
+         qmWasOnly = true;
+      }
+      if(!InpQmOnlyMode) qmWasOnly = false;
 
       {
          datetime now = TimeCurrent();
@@ -2984,6 +3501,21 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
         InstReset();
          DeleteByToken("ES_");
          EsReset();
+         DeleteByToken("QM_");
+         ArrayResize(g_qm_types, 0);
+         ArrayResize(g_qm_vals, 0);
+         ArrayResize(g_qm_times, 0);
+         ArrayResize(g_qm_baridx, 0);
+         g_qm_check_be = 0;
+         g_qm_check_bu = 0;
+         g_qm_bear_start = 0.0;
+         g_qm_bull_start = 0.0;
+         g_qm_last_setup_time = 0;
+         g_qm_entry_active = false;
+         g_qm_entry_price = 0.0;
+         g_qm_entry_dir = 0;
+         g_qm_entry_setup_time = 0;
+         g_qm_entry_notified = false;
 
          int histDays = InpHistoryDays;
          if(histDays < 1) histDays = 1;
@@ -3075,6 +3607,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          }
          g_last_time0 = time[curIdx];
       }
+
+      QmCheckEntryTouchRealtime(time[curIdx], high[curIdx], low[curIdx]);
 
       UpdateRightSideLabels(time[curIdx]);
       if(InpDebugOverlay && !InpShowOnlySwingSignals)

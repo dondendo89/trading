@@ -163,7 +163,13 @@ sfpDailyExtremeBufferTicks = input.int(20, "Distanza max da Daily (ticks)", minv
 sfpMinWickTicks = input.int(10, "Min wick oltre swing (ticks)", minval=0, group="SFP Lux - Filtri")
 sfpShowUnconfirmed = input.bool(false, "Mostra pattern non confermato", group="SFP Lux - Filtri")
 
-qmEnabled = input.bool(false, "Quasimodo (TradingFinder)", group="QM")
+qmEnabled = input.bool(true, "Quasimodo (TradingFinder)", group="QM")
+onlyQmMode = input.bool(false, "Mostra solo Quasimodo", group="QM")
+onlyQmShowShSl = input.bool(false, "Mostra anche SH/SL", group="QM")
+onlyQmShowDailyHL = input.bool(false, "Mostra anche Daily High/Low", group="QM")
+onlyQmShowSessions = input.bool(false, "Mostra anche Sessioni", group="QM")
+onlyQmShowRsiCross = input.bool(false, "Mostra anche incrocio RSI", group="QM")
+onlyQmShowRsiMW = input.bool(false, "Mostra anche RSI M/W", group="QM")
 qmUseTfPivots = input.bool(true, "Usa pivot per TF (M1/M5/M15/H1/H4)", group="QM")
 qmPp = input.int(5, "Pivot Period (fallback)", minval=1, group="QM")
 qmPp_M1 = input.int(5, "M1 - Pivot Period", minval=1, group="QM")
@@ -171,6 +177,12 @@ qmPp_M5 = input.int(5, "M5 - Pivot Period", minval=1, group="QM")
 qmPp_M15 = input.int(5, "M15 - Pivot Period", minval=1, group="QM")
 qmPp_H1 = input.int(5, "H1 - Pivot Period", minval=1, group="QM")
 qmPp_H4 = input.int(5, "H4 - Pivot Period", minval=1, group="QM")
+qmLiveEnabled = input.bool(false, "QM Live (linea mentre si forma)", group="QM")
+qmLivePoints = input.int(6, "QM Live - Punti", minval=2, maxval=10, group="QM")
+qmLiveToCurrent = input.bool(true, "QM Live - Ultimo punto → prezzo attuale", group="QM")
+qmLiveColorW = input.color(color.new(color.lime, 0), "QM Live - Colore W (Bull)", group="QM")
+qmLiveColorM = input.color(color.new(color.red, 0), "QM Live - Colore M (Bear)", group="QM")
+qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
@@ -364,13 +376,13 @@ else
     dHigh := math.max(dHigh, high)
     dLow := math.min(dLow, low)
 
-plot(not onlyShSlMode and showUntilNyClose and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and showDailyHL ? dHigh : na, "Daily High", color.red, 1, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and showDailyHL ? dLow : na, "Daily Low", color.lime, 1, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
+plot(not onlyShSlMode and showUntilNyClose and showDailyHL and (not onlyQmMode or onlyQmShowDailyHL) ? dHigh : na, "Daily High", color.red, 1, plot.style_linebr)
+plot(not onlyShSlMode and showUntilNyClose and showDailyHL and (not onlyQmMode or onlyQmShowDailyHL) ? dLow : na, "Daily Low", color.lime, 1, plot.style_linebr)
 
 var label dHighLbl = na
 var label dLowLbl = na
-if not onlyShSlMode and showUntilNyClose and showDailyHL and not na(dHigh) and not na(dLow)
+if not onlyShSlMode and not onlyQmMode and showUntilNyClose and showDailyHL and not na(dHigh) and not na(dLow)
     if na(dHighLbl)
         dHighLbl := label.new(bar_index, dHigh, "Daily High", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
     else
@@ -419,7 +431,7 @@ if vpReset
         vpVaHighLine := na
 
 vpEnd = (not showUntilNyClose) and showUntilNyClose[1]
-if vpEnabled and not onlyShSlMode and vpEnd
+if vpEnabled and not onlyShSlMode and not onlyQmMode and vpEnd
     vpOrigin := na
     vpSessLow := na
     vpSessHigh := na
@@ -437,7 +449,7 @@ if vpEnabled and not onlyShSlMode and vpEnd
         line.delete(vpVaHighLine)
         vpVaHighLine := na
 
-vpActive = vpEnabled and not onlyShSlMode and showUntilNyClose
+vpActive = vpEnabled and not onlyShSlMode and not onlyQmMode and showUntilNyClose
 if vpActive
     vpSessLow := na(vpSessLow) ? low : math.min(vpSessLow, low)
     vpSessHigh := na(vpSessHigh) ? high : math.max(vpSessHigh, high)
@@ -458,7 +470,7 @@ if vpActive
     idx := math.max(0, math.min(idx, array.size(vpVol) - 1))
     array.set(vpVol, idx, array.get(vpVol, idx) + volume)
 
-if vpEnabled and not onlyShSlMode and showUntilNyClose and not na(vpOrigin) and array.size(vpVol) > 0 and barstate.islast
+if vpEnabled and not onlyShSlMode and not onlyQmMode and showUntilNyClose and not na(vpOrigin) and array.size(vpVol) > 0 and barstate.islast
     bins = array.size(vpVol)
     maxVol = array.max(vpVol)
     poc = 0
@@ -532,10 +544,10 @@ if is_0000
 if isAfterNyOpen and not na(nyOpenFrom1m)
     nyOpenPrice := nyOpenFrom1m
 
-plot(not onlyShSlMode and showUntilNyClose and showNYOpen ? nyOpenPrice : na, "NY Open Line", color.blue, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and showNYOpen ? nyOpenPrice : na, "NY Open Line", color.blue, 2, plot.style_linebr)
 
 var label nyOpenLbl = na
-if not onlyShSlMode and showUntilNyClose and showNYOpen and not na(nyOpenPrice)
+if not onlyShSlMode and not onlyQmMode and showUntilNyClose and showNYOpen and not na(nyOpenPrice)
     if na(nyOpenLbl)
         nyOpenLbl := label.new(bar_index, nyOpenPrice, "NY Open", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
     else
@@ -628,7 +640,7 @@ draw_session(sess_time, sess_name, sess_color, sBox, sLab, sHigh, sLow) =>
                 resLab := na
     [resBox, resLab, resHigh, resLow]
 
-if showSessions and not onlyShSlMode
+if showSessions and not onlyShSlMode and (not onlyQmMode or onlyQmShowSessions)
     [b1, l1, h1, lw1] = draw_session("0000-0800", "ASIA", color.green, asiaBox, asiaLab, aHigh, aLow)
     asiaBox := b1, asiaLab := l1, aHigh := h1, aLow := lw1
     [b2, l2, h2, lw2] = draw_session("0900-1730", "LONDON", color.blue, londonBox, londonLab, lHigh, lLow)
@@ -671,8 +683,8 @@ if isInIB
         ibH := math.max(ibH, high)
         ibL := math.min(ibL, low)
 ibMid = (ibH + ibL) / 2
-plot(not onlyShSlMode and showUntilNyClose and isAfterIBStart ? ibH : na, "IB High", color.new(color.blue, 40), 1, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and isAfterIBStart ? ibL : na, "IB Low", color.new(color.blue, 40), 1, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and isAfterIBStart ? ibH : na, "IB High", color.new(color.blue, 40), 1, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and isAfterIBStart ? ibL : na, "IB Low", color.new(color.blue, 40), 1, plot.style_linebr)
 
 var float orangeH = na
 var float orangeL = na
@@ -689,8 +701,8 @@ if orangeIsToday and not na(orangeH60) and not na(orangeL60)
     orangeH := orangeH60
     orangeL := orangeL60
 
-plot(not onlyShSlMode and showUntilNyClose and orangeIsToday and not na(orangeH) ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and orangeIsToday and not na(orangeL) ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and orangeIsToday and not na(orangeH) ? orangeH : na, "H13", color.orange, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and orangeIsToday and not na(orangeL) ? orangeL : na, "L13", color.orange, 2, plot.style_linebr)
 
 is_0200 = hour(time, tz) == 2 and minute(time, tz) == 0
 isAfter02 = not na(time(timeframe.period, "0200-2359", tz))
@@ -702,8 +714,8 @@ if is_0000
 if is_0200
     c02H := high
     c02L := low
-plot(not onlyShSlMode and showUntilNyClose and show02CandleLines and isAfter02 ? c02H : na, "02 High", color.green, 2, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and show02CandleLines and isAfter02 ? c02L : na, "02 Low", color.green, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and show02CandleLines and isAfter02 ? c02H : na, "02 High", color.green, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and show02CandleLines and isAfter02 ? c02L : na, "02 Low", color.green, 2, plot.style_linebr)
 
 is_1300 = hour(time, tz) == 13 and minute(time, tz) == 0
 c02AboveLondon = not na(c02H) and not na(c02L) and not na(londonHighLive) and c02H > londonHighLive and c02L > londonHighLive
@@ -718,7 +730,8 @@ f_sigSlot(_txt) =>
      str.contains(_txt, "KISS") ? 1 :
      _txt == "BUY" or _txt == "SELL" ? 1 : 0
 f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
-    if onlyShSlMode
+    allowInOnlyQm = (onlyQmShowRsiCross and (_txt == "RSI↑" or _txt == "RSI↓")) or (onlyQmShowRsiMW and (_txt == "RSI\nM" or _txt == "RSI\nW"))
+    if onlyShSlMode or (onlyQmMode and not allowInOnlyQm)
         na
     else
         step = labelStackTicks * syminfo.mintick
@@ -739,8 +752,8 @@ midCandleLow  = request.security(syminfo.tickerid, "1", ta.valuewhen(hour(time, 
 newDayRome = na(time[1]) ? true : dayofmonth(time, tz) != dayofmonth(time[1], tz)
 midCandlePlotHigh = newDayRome ? na : midCandleHigh
 midCandlePlotLow = newDayRome ? na : midCandleLow
-plot(not onlyShSlMode and showUntilNyClose and showMidnightLines ? midCandlePlotHigh : na, "00 High", color.green, 2, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and showMidnightLines ? midCandlePlotLow : na, "00 Low", color.green, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and showMidnightLines ? midCandlePlotHigh : na, "00 High", color.green, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and showMidnightLines ? midCandlePlotLow : na, "00 Low", color.green, 2, plot.style_linebr)
 
 var line a2nHighLine = na
 var line a2nLowLine = na
@@ -751,7 +764,7 @@ if newDayRome
     if not na(a2nLowLine)
         line.delete(a2nLowLine)
         a2nLowLine := na
-    if showA2NRange and not onlyShSlMode
+    if showA2NRange and not onlyShSlMode and not onlyQmMode
         a2nHighLine := line.new(bar_index, midCandleHigh, bar_index, midCandleHigh, extend=extend.none, color=color.green, width=2)
         a2nLowLine := line.new(bar_index, midCandleLow, bar_index, midCandleLow, extend=extend.none, color=color.green, width=2)
 
@@ -763,7 +776,7 @@ if not showA2NRange or onlyShSlMode
         line.delete(a2nLowLine)
         a2nLowLine := na
 else
-    if showUntilNyClose and not onlyShSlMode
+    if showUntilNyClose and not onlyShSlMode and not onlyQmMode
         if not na(a2nHighLine) and not na(midCandleHigh)
             line.set_xy1(a2nHighLine, line.get_x1(a2nHighLine), midCandleHigh)
             line.set_xy2(a2nHighLine, bar_index, midCandleHigh)
@@ -799,8 +812,8 @@ midSweepUp = not na(midSweepUpBar)
 newDay = year(time, tz) != year(time[1], tz) or month(time, tz) != month(time[1], tz) or dayofmonth(time, tz) != dayofmonth(time[1], tz)
 midPlotH = newDay ? na : midH
 midPlotL = newDay ? na : midL
-plot(not onlyShSlMode and showUntilNyClose and showA2NRange ? midPlotH : na, "MID High", color.green, 2, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and showA2NRange ? midPlotL : na, "MID Low", color.green, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and showA2NRange ? midPlotH : na, "MID High", color.green, 2, plot.style_linebr)
+plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and showA2NRange ? midPlotL : na, "MID Low", color.green, 2, plot.style_linebr)
 
 var int ibSweepDownBar = na
 var int ibSweepUpBar = na
@@ -886,13 +899,13 @@ overLowBuf = swingOverLowL13BufferTicks * syminfo.mintick
 overLowL13 = showUntilNyClose and orangeIsToday and not na(orangeL) and ta.crossunder(low, orangeL - overLowBuf)
 if swingShowOverLowL13 and overLowL13
     f_addSigLabel(bar_index, low, "OVER\nLOW", color.new(color.red, 0), color.white, label.style_label_up, size.tiny)
-f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and swingShowOverLowL13 and overLowL13, syminfo.ticker + " Over Low (sotto L13)")
+f_alert(not onlyShSlMode and not onlyQmMode and not swingPatternOnlyAlerts and swingShowOverLowL13 and overLowL13, syminfo.ticker + " Over Low (sotto L13)")
 
 overHighBuf = swingOverHighH13BufferTicks * syminfo.mintick
 overHighH13 = showUntilNyClose and orangeIsToday and not na(orangeH) and ta.crossover(high, orangeH + overHighBuf)
 if swingShowOverHighH13 and overHighH13
     f_addSigLabel(bar_index, high, "OVER\nHIGH", color.new(color.lime, 0), color.black, label.style_label_down, size.tiny)
-f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and swingShowOverHighH13 and overHighH13, syminfo.ticker + " Over High (sopra H13)")
+f_alert(not onlyShSlMode and not onlyQmMode and not swingPatternOnlyAlerts and swingShowOverHighH13 and overHighH13, syminfo.ticker + " Over High (sopra H13)")
 
 overDailyBuf = swingOverDailyBufferTicks * syminfo.mintick
 overDailyLow = showUntilNyClose and not na(dLow) and ta.crossunder(low, dLow - overDailyBuf)
@@ -901,12 +914,12 @@ if swingShowOverDaily and overDailyLow
     f_addSigLabel(bar_index, low, "OVER\nD LOW", color.new(color.red, 0), color.white, label.style_label_up, size.tiny)
 if swingShowOverDaily and overDailyHigh
     f_addSigLabel(bar_index, high, "OVER\nD HIGH", color.new(color.lime, 0), color.black, label.style_label_down, size.tiny)
-f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyLow, syminfo.ticker + " Over Daily Low")
-f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyHigh, syminfo.ticker + " Over Daily High")
+f_alert(not onlyShSlMode and not onlyQmMode and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyLow, syminfo.ticker + " Over Daily Low")
+f_alert(not onlyShSlMode and not onlyQmMode and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyHigh, syminfo.ticker + " Over Daily High")
 
-if not onlyShSlMode and isStar13
+if not onlyShSlMode and not onlyQmMode and isStar13
     f_addSigLabel(bar_index, low, "★", color.yellow, color.black, label.style_label_up, size.tiny)
-if not onlyShSlMode and isStar16
+if not onlyShSlMode and not onlyQmMode and isStar16
     f_addSigLabel(bar_index, low, "★", color.yellow, color.black, label.style_label_up, size.tiny)
 if validB
     f_addSigLabel(bar_index, low, "BUY", color.green, color.white, label.style_label_up, size.small)
@@ -927,9 +940,9 @@ hsConfirmedShoot = hsConfirm ? hsIsShoot[1] and hsIsRed : hsIsShoot
 hsOffset = hsConfirm ? -1 : 0
 hsLblYHammer = hsConfirm ? low[1] : low
 hsLblYShoot = hsConfirm ? high[1] : high
-if not onlyShSlMode and hsEnabled and hsShowLabels and hsConfirmedHammer and not na(hsLblYHammer)
+if not onlyShSlMode and not onlyQmMode and hsEnabled and hsShowLabels and hsConfirmedHammer and not na(hsLblYHammer)
     f_addSigLabel(bar_index + hsOffset, hsLblYHammer, "Hammer", color.new(color.white, 100), color.green, label.style_label_up, size.tiny)
-if not onlyShSlMode and hsEnabled and hsShowLabels and hsConfirmedShoot and not na(hsLblYShoot)
+if not onlyShSlMode and not onlyQmMode and hsEnabled and hsShowLabels and hsConfirmedShoot and not na(hsLblYShoot)
     f_addSigLabel(bar_index + hsOffset, hsLblYShoot, "Shooting", color.new(color.white, 100), color.red, label.style_label_down, size.tiny)
 
 var line hsFib0 = na
@@ -949,7 +962,7 @@ hsSellTouch = false
 deleteFibNow = false
 createFibNow = false
 
-if hsEnabled and hsFibRetraceEnabled and not onlyShSlMode
+if hsEnabled and hsFibRetraceEnabled and not onlyShSlMode and not onlyQmMode
     newHammer = hsConfirmedHammer
     newShoot = hsConfirmedShoot
     if newHammer or newShoot
@@ -1002,7 +1015,7 @@ if deleteFibNow or createFibNow
         hsFibPending := false
         hsFibExpiry := na
 
-if not onlyShSlMode and createFibNow and not na(hsFibPatternIndex) and not na(hsFibHigh) and not na(hsFibLow)
+if not onlyShSlMode and not onlyQmMode and createFibNow and not na(hsFibPatternIndex) and not na(hsFibHigh) and not na(hsFibLow)
     r = hsFibHigh - hsFibLow
     lv0 = hsFibLow
     lv1 = hsFibHigh
@@ -1016,9 +1029,9 @@ if not onlyShSlMode and createFibNow and not na(hsFibPatternIndex) and not na(hs
         hsFib05 := line.new(hsFibPatternIndex, lv05, hsFibPatternIndex + 1, lv05, extend=extend.right, color=color.green, width=2)
     hsFibDiag := line.new(hsFibPatternIndex, hsFibHigh, hsFibPatternIndex + 20, hsFibLow, extend=extend.none, color=color.new(color.gray, 30), style=line.style_dashed, width=1)
 
-if not onlyShSlMode and hsBuyTouch
+if not onlyShSlMode and not onlyQmMode and hsBuyTouch
     f_addSigLabel(bar_index, low, "BUY", color.lime, color.black, label.style_label_up, size.tiny)
-if not onlyShSlMode and hsSellTouch
+if not onlyShSlMode and not onlyQmMode and hsSellTouch
     f_addSigLabel(bar_index, high, "SELL", color.red, color.white, label.style_label_down, size.tiny)
 
 canMidLong = midnightSignalsEnabled and midSweepDown and not midLongDone and (bar_index - midSweepDownBar) <= reclaimMaxBars
@@ -1032,9 +1045,9 @@ if midLong
 if midShort
     midShortDone := true
 
-if not onlyShSlMode and midLong
+if not onlyShSlMode and not onlyQmMode and midLong
     f_addSigLabel(bar_index, low, "BUY\nMID", color.aqua, color.black, label.style_label_up, size.tiny)
-if not onlyShSlMode and midShort
+if not onlyShSlMode and not onlyQmMode and midShort
     f_addSigLabel(bar_index, high, "SELL\nMID", color.fuchsia, color.white, label.style_label_down, size.tiny)
 
 var float lux_phy = na
@@ -1063,7 +1076,7 @@ lux_title = lux_code == 1 ? "Hammer" : lux_code == 2 ? "Inverted Hammer" : lux_c
 luxPatternAllowed = (lux_code == 0 and luxNotifyNone) or (lux_code == 1 and luxNotifyHammer) or (lux_code == 2 and luxNotifyInvertedHammer) or (lux_code == 3 and luxNotifyBullishEngulfing) or (lux_code == 4 and luxNotifyHangingMan) or (lux_code == 5 and luxNotifyShootingStar) or (lux_code == 6 and luxNotifyBearishEngulfing)
 luxTitleForLabel = (luxNotifyPatterns and luxPatternAllowed) ? lux_title : ""
 
-if luxEnabled and not onlyShSlMode and (lux_has_ph or lux_has_pl)
+if luxEnabled and not onlyShSlMode and not onlyQmMode and (lux_has_ph or lux_has_pl)
     if lux_has_ph
         H = na(lux_phy) ? "HH" : (lux_ph > lux_phy ? "HH" : "LH")
         lux_phy := lux_ph
@@ -1123,7 +1136,7 @@ instBearishSFP = high > instPHVal and close < instPHVal and open < instPHVal and
 instBullCond = instBullishSFP[3] and close > instPLVal and close[1] > instPLVal[1] and close[2] > instPLVal[2] and bar_index >= instBullSignalIndex + instCooldownPeriod
 instBearCond = instBearishSFP[3] and close < instPHVal and close[1] < instPHVal[1] and close[2] < instPHVal[2] and bar_index >= instBearSignalIndex + instCooldownPeriod
 
-if instEnabled and not onlyShSlMode
+if instEnabled and not onlyShSlMode and not onlyQmMode
     if high < instSwingLowVal and instIsSwingLowCheck
         instSwingLowCounter := instSwingLowCounter + 1
 
@@ -1148,15 +1161,15 @@ if instEnabled and not onlyShSlMode
         instIsSwingHighCheck := false
         line.set_x2(instHighLine, bar_index[4])
 
-if instEnabled and not onlyShSlMode and instBullCond
+if instEnabled and not onlyShSlMode and not onlyQmMode and instBullCond
     instBullSignalIndex := bar_index
     instBullLine := line.new(instPrevLowIndex, instPLVal, bar_index - 3, instPLVal, color=instBullColor, width=instBullWidth, style=instLineStyle(instBullStyle))
 
-if instEnabled and not onlyShSlMode and instBearCond
+if instEnabled and not onlyShSlMode and not onlyQmMode and instBearCond
     instBearSignalIndex := bar_index
     instBearLine := line.new(instPrevHighIndex, instPHVal, bar_index - 3, instPHVal, color=instBearColor, width=instBearWidth, style=instLineStyle(instBearStyle))
 
-if instEnabled and not onlyShSlMode
+if instEnabled and not onlyShSlMode and not onlyQmMode
     if array.size(instSwingHighArr) >= 3
         label.delete(array.shift(instSwingHighArr))
         label.delete(array.shift(instSwingHighTextArr))
@@ -1193,9 +1206,9 @@ if instEnabled and not onlyShSlMode
         array.push(instSwingLowArr, instSwingLowLbl)
         array.push(instSwingLowTextArr, instSwingLowLblTxt)
 
-if not onlyShSlMode and instEnabled and instBullCond and not na(low[3])
+if not onlyShSlMode and not onlyQmMode and instEnabled and instBullCond and not na(low[3])
     f_addSigLabel(bar_index - 3, low[3], "Sweep", color.new(instBullColor, 0), color.white, label.style_label_up, size.tiny)
-if not onlyShSlMode and instEnabled and instBearCond and not na(high[3])
+if not onlyShSlMode and not onlyQmMode and instEnabled and instBearCond and not na(high[3])
     f_addSigLabel(bar_index - 3, high[3], "Sweep", color.new(instBearColor, 0), color.white, label.style_label_down, size.tiny)
 
 earlyAvgVol = ta.sma(volume, 20)
@@ -1214,20 +1227,20 @@ earlyBearReaction = close < open
 earlyPassHigh = not earlyShowDailyExtremeShSl or (not na(dHigh) and math.abs(high - dHigh) <= earlyDailyBuf)
 earlySwingHigh = earlySwingEnabled and earlyPotentialHigh and earlyLiquiditySweepHigh and earlyBearReaction and (not earlyVolFilter or earlyStrongVol) and earlyPassHigh
 
-if not onlyShSlMode and earlySwingLow
+if not onlyShSlMode and not onlyQmMode and earlySwingLow
     if earlyShowLabels
         f_addSigLabel(bar_index, low, "Possible SWL", color.yellow, color.black, label.style_label_up, size.small)
     else
         f_addSigLabel(bar_index, low, "SWL?", color.yellow, color.black, label.style_label_up, size.tiny)
 
-if not onlyShSlMode and earlyShowPossibleSWH and earlySwingHigh
+if not onlyShSlMode and not onlyQmMode and earlyShowPossibleSWH and earlySwingHigh
     if earlyShowLabels
         f_addSigLabel(bar_index, high, "Possible SWH", color.yellow, color.black, label.style_label_down, size.small)
     else
         f_addSigLabel(bar_index, high, "SWH?", color.yellow, color.black, label.style_label_down, size.tiny)
 
-f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and earlySwingLow, "Possibile Swing Low in formazione")
-f_alert(not onlyShSlMode and not swingPatternOnlyAlerts and earlySwingHigh, "Possibile Swing High in formazione")
+f_alert(not onlyShSlMode and not onlyQmMode and not swingPatternOnlyAlerts and earlySwingLow, "Possibile Swing Low in formazione")
+f_alert(not onlyShSlMode and not onlyQmMode and not swingPatternOnlyAlerts and earlySwingHigh, "Possibile Swing High in formazione")
 
 tfIsM1 = timeframe.isminutes and timeframe.multiplier == 1
 tfIsM5 = timeframe.isminutes and timeframe.multiplier == 5
@@ -1248,7 +1261,7 @@ var line crtLineEq = na
 var int crtLastSoupTime = na
 var label crtSoupLbl = na
 var label crtEntryLbl = na
-crtNewSoup = crtEnabled and not onlyShSlMode and crtSoup and crtSoupOk and crtSoupKillOk and not na(crtSoupT) and (na(crtLastSoupTime) or crtSoupT != crtLastSoupTime)
+crtNewSoup = crtEnabled and not onlyShSlMode and not onlyQmMode and crtSoup and crtSoupOk and crtSoupKillOk and not na(crtSoupT) and (na(crtLastSoupTime) or crtSoupT != crtLastSoupTime)
 if crtNewSoup
     if not na(crtLineH)
         line.delete(crtLineH)
@@ -1275,8 +1288,8 @@ if (not crtEnabled) or onlyShSlMode or (not crtShowLabels) or (crtUseKillzone an
         label.delete(crtSoupLbl)
         crtSoupLbl := na
 
-crtEntryLongRaw = crtEnabled and not onlyShSlMode and crtEntryLong and crtBullOk and crtSoupKillOk
-crtEntryShortRaw = crtEnabled and not onlyShSlMode and crtEntryShort and crtBearOk and crtSoupKillOk
+crtEntryLongRaw = crtEnabled and not onlyShSlMode and not onlyQmMode and crtEntryLong and crtBullOk and crtSoupKillOk
+crtEntryShortRaw = crtEnabled and not onlyShSlMode and not onlyQmMode and crtEntryShort and crtBearOk and crtSoupKillOk
 
 swingLbL = swingPatternUseTfBars ? (tfIsM1 ? swingPatternLeftBars_M1 : tfIsM15 ? swingPatternLeftBars_M15 : tfIsH1 ? swingPatternLeftBars_H1 : tfIsH4 ? swingPatternLeftBars_H4 : swingPatternLeftBars) : swingPatternLeftBars
 swingLbR = swingPatternUseTfBars ? (tfIsM1 ? swingPatternRightBars_M1 : tfIsM15 ? swingPatternRightBars_M15 : tfIsH1 ? swingPatternRightBars_H1 : tfIsH4 ? swingPatternRightBars_H4 : swingPatternRightBars) : swingPatternRightBars
@@ -1325,7 +1338,7 @@ var int rsiMMidLowBar = na
 rsiWSig = false
 rsiMSig = false
 
-if rsiPatternEnabled and not onlyShSlMode
+if rsiPatternEnabled and not onlyShSlMode and (not onlyQmMode or onlyQmShowRsiMW)
     rsiPatternDailyBuf = rsiPatternDailyExtremeBufferTicks * syminfo.mintick
     if not na(rsiPivotPh)
         phVal = rsiPivotPh
@@ -1347,7 +1360,7 @@ if rsiPatternEnabled and not onlyShSlMode
             if hasMid and lowerHigh and deepEnough and (not rsiPatternUseDailyExtreme or rsiMNearDailyHigh)
                 rsiMSig := true
                 if rsiPatternShowLabels
-                    f_addSigLabel(phBar, high[rsiPivotLen], "RSI\nM", color.new(color.orange, 0), color.black, label.style_label_down, size.tiny)
+                    f_addSigLabel(phBar, high[rsiPivotLen], "RSI\nM", color.new(color.red, 0), color.black, label.style_label_down, size.tiny)
                 rsiMHigh1 := phVal
                 rsiMHigh1Bar := phBar
                 rsiMMidLow := na
@@ -1539,7 +1552,7 @@ swingBullDiv = swingPatternEnabled and swingBullDivEnabled and swingLowOk and no
 if onlyShSlMode
     while array.size(swingDivLines) > 0
         line.delete(array.shift(swingDivLines))
-if not onlyShSlMode and swingBullDiv and not na(swingLastLowBarIndex)
+if not onlyShSlMode and not onlyQmMode and swingBullDiv and not na(swingLastLowBarIndex)
     newX = bar_index - swingCenter
     newY = low[swingCenter]
     ln = line.new(swingLastLowBarIndex, swingLastLowPrice, newX, newY, color=color.new(color.aqua, 0), width=2)
@@ -1553,7 +1566,7 @@ if swingPatternEnabled and swingLowOk
     swingOppSweptForSH := false
 
 swingBearDiv = swingPatternEnabled and swingBullDivEnabled and swingHighOk and not na(swingLastHighPrice) and high[swingCenter] > swingLastHighPrice and swingRsi[swingCenter] < (swingLastHighRsi - swingDivMinRsiDelta) and (not swingDivUseRsiThresholds or swingLastHighRsi >= swingDivBearPrevRsiMin)
-if not onlyShSlMode and swingBearDiv and not na(swingLastHighBarIndex)
+if not onlyShSlMode and not onlyQmMode and swingBearDiv and not na(swingLastHighBarIndex)
     newXh = bar_index - swingCenter
     newYh = high[swingCenter]
     lnh = line.new(swingLastHighBarIndex, swingLastHighPrice, newXh, newYh, color=color.new(color.fuchsia, 0), width=2)
@@ -1687,7 +1700,7 @@ smtBullSig2 = false
 if onlyShSlMode
     while array.size(smtDivLines) > 0
         line.delete(array.shift(smtDivLines))
-if SmtEnabled and showUntilNyClose and not onlyShSlMode
+if SmtEnabled and showUntilNyClose and not onlyShSlMode and not onlyQmMode
     if not na(mainPh1) and not na(smtPh1_1) and not na(lastMainPh1) and not na(lastSmtPh1_1)
         smtBearSig1 := (not SmtShowDailyExtreme or smtNearDailyHigh) and (mainPh1 > lastMainPh1 and smtPh1_1 <= lastSmtPh1_1)
         pivotBar = bar_index - SmtPivot
@@ -1746,8 +1759,8 @@ if rsiCrossShowLabels and rsiCrossUpSig
 if rsiCrossShowLabels and rsiCrossDnSig
     f_addSigLabel(rsiCrossPivotBar, high[swingCenter], "RSI↓", color.new(color.orange, 0), color.black, label.style_label_down, size.tiny)
 
-swingBullDivPlot = not onlyShSlMode and swingBullDiv and (not swingDivShowDailyExtreme or divNearDailyLow)
-swingBearDivPlot = not onlyShSlMode and swingBearDiv and (not swingDivShowDailyExtreme or divNearDailyHigh)
+swingBullDivPlot = not onlyShSlMode and not onlyQmMode and swingBullDiv and (not swingDivShowDailyExtreme or divNearDailyLow)
+swingBearDivPlot = not onlyShSlMode and not onlyQmMode and swingBearDiv and (not swingDivShowDailyExtreme or divNearDailyHigh)
 swingPivotBar = bar_index - swingCenter
 swingStep = labelStackTicks * syminfo.mintick
 var int lastShLblBar = na
@@ -1755,7 +1768,7 @@ var int lastSlLblBar = na
 var int lastDivBullLblBar = na
 var int lastDivBearLblBar = na
 
-if swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
+if (not onlyQmMode or onlyQmShowShSl) and swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
     y = high[swingCenter] + (labelAutoStack ? 3 * swingStep : 0)
     lb = label.new(swingPivotBar, y, "SH", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
     array.push(mcSigLabels, lb)
@@ -1763,7 +1776,7 @@ if swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
         label.delete(array.shift(mcSigLabels))
     lastShLblBar := swingPivotBar
 
-if swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
+if (not onlyQmMode or onlyQmShowShSl) and swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
     y = low[swingCenter] - (labelAutoStack ? 3 * swingStep : 0)
     lb = label.new(swingPivotBar, y, "SL", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
     array.push(mcSigLabels, lb)
@@ -1805,7 +1818,7 @@ if barstate.isfirst or dashPosPrev != dashPos
 
 if barstate.islast and not na(dashTbl)
     sz = f_dashSize(dashTextSize)
-    if dashEnabled and not onlyShSlMode
+    if dashEnabled and not onlyShSlMode and not onlyQmMode
         hdrBg = color.new(color.black, 0)
         hdrTx = color.white
         table.cell(dashTbl, 0, 0, "TF", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
@@ -1839,23 +1852,23 @@ if barstate.islast and not na(dashTbl)
         table.cell(dashTbl, 2, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
         table.cell(dashTbl, 3, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
 
-f_alert(swingPatternOnlyAlerts and swingShowHighOut, syminfo.ticker + " Swing High")
-f_alert(swingPatternOnlyAlerts and swingShowLowOut, syminfo.ticker + " Swing Low")
-f_alert(swingPatternOnlyAlerts and swingBullDivPlot, syminfo.ticker + " Bullish Divergence (RSI)")
-f_alert(swingPatternOnlyAlerts and swingBearDivPlot, syminfo.ticker + " Bearish Divergence (RSI)")
-f_alert(not onlyShSlMode and rsiCrossUpSig, syminfo.ticker + " RSI cross UP vs RSI-MA")
-f_alert(not onlyShSlMode and rsiCrossDnSig, syminfo.ticker + " RSI cross DOWN vs RSI-MA")
-f_alert(not onlyShSlMode and rsiPatternEnabled and rsiWSig, syminfo.ticker + " RSI W pattern")
-f_alert(not onlyShSlMode and rsiPatternEnabled and rsiMSig, syminfo.ticker + " RSI M pattern")
+f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingShowHighOut, syminfo.ticker + " Swing High")
+f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingShowLowOut, syminfo.ticker + " Swing Low")
+f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingBullDivPlot, syminfo.ticker + " Bullish Divergence (RSI)")
+f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingBearDivPlot, syminfo.ticker + " Bearish Divergence (RSI)")
+f_alert(not onlyShSlMode and not onlyQmMode and rsiCrossUpSig, syminfo.ticker + " RSI cross UP vs RSI-MA")
+f_alert(not onlyShSlMode and not onlyQmMode and rsiCrossDnSig, syminfo.ticker + " RSI cross DOWN vs RSI-MA")
+f_alert(not onlyShSlMode and not onlyQmMode and rsiPatternEnabled and rsiWSig, syminfo.ticker + " RSI W pattern")
+f_alert(not onlyShSlMode and not onlyQmMode and rsiPatternEnabled and rsiMSig, syminfo.ticker + " RSI M pattern")
 smtBearAny = smtBearSig1 or smtBearSig2
 smtBullAny = smtBullSig1 or smtBullSig2
 
-f_alert(not onlyShSlMode and SmtEnabled and smtBearSig1, syminfo.ticker + " SMT1 Bearish vs SMT Symbol 1")
-f_alert(not onlyShSlMode and SmtEnabled and smtBullSig1, syminfo.ticker + " SMT1 Bullish vs SMT Symbol 1")
-f_alert(not onlyShSlMode and SmtEnabled and SmtUseSymbol2 and smtBearSig2, syminfo.ticker + " SMT2 Bearish vs SMT Symbol 2")
-f_alert(not onlyShSlMode and SmtEnabled and SmtUseSymbol2 and smtBullSig2, syminfo.ticker + " SMT2 Bullish vs SMT Symbol 2")
-f_alert(not onlyShSlMode and SmtEnabled and smtBearAny, syminfo.ticker + " SMT Bearish")
-f_alert(not onlyShSlMode and SmtEnabled and smtBullAny, syminfo.ticker + " SMT Bullish")
+f_alert(not onlyShSlMode and not onlyQmMode and SmtEnabled and smtBearSig1, syminfo.ticker + " SMT1 Bearish vs SMT Symbol 1")
+f_alert(not onlyShSlMode and not onlyQmMode and SmtEnabled and smtBullSig1, syminfo.ticker + " SMT1 Bullish vs SMT Symbol 1")
+f_alert(not onlyShSlMode and not onlyQmMode and SmtEnabled and SmtUseSymbol2 and smtBearSig2, syminfo.ticker + " SMT2 Bearish vs SMT Symbol 2")
+f_alert(not onlyShSlMode and not onlyQmMode and SmtEnabled and SmtUseSymbol2 and smtBullSig2, syminfo.ticker + " SMT2 Bullish vs SMT Symbol 2")
+f_alert(not onlyShSlMode and not onlyQmMode and SmtEnabled and smtBearAny, syminfo.ticker + " SMT Bearish")
+f_alert(not onlyShSlMode and not onlyQmMode and SmtEnabled and smtBullAny, syminfo.ticker + " SMT Bullish")
 
 type sfp_piv
     float swing_prc
@@ -1911,7 +1924,7 @@ sfpPl = ta.pivotlow(sfpLen, 1)
 [sfpLtfClose, sfpLtfVolume] = request.security_lower_tf(syminfo.tickerid, sfpRes, [close, volume])
 sfpLtfSize = sfpLtfClose.size()
 
-if sfpEnabled
+if sfpEnabled and not onlyQmMode
     sfpDailyBuf = sfpDailyExtremeBufferTicks * syminfo.mintick
     sfpMinWick = sfpMinWickTicks * syminfo.mintick
     sfpKillOk = not sfpUseKillzone or isKill
@@ -2062,6 +2075,7 @@ var float[] qmVals = array.new_float()
 var int[] qmIdxs = array.new_int()
 var line[] qmLines = array.new_line()
 var label[] qmLabels = array.new_label()
+var line[] qmLiveLines = array.new_line()
 qmMaxObjs = 250
 
 f_qmPushLine(_ln) =>
@@ -2081,7 +2095,7 @@ qmLowValue = ta.valuewhen(not na(qmLowPivot), low[qmPPsel], 0)
 qmHighIndex = ta.valuewhen(not na(qmHighPivot), bar_index[qmPPsel], 0)
 qmLowIndex = ta.valuewhen(not na(qmLowPivot), bar_index[qmPPsel], 0)
 
-if qmEnabled and not onlyShSlMode
+if qmEnabled and (not onlyShSlMode or onlyQmMode)
     if not na(qmHighPivot) and not na(qmLowPivot)
         if array.size(qmTypes) >= 1
             last = array.get(qmTypes, array.size(qmTypes) - 1)
@@ -2198,12 +2212,47 @@ if qmEnabled and not onlyShSlMode
                     array.push(qmVals, qmLowValue)
                     array.push(qmIdxs, qmLowIndex)
 
+if qmEnabled and qmLiveEnabled and (not onlyShSlMode or onlyQmMode)
+    qmS = array.size(qmIdxs)
+    qmPts = math.min(qmLivePoints, qmS)
+    qmNeed = qmPts >= 2 ? ((qmPts - 1) + (qmLiveToCurrent ? 1 : 0)) : 0
+    qmLastType = qmS > 0 ? array.get(qmTypes, qmS - 1) : ""
+    qmIsW = qmLastType == "L" or qmLastType == "LL" or qmLastType == "HL"
+    qmLiveCol = qmIsW ? qmLiveColorW : qmLiveColorM
+    while array.size(qmLiveLines) > qmNeed
+        line.delete(array.pop(qmLiveLines))
+    while array.size(qmLiveLines) < qmNeed
+        array.push(qmLiveLines, line.new(bar_index, close, bar_index, close, color=qmLiveCol, width=qmLiveWidth))
+    if qmPts >= 2
+        qmStart = qmS - qmPts
+        for i = 0 to qmPts - 2
+            x1 = array.get(qmIdxs, qmStart + i)
+            y1 = array.get(qmVals, qmStart + i)
+            x2 = array.get(qmIdxs, qmStart + i + 1)
+            y2 = array.get(qmVals, qmStart + i + 1)
+            ln = array.get(qmLiveLines, i)
+            line.set_xy1(ln, x1, y1)
+            line.set_xy2(ln, x2, y2)
+            line.set_color(ln, qmLiveCol)
+            line.set_width(ln, qmLiveWidth)
+        if qmLiveToCurrent
+            xLast = array.get(qmIdxs, qmS - 1)
+            yLast = array.get(qmVals, qmS - 1)
+            ln2 = array.get(qmLiveLines, qmNeed - 1)
+            line.set_xy1(ln2, xLast, yLast)
+            line.set_xy2(ln2, bar_index, close)
+            line.set_color(ln2, qmLiveCol)
+            line.set_width(ln2, qmLiveWidth)
+else
+    while array.size(qmLiveLines) > 0
+        line.delete(array.pop(qmLiveLines))
+
 var int qmCheckBe = 0
 var int qmCheckBu = 0
 var float qmBearStart = na
 var float qmBullStart = na
 
-if qmEnabled and not onlyShSlMode and array.size(qmTypes) > 5
+if qmEnabled and (not onlyShSlMode or onlyQmMode) and array.size(qmTypes) > 5
     s = array.size(qmTypes)
     th1 = array.get(qmTypes, s - 1)
     th2 = array.get(qmTypes, s - 2)

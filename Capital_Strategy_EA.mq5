@@ -142,12 +142,16 @@ input bool InpSendAlert = true;
 input bool InpSendPush = false;
 input bool InpNotifyHistorical = false;
 
+input group "Quasimodo (QM) Auto Trade"
+input bool InpQmAutoTradeOnEntryCreate = false;
+
 CTrade trade;
 
 int g_atr_handle = INVALID_HANDLE;
 int g_rsi_handle = INVALID_HANDLE;
 int g_macd_handle = INVALID_HANDLE;
 string g_prefix = "CAP_EA_";
+long g_qm_last_setup_key_handled = 0;
 datetime g_last_bar_time = 0;
 int g_day_key = 0;
 datetime g_day_start_time = 0;
@@ -670,6 +674,20 @@ bool SpreadOk()
    return (spreadPts <= InpMaxSpreadPoints);
 }
 
+bool CanOpenTrade(const bool isBuy)
+{
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) return false;
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED)) return false;
+   if(!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)) return false;
+
+   long mode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   if(mode == SYMBOL_TRADE_MODE_DISABLED) return false;
+   if(mode == SYMBOL_TRADE_MODE_CLOSEONLY) return false;
+   if(isBuy && mode == SYMBOL_TRADE_MODE_SHORTONLY) return false;
+   if(!isBuy && mode == SYMBOL_TRADE_MODE_LONGONLY) return false;
+   return true;
+}
+
 void DeleteByPrefix(const string pfx)
 {
    int total = ObjectsTotal(0, -1, -1);
@@ -678,6 +696,85 @@ void DeleteByPrefix(const string pfx)
       string n = ObjectName(0, i);
       if(StringFind(n, pfx) == 0) ObjectDelete(0, n);
    }
+}
+
+bool GetLatestQmSetupFromIndicator(long &setupKey, double &entryPrice, double &slPrice)
+{
+   setupKey = 0;
+   entryPrice = 0.0;
+   slPrice = 0.0;
+
+   const string objPrefix = "CAP_IND_QM_SETUP_";
+   const string suffix = "_ENTRY";
+   const int prefixLen = StringLen(objPrefix);
+   const int suffixLen = StringLen(suffix);
+
+   int total = ObjectsTotal(0, -1, -1);
+   string bestEntryName = "";
+   long bestKey = 0;
+   for(int i = 0; i < total; i++)
+   {
+      string n = ObjectName(0, i);
+      if(StringFind(n, objPrefix) != 0) continue;
+      if(StringLen(n) <= prefixLen + suffixLen) continue;
+      if(StringSubstr(n, StringLen(n) - suffixLen) != suffix) continue;
+
+      int keyLen = StringLen(n) - prefixLen - suffixLen;
+      if(keyLen <= 0) continue;
+      string keyStr = StringSubstr(n, prefixLen, keyLen);
+      long k = (long)StringToInteger(keyStr);
+      if(k <= 0) continue;
+      if(k > bestKey)
+      {
+         bestKey = k;
+         bestEntryName = n;
+      }
+   }
+
+   if(bestKey <= 0 || bestEntryName == "") return false;
+
+   string base = StringSubstr(bestEntryName, 0, StringLen(bestEntryName) - StringLen("ENTRY"));
+   string slName = base + "SL";
+   if(ObjectFind(0, bestEntryName) < 0) return false;
+   if(ObjectFind(0, slName) < 0) return false;
+
+   double entry = ObjectGetDouble(0, bestEntryName, OBJPROP_PRICE, 0);
+   double sl = ObjectGetDouble(0, slName, OBJPROP_PRICE, 0);
+   if(entry <= 0.0 || sl <= 0.0) return false;
+
+   setupKey = bestKey;
+   entryPrice = entry;
+   slPrice = sl;
+   return true;
+}
+
+void ProcessQmAutoTradeOnNewBar(const datetime tBarOpen, const double barClose)
+{
+   if(!InpQmAutoTradeOnEntryCreate) return;
+
+   long key = 0;
+   double entry = 0.0;
+   double sl = 0.0;
+   if(!GetLatestQmSetupFromIndicator(key, entry, sl)) return;
+   if(key <= 0) return;
+   if(key <= g_qm_last_setup_key_handled) return;
+
+   g_qm_last_setup_key_handled = key;
+
+   bool isBuy = (sl < entry);
+   if(InpMaxOneTradePerDayPerSide && (isBuy ? g_buy_done : g_sell_done)) return;
+
+   if(isBuy)
+   {
+      if(HasPosition(+1)) return;
+      if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+      if(SpreadOk() && TryEnterWithSLTag(true, tBarOpen, barClose, sl, "BUY QM")) g_buy_done = true;
+      return;
+   }
+
+   if(HasPosition(-1)) return;
+   if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+   if(SpreadOk() && TryEnterWithSLTag(false, tBarOpen, barClose, sl, "SELL QM")) g_sell_done = true;
 }
 
 void CreateOrUpdateRay(const string name, const datetime t1, const double price, const color clr, const int width)
@@ -1129,6 +1226,12 @@ void UpdateMtfH1SwingSignals()
 
 bool TryEnterWithSLTag(const bool isBuy, const datetime tBarOpen, const double barClose, const double slFixed, const string tag)
 {
+   if(!CanOpenTrade(isBuy))
+   {
+      Print("Trade blocked (only close / disabled / permission). Symbol=", _Symbol, " mode=", (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE));
+      return false;
+   }
+
    double entry = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    if(entry <= 0.0) entry = barClose;
 
@@ -1156,6 +1259,12 @@ bool TryEnterWithSL(const bool isBuy, const datetime tBarOpen, const double barC
 
 bool TryEnter(const bool isBuy, const datetime tBarOpen, const double barClose)
 {
+   if(!CanOpenTrade(isBuy))
+   {
+      Print("Trade blocked (only close / disabled / permission). Symbol=", _Symbol, " mode=", (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE));
+      return false;
+   }
+
    double entry = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    if(entry <= 0.0) entry = barClose;
 
@@ -1227,6 +1336,7 @@ void ProcessSignalOnNewBar()
    if(o <= 0.0 || h <= 0.0 || l <= 0.0 || c <= 0.0) { g_last_bar_time = t0; return; }
 
    UpdateLevelsWithClosedBar(tBarOpen, h, l);
+   ProcessQmAutoTradeOnNewBar(tBarOpen, c);
 
    if(IsLocalTime(tBarOpen, 2, 0))
    {

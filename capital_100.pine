@@ -183,6 +183,26 @@ qmLiveToCurrent = input.bool(true, "QM Live - Ultimo punto → prezzo attuale", 
 qmLiveColorW = input.color(color.new(color.lime, 0), "QM Live - Colore W (Bull)", group="QM")
 qmLiveColorM = input.color(color.new(color.red, 0), "QM Live - Colore M (Bear)", group="QM")
 qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
+qmLiveShowSupertrend = input.bool(true, "QM Live - Mostra SuperTrend AI", group="QM")
+
+stAiEnabled = input.bool(false, "SuperTrend AI (Clustering) [LuxAlgo]", group="SuperTrend AI")
+stAiAtrLen = input.int(10, "ATR Length", minval=1, group="SuperTrend AI")
+stAiMinMult = input.int(1, "Factor Range", minval=0, inline="stai_factor", group="SuperTrend AI")
+stAiMaxMult = input.int(5, "", minval=0, inline="stai_factor", group="SuperTrend AI")
+stAiStep = input.float(0.5, "Step", minval=0, step=0.1, group="SuperTrend AI")
+stAiPerfAlpha = input.float(10, "Performance Memory", minval=2, group="SuperTrend AI")
+stAiFromCluster = input.string("Best", "From Cluster", options=["Best", "Average", "Worst"], group="SuperTrend AI")
+stAiMaxIterIn = input.int(1000, "Maximum Iteration Steps", minval=0, group="SuperTrend AI - Optimization")
+stAiMaxDataIn = input.int(10000, "Historical Bars Calculation", minval=0, group="SuperTrend AI - Optimization")
+stAiBearCss = input.color(color.red, "Trailing Stop", inline="stai_ts", group="SuperTrend AI - Style")
+stAiBullCss = input.color(color.teal, "", inline="stai_ts", group="SuperTrend AI - Style")
+stAiAmaBearCss = input.color(color.new(color.red, 50), "AMA", inline="stai_ama", group="SuperTrend AI - Style")
+stAiAmaBullCss = input.color(color.new(color.teal, 50), "", inline="stai_ama", group="SuperTrend AI - Style")
+stAiShowGradient = input.bool(true, "Candle Coloring", group="SuperTrend AI - Style")
+stAiShowSignals = input.bool(true, "Show Signals", group="SuperTrend AI - Style")
+stAiShowDash = input.bool(true, "Show Dashboard", group="SuperTrend AI - Dashboard")
+stAiDashLoc = input.string("Top Right", "Location", options=["Top Right", "Bottom Right", "Bottom Left"], group="SuperTrend AI - Dashboard")
+stAiTextSize = input.string("Small", "Size", options=["Tiny", "Small", "Normal"], group="SuperTrend AI - Dashboard")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
@@ -2067,6 +2087,170 @@ if barstate.islast and sfpEnabled and sfpValidate and sfpShowDash and not na(sfp
     table.cell(sfpTb, 0, 0, str.format("LTF: {0}", sfpRes), text_color=color.white, text_size=sfpTableSize)
 else if barstate.islast and not na(sfpTb) and (not sfpEnabled or not sfpShowDash)
     table.cell(sfpTb, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sfpTableSize)
+
+stAiActive = not onlyShSlMode and ((stAiEnabled and not onlyQmMode) or (qmLiveEnabled and qmLiveShowSupertrend))
+if stAiEnabled and stAiMinMult > stAiMaxMult
+    runtime.error("Minimum factor is greater than maximum factor in the range")
+
+type stAi_supertrend
+    float upper = hl2
+    float lower = hl2
+    float output
+    float perf = 0.0
+    float factor
+    int trend = 0
+
+type stAi_vector
+    array<float> out
+
+var stAiHolder = array.new<stAi_supertrend>(0)
+var stAiFactors = array.new<float>(0)
+
+if barstate.isfirst and stAiActive
+    for i = 0 to int((stAiMaxMult - stAiMinMult) / stAiStep)
+        array.push(stAiFactors, stAiMinMult + i * stAiStep)
+        array.push(stAiHolder, stAi_supertrend.new())
+
+stAiAtr = stAiActive ? ta.atr(stAiAtrLen) : na
+
+if stAiActive and array.size(stAiFactors) > 0
+    stAiK = 0
+    for factor in stAiFactors
+        stAiGet = array.get(stAiHolder, stAiK)
+        stAiUp = hl2 + stAiAtr * factor
+        stAiDn = hl2 - stAiAtr * factor
+        stAiGet.trend := close > stAiGet.upper ? 1 : close < stAiGet.lower ? 0 : stAiGet.trend
+        stAiGet.upper := close[1] < stAiGet.upper ? math.min(stAiUp, stAiGet.upper) : stAiUp
+        stAiGet.lower := close[1] > stAiGet.lower ? math.max(stAiDn, stAiGet.lower) : stAiDn
+        stAiDiff = nz(math.sign(close[1] - stAiGet.output))
+        stAiGet.perf += 2.0 / (stAiPerfAlpha + 1.0) * (nz(close - close[1]) * stAiDiff - stAiGet.perf)
+        stAiGet.output := stAiGet.trend == 1 ? stAiGet.lower : stAiGet.upper
+        stAiGet.factor := factor
+        stAiK += 1
+
+stAiMaxIter = math.max(0, stAiMaxIterIn)
+stAiMaxData = math.max(0, stAiMaxDataIn)
+stAiCalc = stAiActive and (last_bar_index - bar_index <= stAiMaxData)
+
+stAiFactorArray = array.new<float>(0)
+stAiData = array.new<float>(0)
+if stAiCalc
+    for element in stAiHolder
+        array.push(stAiData, element.perf)
+        array.push(stAiFactorArray, element.factor)
+
+stAiCentroids = array.new<float>(0)
+if stAiCalc and array.size(stAiData) > 0
+    array.push(stAiCentroids, stAiData.percentile_linear_interpolation(25))
+    array.push(stAiCentroids, stAiData.percentile_linear_interpolation(50))
+    array.push(stAiCentroids, stAiData.percentile_linear_interpolation(75))
+
+var array<stAi_vector> stAiFactorsClusters = na
+var array<stAi_vector> stAiPerfClusters = na
+
+if stAiCalc and array.size(stAiCentroids) == 3
+    for _ = 0 to stAiMaxIter
+        stAiFactorsClusters := array.from(stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)))
+        stAiPerfClusters := array.from(stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)))
+        stAiI = 0
+        for value in stAiData
+            stAiDist = array.new<float>(0)
+            for centroid in stAiCentroids
+                array.push(stAiDist, math.abs(value - centroid))
+            stAiIdx = stAiDist.indexof(stAiDist.min())
+            array.push(stAiPerfClusters.get(stAiIdx).out, value)
+            array.push(stAiFactorsClusters.get(stAiIdx).out, array.get(stAiFactorArray, stAiI))
+            stAiI += 1
+        stAiNewCentroids = array.new<float>(0)
+        for cluster_ in stAiPerfClusters
+            array.push(stAiNewCentroids, cluster_.out.avg())
+        if stAiNewCentroids.get(0) == stAiCentroids.get(0) and stAiNewCentroids.get(1) == stAiCentroids.get(1) and stAiNewCentroids.get(2) == stAiCentroids.get(2)
+            break
+        stAiCentroids := stAiNewCentroids
+
+stAiFrom = stAiFromCluster == "Best" ? 2 : stAiFromCluster == "Average" ? 1 : 0
+stAiDen = stAiActive ? ta.ema(math.abs(close - close[1]), int(stAiPerfAlpha)) : na
+
+var float stAiTargetFactor = na
+var float stAiPerfIdx = na
+var float stAiPerfAma = na
+
+if stAiActive and not na(stAiPerfClusters)
+    stAiTargetFactor := nz(stAiFactorsClusters.get(stAiFrom).out.avg(), stAiTargetFactor)
+    stAiPerfIdx := math.max(nz(stAiPerfClusters.get(stAiFrom).out.avg()), 0) / stAiDen
+
+var float stAiUpper = hl2
+var float stAiLower = hl2
+var int stAiOs = 0
+
+stAiUp2 = stAiActive ? (hl2 + stAiAtr * stAiTargetFactor) : na
+stAiDn2 = stAiActive ? (hl2 - stAiAtr * stAiTargetFactor) : na
+if stAiActive and not na(stAiUp2) and not na(stAiDn2)
+    stAiUpper := close[1] < stAiUpper ? math.min(stAiUp2, stAiUpper) : stAiUp2
+    stAiLower := close[1] > stAiLower ? math.max(stAiDn2, stAiLower) : stAiDn2
+    stAiOs := close > stAiUpper ? 1 : close < stAiLower ? 0 : stAiOs
+
+stAiTs = stAiOs == 1 ? stAiLower : stAiUpper
+if stAiActive and na(stAiTs[1]) and not na(stAiTs)
+    stAiPerfAma := stAiTs
+else if stAiActive and not na(stAiPerfIdx)
+    stAiPerfAma += stAiPerfIdx * (stAiTs - stAiPerfAma)
+
+stAiCss = stAiOs == 1 ? stAiBullCss : stAiBearCss
+stAiPlot = stAiActive
+
+plot(stAiPlot ? stAiTs : na, "SuperTrend AI - Trailing Stop", stAiOs != stAiOs[1] ? na : stAiCss)
+plot(stAiPlot ? stAiPerfAma : na, "SuperTrend AI - Trailing Stop AMA", ta.cross(close, stAiPerfAma) ? na : close > stAiPerfAma ? stAiAmaBullCss : stAiAmaBearCss)
+barcolor(stAiPlot and stAiEnabled and stAiShowGradient ? color.from_gradient(stAiPerfIdx, 0, 1, color.new(stAiCss, 80), stAiCss) : na)
+
+stAiShowNums = stAiPlot and stAiShowSignals and (stAiEnabled or (qmLiveEnabled and qmLiveShowSupertrend)) and not na(stAiPerfIdx)
+if stAiShowNums
+    if stAiOs > stAiOs[1]
+        label.new(bar_index, stAiTs, str.tostring(int(stAiPerfIdx * 10)), color=stAiBullCss, style=label.style_label_up, textcolor=color.white, size=size.tiny)
+    if stAiOs < stAiOs[1]
+        label.new(bar_index, stAiTs, str.tostring(int(stAiPerfIdx * 10)), color=stAiBearCss, style=label.style_label_down, textcolor=color.white, size=size.tiny)
+
+stAiTablePosition = stAiDashLoc == "Bottom Left" ? position.bottom_left : stAiDashLoc == "Top Right" ? position.top_right : position.bottom_right
+stAiTableSize = stAiTextSize == "Tiny" ? size.tiny : stAiTextSize == "Small" ? size.small : size.normal
+var table stAiTb = na
+if barstate.isfirst and stAiEnabled and stAiShowDash and stAiActive
+    stAiTb := table.new(stAiTablePosition, 4, 4, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
+
+if stAiEnabled and stAiShowDash and stAiActive and barstate.islast and not na(stAiTb) and not na(stAiPerfClusters)
+    tbTopN = stAiPerfClusters.get(2).out.size()
+    tbMidN = stAiPerfClusters.get(1).out.size()
+    tbBtmN = stAiPerfClusters.get(0).out.size()
+    table.cell(stAiTb, 0, 0, "Cluster", text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 0, 1, "Best", text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 0, 2, "Average", text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 0, 3, "Worst", text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 1, 0, "Size", text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 1, 1, str.tostring(tbTopN), text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 1, 2, str.tostring(tbMidN), text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 1, 3, str.tostring(tbBtmN), text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 2, 0, "Centroid Dispersion", text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 3, 0, "Factors", text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 3, 1, str.tostring(stAiFactorsClusters.get(2).out), text_color=color.white, text_size=stAiTableSize, text_halign=text.align_left)
+    table.cell(stAiTb, 3, 2, str.tostring(stAiFactorsClusters.get(1).out), text_color=color.white, text_size=stAiTableSize, text_halign=text.align_left)
+    table.cell(stAiTb, 3, 3, str.tostring(stAiFactorsClusters.get(0).out), text_color=color.white, text_size=stAiTableSize, text_halign=text.align_left)
+    stAiDisp0 = 0.0
+    stAiDisp1 = 0.0
+    stAiDisp2 = 0.0
+    if tbBtmN > 1
+        for v in stAiPerfClusters.get(0).out
+            stAiDisp0 += math.abs(v - stAiCentroids.get(0))
+        stAiDisp0 /= tbBtmN
+    if tbMidN > 1
+        for v in stAiPerfClusters.get(1).out
+            stAiDisp1 += math.abs(v - stAiCentroids.get(1))
+        stAiDisp1 /= tbMidN
+    if tbTopN > 1
+        for v in stAiPerfClusters.get(2).out
+            stAiDisp2 += math.abs(v - stAiCentroids.get(2))
+        stAiDisp2 /= tbTopN
+    table.cell(stAiTb, 2, 1, str.tostring(stAiDisp2, "#.####"), text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 2, 2, str.tostring(stAiDisp1, "#.####"), text_color=color.white, text_size=stAiTableSize)
+    table.cell(stAiTb, 2, 3, str.tostring(stAiDisp0, "#.####"), text_color=color.white, text_size=stAiTableSize)
 
 qmPPsel = qmUseTfPivots ? (tfIsM1 ? qmPp_M1 : tfIsM5 ? qmPp_M5 : tfIsM15 ? qmPp_M15 : tfIsH1 ? qmPp_H1 : tfIsH4 ? qmPp_H4 : qmPp) : qmPp
 qmATR = ta.atr(21)

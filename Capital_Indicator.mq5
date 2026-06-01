@@ -39,6 +39,7 @@ input bool InpNotifyMtf = false;
 input bool InpNotifyDailyTouch = false;
 input bool InpNotifyRsiCross = false;
 input bool InpNotifyQm = true;
+input bool InpNotifyStAi = true;
    input bool InpDailyTouchOncePerDay = true;
 
    input group "Logic"
@@ -229,6 +230,18 @@ input int InpQmLiveWidth = 2;
 input bool InpQmNotifyEntryTouch = true;
 input bool InpQmNotifyOncePerSetup = true;
 
+input group "SuperTrend AI (Clustering)"
+input bool InpStAiEnabled = true;
+input int InpStAiMinScore = 2;
+input int InpStAiAtrLen = 10;
+input int InpStAiMinMult = 1;
+input int InpStAiMaxMult = 5;
+input double InpStAiStep = 0.5;
+input double InpStAiPerfAlpha = 10.0;
+enum ENUM_STAI_CLUSTER { STAI_CLUSTER_BEST = 0, STAI_CLUSTER_AVERAGE = 1, STAI_CLUSTER_WORST = 2 };
+input ENUM_STAI_CLUSTER InpStAiFromCluster = STAI_CLUSTER_BEST;
+input int InpStAiMaxIter = 1000;
+
    input group "Colors"
    input color InpDailyOpenColor = clrPurple;
    input color InpDailyHLColor = clrWhite;
@@ -297,6 +310,297 @@ input bool InpQmNotifyOncePerSetup = true;
    int g_qm_entry_dir = 0;
    datetime g_qm_entry_setup_time = 0;
    bool g_qm_entry_notified = false;
+
+   struct StAiSupertrend
+   {
+      double upper;
+      double lower;
+      double output;
+      double perf;
+      double factor;
+      int trend;
+   };
+
+   StAiSupertrend g_st_holder[];
+   double g_st_factors[];
+   bool g_st_inited = false;
+   double g_st_prev_close = 0.0;
+   bool g_st_prev_close_has = false;
+   double g_st_atr = 0.0;
+   bool g_st_atr_has = false;
+   double g_st_den = 0.0;
+   bool g_st_den_has = false;
+   int g_st_os = 0;
+   double g_st_upper = 0.0;
+   double g_st_lower = 0.0;
+   uint g_st_last_params_hash = 0;
+   datetime g_st_last_signal_time = 0;
+
+   int StAiCmpDoubleAsc(const double a, const double b) { return (a < b ? -1 : a > b ? 1 : 0); }
+
+   double StAiPercentileLinear(const double &values[], const int n, const double pct01)
+   {
+      if(n <= 0) return 0.0;
+      double tmp[];
+      ArrayResize(tmp, n);
+      for(int i = 0; i < n; i++) tmp[i] = values[i];
+      ArraySort(tmp, WHOLE_ARRAY, 0, MODE_ASCEND);
+
+      double p = pct01;
+      if(p < 0.0) p = 0.0;
+      if(p > 1.0) p = 1.0;
+      double rank = p * (double)(n - 1);
+      int lo = (int)MathFloor(rank);
+      int hi = (int)MathCeil(rank);
+      if(lo < 0) lo = 0;
+      if(hi > n - 1) hi = n - 1;
+      if(lo == hi) return tmp[lo];
+      double w = rank - (double)lo;
+      return tmp[lo] + (tmp[hi] - tmp[lo]) * w;
+   }
+
+   uint StAiParamsHash()
+   {
+      uint h = 2166136261u;
+      h = (h ^ (uint)InpStAiAtrLen) * 16777619u;
+      h = (h ^ (uint)InpStAiMinMult) * 16777619u;
+      h = (h ^ (uint)InpStAiMaxMult) * 16777619u;
+      h = (h ^ (uint)MathRound(InpStAiStep * 1000.0)) * 16777619u;
+      h = (h ^ (uint)MathRound(InpStAiPerfAlpha * 1000.0)) * 16777619u;
+      h = (h ^ (uint)InpStAiFromCluster) * 16777619u;
+      return h;
+   }
+
+   void StAiInitIfNeeded(const double hl2)
+   {
+      if(!InpStAiEnabled) return;
+      if(InpStAiMinMult > InpStAiMaxMult) return;
+      if(InpStAiStep <= 0.0) return;
+
+      uint ph = StAiParamsHash();
+      if(ph != g_st_last_params_hash)
+      {
+         ArrayResize(g_st_factors, 0);
+         ArrayResize(g_st_holder, 0);
+         g_st_inited = false;
+         g_st_prev_close_has = false;
+         g_st_atr_has = false;
+         g_st_den_has = false;
+         g_st_os = 0;
+         g_st_upper = hl2;
+         g_st_lower = hl2;
+         g_st_last_params_hash = ph;
+         g_st_last_signal_time = 0;
+      }
+
+      if(ArraySize(g_st_factors) == 0)
+      {
+         int steps = (int)MathFloor(((double)InpStAiMaxMult - (double)InpStAiMinMult) / InpStAiStep);
+         if(steps < 0) steps = 0;
+         for(int i = 0; i <= steps; i++)
+         {
+            double f = (double)InpStAiMinMult + (double)i * InpStAiStep;
+            ArrayResize(g_st_factors, ArraySize(g_st_factors) + 1);
+            g_st_factors[ArraySize(g_st_factors) - 1] = f;
+            ArrayResize(g_st_holder, ArraySize(g_st_holder) + 1);
+            int k = ArraySize(g_st_holder) - 1;
+            g_st_holder[k].upper = hl2;
+            g_st_holder[k].lower = hl2;
+            g_st_holder[k].output = hl2;
+            g_st_holder[k].perf = 0.0;
+            g_st_holder[k].factor = f;
+            g_st_holder[k].trend = 0;
+         }
+         g_st_inited = true;
+      }
+   }
+
+   void StAiUpdate(const datetime tBarOpen, const double h, const double l, const double c)
+   {
+      if(!InpStAiEnabled || !InpNotifyStAi)
+      {
+         g_st_prev_close = c;
+         g_st_prev_close_has = true;
+         return;
+      }
+      if(InpStAiMinMult > InpStAiMaxMult) return;
+      if(InpStAiStep <= 0.0) return;
+      if(InpStAiMaxIter < 0) return;
+
+      double hl2 = (h + l) * 0.5;
+      StAiInitIfNeeded(hl2);
+      int n = ArraySize(g_st_holder);
+      if(n <= 0) return;
+
+      if(!g_st_prev_close_has)
+      {
+         g_st_prev_close = c;
+         g_st_prev_close_has = true;
+         g_st_upper = hl2;
+         g_st_lower = hl2;
+         g_st_os = 0;
+         return;
+      }
+
+      double prevClose = g_st_prev_close;
+
+      int atrLen = InpStAiAtrLen;
+      if(atrLen < 1) atrLen = 1;
+      double tr = h - l;
+      double a = MathAbs(h - prevClose);
+      if(a > tr) tr = a;
+      a = MathAbs(l - prevClose);
+      if(a > tr) tr = a;
+      if(!g_st_atr_has)
+      {
+         g_st_atr = tr;
+         g_st_atr_has = true;
+      }
+      else
+      {
+         g_st_atr = (g_st_atr * (double)(atrLen - 1) + tr) / (double)atrLen;
+      }
+
+      int denLen = (int)InpStAiPerfAlpha;
+      if(denLen < 1) denLen = 1;
+      double x = MathAbs(c - prevClose);
+      double emaA = 2.0 / ((double)denLen + 1.0);
+      if(!g_st_den_has)
+      {
+         g_st_den = x;
+         g_st_den_has = true;
+      }
+      else
+      {
+         g_st_den = emaA * x + (1.0 - emaA) * g_st_den;
+      }
+      if(g_st_den <= 0.0)
+      {
+         g_st_prev_close = c;
+         g_st_prev_close_has = true;
+         return;
+      }
+
+      double perfAlpha = InpStAiPerfAlpha;
+      if(perfAlpha < 2.0) perfAlpha = 2.0;
+      double perfK = 2.0 / (perfAlpha + 1.0);
+
+      double perfVals[];
+      ArrayResize(perfVals, n);
+
+      for(int i = 0; i < n; i++)
+      {
+         double factor = g_st_holder[i].factor;
+         double up = hl2 + g_st_atr * factor;
+         double dn = hl2 - g_st_atr * factor;
+
+         int trend = g_st_holder[i].trend;
+         if(c > g_st_holder[i].upper) trend = 1;
+         else if(c < g_st_holder[i].lower) trend = 0;
+
+         double upper = (prevClose < g_st_holder[i].upper ? MathMin(up, g_st_holder[i].upper) : up);
+         double lower = (prevClose > g_st_holder[i].lower ? MathMax(dn, g_st_holder[i].lower) : dn);
+
+         double d = prevClose - g_st_holder[i].output;
+         double diff = (d > 0.0 ? 1.0 : d < 0.0 ? -1.0 : 0.0);
+
+         double perf = g_st_holder[i].perf + perfK * ((c - prevClose) * diff - g_st_holder[i].perf);
+         double output = (trend == 1 ? lower : upper);
+
+         g_st_holder[i].trend = trend;
+         g_st_holder[i].upper = upper;
+         g_st_holder[i].lower = lower;
+         g_st_holder[i].perf = perf;
+         g_st_holder[i].output = output;
+         perfVals[i] = perf;
+      }
+
+      double centroids[3];
+      centroids[0] = StAiPercentileLinear(perfVals, n, 0.25);
+      centroids[1] = StAiPercentileLinear(perfVals, n, 0.50);
+      centroids[2] = StAiPercentileLinear(perfVals, n, 0.75);
+
+      double perfSum[3] = {0.0, 0.0, 0.0};
+      double factSum[3] = {0.0, 0.0, 0.0};
+      int cnt[3] = {0, 0, 0};
+
+      int maxIter = InpStAiMaxIter;
+      if(maxIter < 0) maxIter = 0;
+      for(int it = 0; it <= maxIter; it++)
+      {
+         perfSum[0] = perfSum[1] = perfSum[2] = 0.0;
+         factSum[0] = factSum[1] = factSum[2] = 0.0;
+         cnt[0] = cnt[1] = cnt[2] = 0;
+
+         for(int i = 0; i < n; i++)
+         {
+            double v = perfVals[i];
+            double d0 = MathAbs(v - centroids[0]);
+            double d1 = MathAbs(v - centroids[1]);
+            double d2 = MathAbs(v - centroids[2]);
+            int idx = 0;
+            double best = d0;
+            if(d1 < best) { best = d1; idx = 1; }
+            if(d2 < best) { idx = 2; }
+
+            perfSum[idx] += v;
+            factSum[idx] += g_st_holder[i].factor;
+            cnt[idx] += 1;
+         }
+
+         double newC[3] = {centroids[0], centroids[1], centroids[2]};
+         for(int k = 0; k < 3; k++)
+            if(cnt[k] > 0) newC[k] = perfSum[k] / (double)cnt[k];
+
+         if(MathAbs(newC[0] - centroids[0]) < 1e-9 && MathAbs(newC[1] - centroids[1]) < 1e-9 && MathAbs(newC[2] - centroids[2]) < 1e-9)
+            break;
+
+         centroids[0] = newC[0];
+         centroids[1] = newC[1];
+         centroids[2] = newC[2];
+      }
+
+      int bestIdx = 0;
+      int worstIdx = 0;
+      if(centroids[1] > centroids[bestIdx]) bestIdx = 1;
+      if(centroids[2] > centroids[bestIdx]) bestIdx = 2;
+      if(centroids[1] < centroids[worstIdx]) worstIdx = 1;
+      if(centroids[2] < centroids[worstIdx]) worstIdx = 2;
+      int avgIdx = 3 - bestIdx - worstIdx;
+
+      int pick = (InpStAiFromCluster == STAI_CLUSTER_BEST ? bestIdx : InpStAiFromCluster == STAI_CLUSTER_WORST ? worstIdx : avgIdx);
+      if(cnt[pick] <= 0)
+      {
+         g_st_prev_close = c;
+         g_st_prev_close_has = true;
+         return;
+      }
+
+      double targetFactor = factSum[pick] / (double)cnt[pick];
+      double perfAvg = perfSum[pick] / (double)cnt[pick];
+      double perfIdx = MathMax(perfAvg, 0.0) / g_st_den;
+      int score = (int)(perfIdx * 10.0);
+
+      int prevOs = g_st_os;
+      double up2 = hl2 + g_st_atr * targetFactor;
+      double dn2 = hl2 - g_st_atr * targetFactor;
+      g_st_upper = (prevClose < g_st_upper ? MathMin(up2, g_st_upper) : up2);
+      g_st_lower = (prevClose > g_st_lower ? MathMax(dn2, g_st_lower) : dn2);
+      if(c > g_st_upper) g_st_os = 1;
+      else if(c < g_st_lower) g_st_os = 0;
+
+      if(g_st_os != prevOs && tBarOpen != g_st_last_signal_time)
+      {
+         if(score >= InpStAiMinScore)
+         {
+            NotifySignal("ST AI " + string(g_st_os == 1 ? "BUY " : "SELL ") + IntegerToString(score), tBarOpen);
+            g_st_last_signal_time = tBarOpen;
+         }
+      }
+
+      g_st_prev_close = c;
+      g_st_prev_close_has = true;
+   }
 
    datetime g_day_start_time = 0;
    bool g_buy_done = false;
@@ -1565,13 +1869,17 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       if(InpNotifyOnlyQmEntryTouch)
       {
          bool isQmEntryTouch = (StringFind(txt, "QM ENTRY TOUCH") == 0);
-         if(!isQmEntryTouch) return;
+         bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
+         bool isStAi = (StringFind(txt, "ST AI") == 0);
+         if(!(isQmEntryTouch || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyStAi && isStAi))) return;
       }
       if(InpQmOnlyMode)
       {
          bool isQm = (StringFind(txt, "QM") == 0);
          bool isShSl = (txt == "SH" || txt == "SL");
-         if(!(isQm || (InpQmShowShSl && isShSl))) return;
+         bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
+         bool isStAi = (StringFind(txt, "ST AI") == 0);
+         if(!(isQm || (InpQmShowShSl && isShSl) || (InpQmShowDaily && isDailyTouch) || (InpNotifyStAi && isStAi))) return;
       }
       if(InpNotifyOnlySHSL)
       {
@@ -1582,7 +1890,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
          bool isRsiCross = (StringFind(txt, "RSI CROSS") == 0);
          bool isQm = (StringFind(txt, "QM") == 0);
-         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyRsiCross && isRsiCross) || (InpNotifyQm && isQm))) return;
+         bool isStAi = (StringFind(txt, "ST AI") == 0);
+         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyRsiCross && isRsiCross) || (InpNotifyQm && isQm) || (InpNotifyStAi && isStAi))) return;
       }
       if(!InpNotifyHistorical)
       {
@@ -1767,6 +2076,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             NotifySignal("DAILY TOUCH LOW", tBarOpen);
          }
       }
+
+      StAiUpdate(tBarOpen, h, l, c);
 
       if(IsLocalTime(tBarOpen, 0, 0))
       {
@@ -3516,6 +3827,21 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          g_qm_entry_dir = 0;
          g_qm_entry_setup_time = 0;
          g_qm_entry_notified = false;
+
+         ArrayResize(g_st_factors, 0);
+         ArrayResize(g_st_holder, 0);
+         g_st_inited = false;
+         g_st_prev_close = 0.0;
+         g_st_prev_close_has = false;
+         g_st_atr = 0.0;
+         g_st_atr_has = false;
+         g_st_den = 0.0;
+         g_st_den_has = false;
+         g_st_os = 0;
+         g_st_upper = 0.0;
+         g_st_lower = 0.0;
+         g_st_last_params_hash = 0;
+         g_st_last_signal_time = 0;
 
          int histDays = InpHistoryDays;
          if(histDays < 1) histDays = 1;

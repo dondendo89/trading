@@ -31,15 +31,17 @@
    input bool InpSendPush = true;
    input bool InpNotifyHistorical = false;
    input bool InpNotifyCrossLevels = false;
-   input bool InpNotifyOnlySHSL = true;
-   input bool InpNotifyOnlyQmEntryTouch = true;
+   input bool InpNotifyOnlyBelugaSwing = true;
+   input bool InpNotifyOnlySHSL = false;
+   input bool InpNotifyOnlyQmEntryTouch = false;
 input bool InpNotifyDiv = false;
 input bool InpNotifyLux = false;
 input bool InpNotifyMtf = false;
 input bool InpNotifyDailyTouch = false;
 input bool InpNotifyRsiCross = false;
-input bool InpNotifyQm = true;
-input bool InpNotifyStAi = true;
+input bool InpNotifyQm = false;
+input bool InpNotifyStAi = false;
+input bool InpNotifyBelugaSwing = true;
    input bool InpDailyTouchOncePerDay = true;
 
    input group "Logic"
@@ -242,6 +244,20 @@ enum ENUM_STAI_CLUSTER { STAI_CLUSTER_BEST = 0, STAI_CLUSTER_AVERAGE = 1, STAI_C
 input ENUM_STAI_CLUSTER InpStAiFromCluster = STAI_CLUSTER_BEST;
 input int InpStAiMaxIter = 1000;
 
+input group "Swing BigBeluga"
+input bool InpBelugaEnabled = true;
+input bool InpBelugaOnlyMode = true;
+input bool InpBelugaUseTfLen = true;
+input int InpBelugaLen = 50;
+input int InpBelugaLen_M1 = 50;
+input int InpBelugaLen_M15 = 50;
+input int InpBelugaLen_H1 = 50;
+input int InpBelugaLen_H4 = 50;
+input color InpBelugaLowVwapColor = clrLimeGreen;
+input color InpBelugaHighVwapColor = clrDodgerBlue;
+input int InpBelugaWidth = 1;
+input bool InpBelugaShowBB = true;
+
    input group "Colors"
    input color InpDailyOpenColor = clrPurple;
    input color InpDailyHLColor = clrWhite;
@@ -336,6 +352,14 @@ input int InpStAiMaxIter = 1000;
    uint g_st_last_params_hash = 0;
    datetime g_st_last_signal_time = 0;
 
+   datetime g_bb_times[];
+   double g_bb_highs[];
+   double g_bb_lows[];
+   datetime g_bb_last_swing_high_time = 0;
+   datetime g_bb_last_swing_low_time = 0;
+   bool g_bb_trend_has = false;
+   bool g_bb_trend = false;
+
    int StAiCmpDoubleAsc(const double a, const double b) { return (a < b ? -1 : a > b ? 1 : 0); }
 
    double StAiPercentileLinear(const double &values[], const int n, const double pct01)
@@ -344,7 +368,7 @@ input int InpStAiMaxIter = 1000;
       double tmp[];
       ArrayResize(tmp, n);
       for(int i = 0; i < n; i++) tmp[i] = values[i];
-      ArraySort(tmp, WHOLE_ARRAY, 0, MODE_ASCEND);
+      ArraySort(tmp);
 
       double p = pct01;
       if(p < 0.0) p = 0.0;
@@ -600,6 +624,339 @@ input int InpStAiMaxIter = 1000;
 
       g_st_prev_close = c;
       g_st_prev_close_has = true;
+   }
+
+   void BelugaPushBar(const datetime tBarOpen, const double h, const double l)
+   {
+      int len = InpBelugaLen;
+      if(InpBelugaUseTfLen)
+      {
+         if(_Period == PERIOD_M1) len = InpBelugaLen_M1;
+         else if(_Period == PERIOD_M15) len = InpBelugaLen_M15;
+         else if(_Period == PERIOD_H1) len = InpBelugaLen_H1;
+         else if(_Period == PERIOD_H4) len = InpBelugaLen_H4;
+      }
+      if(len < 1) len = 1;
+
+      int cap = len + 2;
+      if(cap < 5) cap = 5;
+      int n = ArraySize(g_bb_times);
+      if(n < cap)
+      {
+         ArrayResize(g_bb_times, n + 1);
+         ArrayResize(g_bb_highs, n + 1);
+         ArrayResize(g_bb_lows, n + 1);
+         g_bb_times[n] = tBarOpen;
+         g_bb_highs[n] = h;
+         g_bb_lows[n] = l;
+         return;
+      }
+
+      for(int i = 0; i < cap - 1; i++)
+      {
+         g_bb_times[i] = g_bb_times[i + 1];
+         g_bb_highs[i] = g_bb_highs[i + 1];
+         g_bb_lows[i] = g_bb_lows[i + 1];
+      }
+      g_bb_times[cap - 1] = tBarOpen;
+      g_bb_highs[cap - 1] = h;
+      g_bb_lows[cap - 1] = l;
+   }
+
+   void BelugaDrawActive(
+      const datetime tBarOpen,
+      const bool trend,
+      const datetime indexTime,
+      const color vwapColor,
+      const bool markerUp,
+      const double markerPrice,
+      const bool useLowForVwap
+   )
+   {
+      if(indexTime <= 0) return;
+
+      int shiftIdx = iBarShift(_Symbol, _Period, indexTime, true);
+      int shiftCur = iBarShift(_Symbol, _Period, tBarOpen, true);
+      if(shiftIdx < 0 || shiftCur < 0) return;
+      if(shiftIdx <= shiftCur) return;
+
+      int maxPts = 5000;
+      if(shiftIdx - shiftCur > maxPts) shiftIdx = shiftCur + maxPts;
+
+      int pts = (shiftIdx - shiftCur + 1);
+      if(pts < 2) return;
+
+      datetime times[];
+      double prices[];
+      ArrayResize(times, pts);
+      ArrayResize(prices, pts);
+
+      double sumPV = 0.0;
+      double sumV = 0.0;
+      int j = 0;
+      for(int s = shiftIdx; s >= shiftCur; s--)
+      {
+         datetime t = iTime(_Symbol, _Period, s);
+         double src = useLowForVwap ? iLow(_Symbol, _Period, s) : iHigh(_Symbol, _Period, s);
+         long vL = iVolume(_Symbol, _Period, s);
+         double v = (vL > 0 ? (double)vL : 0.0);
+         if(src <= 0.0) continue;
+         sumPV += src * v;
+         sumV += v;
+         double vwap = (sumV > 0.0 ? (sumPV / sumV) : src);
+         times[j] = t;
+         prices[j] = vwap;
+         j++;
+      }
+      if(j < 2) return;
+      ArrayResize(times, j);
+      ArrayResize(prices, j);
+
+      string pfx = g_prefix + "BB_ACTIVE_";
+      string nameLine = pfx + "LINE";
+      string namePrice = pfx + "PRICE";
+      string nameMark = pfx + "MARK";
+
+      const int maxSeg = 200;
+      int step = (j - 1 + maxSeg - 1) / maxSeg;
+      if(step < 1) step = 1;
+
+      int seg = 0;
+      int prevIdx = 0;
+      for(int idx = step; idx < j; idx += step)
+      {
+         string nm = pfx + "SEG_" + IntegerToString(seg);
+         CreateOrUpdateTrendSegment(nm, times[prevIdx], prices[prevIdx], times[idx], prices[idx], vwapColor, STYLE_SOLID, 2);
+         prevIdx = idx;
+         seg++;
+         if(seg >= maxSeg) break;
+      }
+      if(seg < maxSeg && prevIdx < (j - 1))
+      {
+         string nm = pfx + "SEG_" + IntegerToString(seg);
+         CreateOrUpdateTrendSegment(nm, times[prevIdx], prices[prevIdx], times[j - 1], prices[j - 1], vwapColor, STYLE_SOLID, 2);
+         seg++;
+      }
+      for(int i = seg; i < maxSeg; i++)
+      {
+         string nm = pfx + "SEG_" + IntegerToString(i);
+         ObjectDelete(0, nm);
+      }
+
+      datetime tNow = times[j - 1];
+      double vNow = prices[j - 1];
+      datetime tFuture = tNow + (datetime)PeriodSeconds(_Period) * 5;
+      CreateOrUpdateTrendSegment(nameLine, tNow, vNow, tFuture, vNow, vwapColor, STYLE_SOLID, 2);
+      CreateOrUpdateText(namePrice, tFuture, vNow, DoubleToString(vNow, _Digits), clrWhite, ANCHOR_LEFT);
+
+      if(!AllowObjInQmOnly(nameMark)) { ObjectDelete(0, nameMark); return; }
+      if(ObjectFind(0, nameMark) < 0)
+      {
+         ResetLastError();
+         if(!ObjectCreate(0, nameMark, OBJ_ARROW, 0, indexTime, markerPrice)) return;
+         ObjectSetInteger(0, nameMark, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, nameMark, OBJPROP_BACK, false);
+         ObjectSetInteger(0, nameMark, OBJPROP_HIDDEN, false);
+      }
+      ObjectMove(0, nameMark, 0, indexTime, markerPrice);
+      ObjectSetInteger(0, nameMark, OBJPROP_COLOR, vwapColor);
+      ObjectSetInteger(0, nameMark, OBJPROP_ARROWCODE, markerUp ? 233 : 234);
+      ObjectSetInteger(0, nameMark, OBJPROP_WIDTH, 1);
+   }
+
+   void BelugaDrawHistory(
+      const datetime tBarOpen,
+      const datetime indexTime,
+      const bool useLowForVwap,
+      const color baseColor,
+      const bool labelUp
+   )
+   {
+      if(indexTime <= 0) return;
+
+      int shiftIdx = iBarShift(_Symbol, _Period, indexTime, true);
+      int shiftCur = iBarShift(_Symbol, _Period, tBarOpen, true);
+      if(shiftIdx < 0 || shiftCur < 0) return;
+      if(shiftIdx <= shiftCur) return;
+
+      int maxPts = 5000;
+      if(shiftIdx - shiftCur > maxPts) shiftIdx = shiftCur + maxPts;
+
+      int pts = (shiftIdx - shiftCur + 1);
+      if(pts < 2) return;
+
+      datetime times[];
+      double prices[];
+      ArrayResize(times, pts);
+      ArrayResize(prices, pts);
+
+      double sumPV = 0.0;
+      double sumV = 0.0;
+      int j = 0;
+      for(int s = shiftIdx; s >= shiftCur; s--)
+      {
+         datetime t = iTime(_Symbol, _Period, s);
+         double src = useLowForVwap ? iLow(_Symbol, _Period, s) : iHigh(_Symbol, _Period, s);
+         long vL = iVolume(_Symbol, _Period, s);
+         double v = (vL > 0 ? (double)vL : 0.0);
+         if(src <= 0.0) continue;
+         sumPV += src * v;
+         sumV += v;
+         double vwap = (sumV > 0.0 ? (sumPV / sumV) : src);
+         times[j] = t;
+         prices[j] = vwap;
+         j++;
+      }
+      if(j < 2) return;
+      ArrayResize(times, j);
+      ArrayResize(prices, j);
+
+      int w = InpBelugaWidth;
+      if(w < 1) w = 1;
+      if(w > 5) w = 5;
+
+      string pfx = g_prefix + "BB_HIST_" + IntegerToString((long)indexTime) + "_";
+      uchar histAlpha = (uchar)(useLowForVwap ? 153 : 178);
+      color histColor = (color)ColorToARGB(baseColor, histAlpha);
+      const int maxSeg = 200;
+      int step = (j - 1 + maxSeg - 1) / maxSeg;
+      if(step < 1) step = 1;
+
+      int seg = 0;
+      int prevIdx = 0;
+      for(int idx = step; idx < j; idx += step)
+      {
+         string nm = pfx + "SEG_" + IntegerToString(seg);
+         CreateOrUpdateTrendSegment(nm, times[prevIdx], prices[prevIdx], times[idx], prices[idx], histColor, STYLE_SOLID, w);
+         prevIdx = idx;
+         seg++;
+         if(seg >= maxSeg) break;
+      }
+      if(seg < maxSeg && prevIdx < (j - 1))
+      {
+         string nm = pfx + "SEG_" + IntegerToString(seg);
+         CreateOrUpdateTrendSegment(nm, times[prevIdx], prices[prevIdx], times[j - 1], prices[j - 1], histColor, STYLE_SOLID, w);
+         seg++;
+      }
+      for(int i = seg; i < maxSeg; i++)
+      {
+         string nm = pfx + "SEG_" + IntegerToString(i);
+         ObjectDelete(0, nm);
+      }
+
+      double px = labelUp ? iLow(_Symbol, _Period, shiftIdx) : iHigh(_Symbol, _Period, shiftIdx);
+      string nameMark = pfx + "MARK";
+      if(!AllowObjInQmOnly(nameMark)) { ObjectDelete(0, nameMark); return; }
+      if(ObjectFind(0, nameMark) < 0)
+      {
+         ResetLastError();
+         if(!ObjectCreate(0, nameMark, OBJ_ARROW, 0, indexTime, px)) return;
+         ObjectSetInteger(0, nameMark, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, nameMark, OBJPROP_BACK, false);
+         ObjectSetInteger(0, nameMark, OBJPROP_HIDDEN, false);
+      }
+      ObjectMove(0, nameMark, 0, indexTime, px);
+      ObjectSetInteger(0, nameMark, OBJPROP_COLOR, (color)ColorToARGB(baseColor, (uchar)153));
+      ObjectSetInteger(0, nameMark, OBJPROP_ARROWCODE, labelUp ? 233 : 234);
+      ObjectSetInteger(0, nameMark, OBJPROP_WIDTH, 1);
+   }
+
+   void BelugaUpdate(const datetime tBarOpen, const double h, const double l)
+   {
+      if(!InpBelugaEnabled)
+      {
+         BelugaPushBar(tBarOpen, h, l);
+         return;
+      }
+
+      BelugaPushBar(tBarOpen, h, l);
+
+      int len = InpBelugaLen;
+      if(InpBelugaUseTfLen)
+      {
+         if(_Period == PERIOD_M1) len = InpBelugaLen_M1;
+         else if(_Period == PERIOD_M15) len = InpBelugaLen_M15;
+         else if(_Period == PERIOD_H1) len = InpBelugaLen_H1;
+         else if(_Period == PERIOD_H4) len = InpBelugaLen_H4;
+      }
+      if(len < 2) len = 2;
+      int n = ArraySize(g_bb_times);
+      if(n < len + 1) return;
+
+      double prevH = g_bb_highs[n - 2];
+      double prevL = g_bb_lows[n - 2];
+      double curH = g_bb_highs[n - 1];
+      double curL = g_bb_lows[n - 1];
+      datetime prevT = g_bb_times[n - 2];
+
+      int startPrev = n - 1 - len;
+      int endPrev = n - 2;
+      if(startPrev < 0) startPrev = 0;
+
+      int startCur = n - len;
+      int endCur = n - 1;
+      if(startCur < 0) startCur = 0;
+
+      double highestPrev = g_bb_highs[endPrev];
+      for(int i = startPrev; i <= endPrev; i++)
+         if(g_bb_highs[i] > highestPrev) highestPrev = g_bb_highs[i];
+
+      double highestCur = g_bb_highs[endCur];
+      for(int i = startCur; i <= endCur; i++)
+         if(g_bb_highs[i] > highestCur) highestCur = g_bb_highs[i];
+
+      double lowestPrev = g_bb_lows[endPrev];
+      for(int i = startPrev; i <= endPrev; i++)
+         if(g_bb_lows[i] < lowestPrev) lowestPrev = g_bb_lows[i];
+
+      double lowestCur = g_bb_lows[endCur];
+      for(int i = startCur; i <= endCur; i++)
+         if(g_bb_lows[i] < lowestCur) lowestCur = g_bb_lows[i];
+
+      bool swingHigh = (prevH == highestPrev && curH < highestCur);
+      bool swingLow = (prevL == lowestPrev && curL > lowestCur);
+
+      bool showOther = !InpShowOnlySwingSignals && !InpQmOnlyMode;
+
+      if(swingHigh && prevT != g_bb_last_swing_high_time)
+      {
+         g_bb_last_swing_high_time = prevT;
+         if(InpNotifyBelugaSwing) NotifySignal("BB SWING HIGH", tBarOpen);
+      }
+      if(swingLow && prevT != g_bb_last_swing_low_time)
+      {
+         g_bb_last_swing_low_time = prevT;
+         if(InpNotifyBelugaSwing) NotifySignal("BB SWING LOW", tBarOpen);
+      }
+
+      bool prevTrend = g_bb_trend;
+      bool prevTrendHas = g_bb_trend_has;
+      if(h == highestCur) { g_bb_trend = true; g_bb_trend_has = true; }
+      if(l == lowestCur) { g_bb_trend = false; g_bb_trend_has = true; }
+
+      if(showOther && g_bb_trend_has)
+      {
+         if(prevTrendHas && g_bb_trend != prevTrend)
+         {
+            if(g_bb_trend) BelugaDrawHistory(tBarOpen, g_bb_last_swing_high_time, false, InpBelugaHighVwapColor, false);
+            else BelugaDrawHistory(tBarOpen, g_bb_last_swing_low_time, true, InpBelugaLowVwapColor, true);
+         }
+
+         if(g_bb_trend)
+         {
+            datetime idxT = g_bb_last_swing_low_time;
+            int sIdx = iBarShift(_Symbol, _Period, idxT, true);
+            double markPx = (sIdx >= 0 ? iHigh(_Symbol, _Period, sIdx) : 0.0);
+            BelugaDrawActive(tBarOpen, true, idxT, InpBelugaLowVwapColor, true, markPx, true);
+         }
+         else
+         {
+            datetime idxT = g_bb_last_swing_high_time;
+            int sIdx = iBarShift(_Symbol, _Period, idxT, true);
+            double markPx = (sIdx >= 0 ? iLow(_Symbol, _Period, sIdx) : 0.0);
+            BelugaDrawActive(tBarOpen, false, idxT, InpBelugaHighVwapColor, false, markPx, false);
+         }
+      }
    }
 
    datetime g_day_start_time = 0;
@@ -1866,12 +2223,18 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
    void NotifySignal(const string txt, const datetime tBar)
    {
       if(!InpSendAlert && !InpSendPush) return;
+      if(InpNotifyOnlyBelugaSwing)
+      {
+         bool isBeluga = (StringFind(txt, "BB SWING") == 0);
+         if(!(InpNotifyBelugaSwing && isBeluga)) return;
+      }
       if(InpNotifyOnlyQmEntryTouch)
       {
          bool isQmEntryTouch = (StringFind(txt, "QM ENTRY TOUCH") == 0);
          bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
          bool isStAi = (StringFind(txt, "ST AI") == 0);
-         if(!(isQmEntryTouch || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyStAi && isStAi))) return;
+         bool isBeluga = (StringFind(txt, "BB SWING") == 0);
+         if(!(isQmEntryTouch || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyStAi && isStAi) || (InpNotifyBelugaSwing && isBeluga))) return;
       }
       if(InpQmOnlyMode)
       {
@@ -1879,7 +2242,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          bool isShSl = (txt == "SH" || txt == "SL");
          bool isDailyTouch = (StringFind(txt, "DAILY TOUCH") == 0);
          bool isStAi = (StringFind(txt, "ST AI") == 0);
-         if(!(isQm || (InpQmShowShSl && isShSl) || (InpQmShowDaily && isDailyTouch) || (InpNotifyStAi && isStAi))) return;
+         bool isBeluga = (StringFind(txt, "BB SWING") == 0);
+         if(!(isQm || (InpQmShowShSl && isShSl) || (InpQmShowDaily && isDailyTouch) || (InpNotifyStAi && isStAi) || (InpNotifyBelugaSwing && isBeluga))) return;
       }
       if(InpNotifyOnlySHSL)
       {
@@ -1891,7 +2255,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          bool isRsiCross = (StringFind(txt, "RSI CROSS") == 0);
          bool isQm = (StringFind(txt, "QM") == 0);
          bool isStAi = (StringFind(txt, "ST AI") == 0);
-         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyRsiCross && isRsiCross) || (InpNotifyQm && isQm) || (InpNotifyStAi && isStAi))) return;
+         bool isBeluga = (StringFind(txt, "BB SWING") == 0);
+         if(!(isShSl || (InpNotifyDiv && isDiv) || (InpNotifyLux && isLux) || (InpNotifyMtf && isMtf) || (InpNotifyDailyTouch && isDailyTouch) || (InpNotifyRsiCross && isRsiCross) || (InpNotifyQm && isQm) || (InpNotifyStAi && isStAi) || (InpNotifyBelugaSwing && isBeluga))) return;
       }
       if(!InpNotifyHistorical)
       {
@@ -2050,6 +2415,19 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       int dk = DayKeyLocal(tBarOpen);
       if(dk != g_day_key) ResetDay(dk);
 
+      if(InpBelugaOnlyMode)
+      {
+         BelugaUpdate(tBarOpen, h, l);
+         g_prev_bar_low = l;
+         g_prev_bar_low_has = true;
+         g_prev_bar_high = h;
+         g_prev_bar_high_has = true;
+         ObjectDelete(0, g_prefix + "STATUS");
+         ObjectDelete(0, g_prefix + "PING");
+         UpdateChartComment("");
+         return;
+      }
+
       double prevLow = g_prev_bar_low_has ? g_prev_bar_low : l;
       double prevHigh = g_prev_bar_high_has ? g_prev_bar_high : h;
 
@@ -2078,6 +2456,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       }
 
       StAiUpdate(tBarOpen, h, l, c);
+      BelugaUpdate(tBarOpen, h, l);
 
       if(IsLocalTime(tBarOpen, 0, 0))
       {
@@ -3775,6 +4154,15 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       }
       if(!InpQmOnlyMode) qmWasOnly = false;
 
+      static bool belugaWasOnly = false;
+      if(InpBelugaOnlyMode && !belugaWasOnly)
+      {
+         DeleteByPrefix(g_prefix);
+         belugaWasOnly = true;
+      }
+      if(!InpBelugaOnlyMode) belugaWasOnly = false;
+
+      if(!InpBelugaOnlyMode)
       {
          datetime now = TimeCurrent();
          MqlDateTime s, it;
@@ -3797,6 +4185,11 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
                      " | h02 " + (g_h02_has ? "Y" : "N");
          CreateOrUpdateStatusLabel(st);
          UpdateChartComment(st);
+      }
+      else
+      {
+         ObjectDelete(0, g_prefix + "STATUS");
+         UpdateChartComment("");
       }
 
       if(prev_calculated == 0)
@@ -3843,6 +4236,15 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          g_st_last_params_hash = 0;
          g_st_last_signal_time = 0;
 
+         ArrayResize(g_bb_times, 0);
+         ArrayResize(g_bb_highs, 0);
+         ArrayResize(g_bb_lows, 0);
+         g_bb_last_swing_high_time = 0;
+         g_bb_last_swing_low_time = 0;
+         g_bb_trend_has = false;
+         g_bb_trend = false;
+         DeleteByToken("BB_");
+
          int histDays = InpHistoryDays;
          if(histDays < 1) histDays = 1;
          if(histDays > 60) histDays = 60;
@@ -3873,10 +4275,13 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             UpdateWithBar(time[ii], open[ii], high[ii], low[ii], close[ii]);
          }
 
-         UpdateRightSideLabels(time[curIndex]);
-         if(InpDebugOverlay && !InpShowOnlySwingSignals)
+         if(!InpBelugaOnlyMode)
          {
-            CreateOrUpdateText(g_prefix + "PING", time[curIndex], close[curIndex], "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
+            UpdateRightSideLabels(time[curIndex]);
+            if(InpDebugOverlay && !InpShowOnlySwingSignals)
+            {
+               CreateOrUpdateText(g_prefix + "PING", time[curIndex], close[curIndex], "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
+            }
          }
          g_last_time0 = time[curIndex];
          return rates_total;
@@ -3934,12 +4339,14 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          g_last_time0 = time[curIdx];
       }
 
-      QmCheckEntryTouchRealtime(time[curIdx], high[curIdx], low[curIdx]);
-
-      UpdateRightSideLabels(time[curIdx]);
-      if(InpDebugOverlay && !InpShowOnlySwingSignals)
+      if(!InpBelugaOnlyMode)
       {
-         CreateOrUpdateText(g_prefix + "PING", time[curIdx], close[curIdx], "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
+         QmCheckEntryTouchRealtime(time[curIdx], high[curIdx], low[curIdx]);
+         UpdateRightSideLabels(time[curIdx]);
+         if(InpDebugOverlay && !InpShowOnlySwingSignals)
+         {
+            CreateOrUpdateText(g_prefix + "PING", time[curIdx], close[curIdx], "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
+         }
       }
       return rates_total;
    }

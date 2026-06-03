@@ -1,5 +1,5 @@
 //@version=5
-indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_polylines_count=100, max_bars_back=5000)
 
 // --- INPUT ---
 showSessions = input.bool(false, "Mostra Box Sessioni (Asia, London, NY)")
@@ -170,6 +170,7 @@ onlyQmShowDailyHL = input.bool(false, "Mostra anche Daily High/Low", group="QM")
 onlyQmShowSessions = input.bool(false, "Mostra anche Sessioni", group="QM")
 onlyQmShowRsiCross = input.bool(false, "Mostra anche incrocio RSI", group="QM")
 onlyQmShowRsiMW = input.bool(false, "Mostra anche RSI M/W", group="QM")
+onlyBelugaMode = input.bool(false, "Mostra solo Swing BigBeluga", group="QM")
 qmUseTfPivots = input.bool(true, "Usa pivot per TF (M1/M5/M15/H1/H4)", group="QM")
 qmPp = input.int(5, "Pivot Period (fallback)", minval=1, group="QM")
 qmPp_M1 = input.int(5, "M1 - Pivot Period", minval=1, group="QM")
@@ -184,6 +185,24 @@ qmLiveColorW = input.color(color.new(color.lime, 0), "QM Live - Colore W (Bull)"
 qmLiveColorM = input.color(color.new(color.red, 0), "QM Live - Colore M (Bear)", group="QM")
 qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
 qmLiveShowSupertrend = input.bool(true, "QM Live - Mostra SuperTrend AI", group="QM")
+qmLiveShowBelugaSwing = input.bool(false, "QM Live - Mostra Swing BigBeluga", group="QM")
+bbUseTfLen = input.bool(true, "BigBeluga - Usa periodo per TF (M1/M15/H1/H4)", group="QM")
+bbLen = input.int(50, "BigBeluga - Length (fallback)", minval=1, group="QM")
+bbLen_M1 = input.int(50, "M1 - Length", minval=1, group="QM")
+bbLen_M15 = input.int(50, "M15 - Length", minval=1, group="QM")
+bbLen_H1 = input.int(50, "H1 - Length", minval=1, group="QM")
+bbLen_H4 = input.int(50, "H4 - Length", minval=1, group="QM")
+bbLvwapCol = input.color(color.lime, "BigBeluga - Low VWAP", group="QM")
+bbHvwapCol = input.color(color.blue, "BigBeluga - High VWAP", group="QM")
+bbWidth = input.int(2, "BigBeluga - Line Width", minval=1, maxval=5, group="QM")
+
+onlyQmMode := onlyQmMode or onlyBelugaMode
+if onlyBelugaMode
+    onlyQmShowShSl := false
+    onlyQmShowDailyHL := false
+    onlyQmShowSessions := false
+    onlyQmShowRsiCross := false
+    onlyQmShowRsiMW := false
 
 stAiEnabled = input.bool(false, "SuperTrend AI (Clustering) [LuxAlgo]", group="SuperTrend AI")
 stAiAtrLen = input.int(10, "ATR Length", minval=1, group="SuperTrend AI")
@@ -200,9 +219,10 @@ stAiAmaBearCss = input.color(color.new(color.red, 50), "AMA", inline="stai_ama",
 stAiAmaBullCss = input.color(color.new(color.teal, 50), "", inline="stai_ama", group="SuperTrend AI - Style")
 stAiShowGradient = input.bool(true, "Candle Coloring", group="SuperTrend AI - Style")
 stAiShowSignals = input.bool(true, "Show Signals", group="SuperTrend AI - Style")
-stAiShowDash = input.bool(true, "Show Dashboard", group="SuperTrend AI - Dashboard")
-stAiDashLoc = input.string("Top Right", "Location", options=["Top Right", "Bottom Right", "Bottom Left"], group="SuperTrend AI - Dashboard")
-stAiTextSize = input.string("Small", "Size", options=["Tiny", "Small", "Normal"], group="SuperTrend AI - Dashboard")
+
+bbDashEnabled = input.bool(true, "Dashboard BigBeluga (M1/M15/H1/H4)", group="BigBeluga Dashboard")
+bbDashLoc = input.string("Bottom Right", "Location", options=["Top Right", "Bottom Right", "Bottom Left"], group="BigBeluga Dashboard")
+bbDashTextSize = input.string("Small", "Size", options=["Tiny", "Small", "Normal"], group="BigBeluga Dashboard")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
@@ -1872,6 +1892,63 @@ if barstate.islast and not na(dashTbl)
         table.cell(dashTbl, 2, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
         table.cell(dashTbl, 3, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
 
+f_bbLast(_len) =>
+    h = ta.highest(_len)
+    l = ta.lowest(_len)
+    sh = high[1] == h[1] and high < h
+    sl = low[1] == l[1] and low > l
+    shT = ta.valuewhen(sh, time[1], 0)
+    slT = ta.valuewhen(sl, time[1], 0)
+    shP = ta.valuewhen(sh, high[1], 0)
+    slP = ta.valuewhen(sl, low[1], 0)
+    tp = na(shT) and na(slT) ? 0 : na(slT) ? 1 : na(shT) ? -1 : (shT > slT ? 1 : -1)
+    pr = tp == 1 ? shP : tp == -1 ? slP : na
+    tm = tp == 1 ? shT : tp == -1 ? slT : na
+    [tp, pr, tm]
+
+bbSz = f_dashSize(bbDashTextSize)
+bbTblPos = bbDashLoc == "Bottom Left" ? position.bottom_left : bbDashLoc == "Top Right" ? position.top_right : position.bottom_right
+var table bbDashTbl = na
+var string bbDashPrev = na
+if barstate.isfirst or bbDashPrev != bbDashLoc
+    if not na(bbDashTbl)
+        table.delete(bbDashTbl)
+    bbDashTbl := table.new(bbTblPos, 2, 5, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
+    bbDashPrev := bbDashLoc
+
+bbLenM1Sel = bbLen_M1
+bbLenM15Sel = bbLen_M15
+bbLenH1Sel = bbLen_H1
+bbLenH4Sel = bbLen_H4
+
+[bbM1Tp, bbM1Pr, bbM1Tm] = request.security(syminfo.tickerid, "1", f_bbLast(bbLenM1Sel), barmerge.gaps_off, barmerge.lookahead_off)
+[bbM15Tp, bbM15Pr, bbM15Tm] = request.security(syminfo.tickerid, "15", f_bbLast(bbLenM15Sel), barmerge.gaps_off, barmerge.lookahead_off)
+[bbH1Tp, bbH1Pr, bbH1Tm] = request.security(syminfo.tickerid, "60", f_bbLast(bbLenH1Sel), barmerge.gaps_off, barmerge.lookahead_off)
+[bbH4Tp, bbH4Pr, bbH4Tm] = request.security(syminfo.tickerid, "240", f_bbLast(bbLenH4Sel), barmerge.gaps_off, barmerge.lookahead_off)
+
+f_bbTxt(_tp, _pr, _tm) =>
+    _tp == 0 or na(_tm) ? "" : str.format("{0} {1} @{2}", str.format_time(_tm, "HH:mm", "Europe/Rome"), _tp == 1 ? "SH" : "SL", str.tostring(_pr, format.mintick))
+
+if barstate.islast and not na(bbDashTbl)
+    if bbDashEnabled and not onlyShSlMode
+        hdrBg = color.new(color.black, 0)
+        hdrTx = color.white
+        bg = color.new(color.black, 80)
+        table.cell(bbDashTbl, 0, 0, "TF", bgcolor=hdrBg, text_color=hdrTx, text_size=bbSz)
+        table.cell(bbDashTbl, 1, 0, "LAST", bgcolor=hdrBg, text_color=hdrTx, text_size=bbSz)
+
+        table.cell(bbDashTbl, 0, 1, "M1", bgcolor=bg, text_color=color.white, text_size=bbSz)
+        table.cell(bbDashTbl, 1, 1, f_bbTxt(bbM1Tp, bbM1Pr, bbM1Tm), bgcolor=bg, text_color=bbM1Tp == 1 ? color.red : bbM1Tp == -1 ? color.lime : color.white, text_size=bbSz)
+
+        table.cell(bbDashTbl, 0, 2, "M15", bgcolor=bg, text_color=color.white, text_size=bbSz)
+        table.cell(bbDashTbl, 1, 2, f_bbTxt(bbM15Tp, bbM15Pr, bbM15Tm), bgcolor=bg, text_color=bbM15Tp == 1 ? color.red : bbM15Tp == -1 ? color.lime : color.white, text_size=bbSz)
+
+        table.cell(bbDashTbl, 0, 3, "H1", bgcolor=bg, text_color=color.white, text_size=bbSz)
+        table.cell(bbDashTbl, 1, 3, f_bbTxt(bbH1Tp, bbH1Pr, bbH1Tm), bgcolor=bg, text_color=bbH1Tp == 1 ? color.red : bbH1Tp == -1 ? color.lime : color.white, text_size=bbSz)
+
+        table.cell(bbDashTbl, 0, 4, "H4", bgcolor=bg, text_color=color.white, text_size=bbSz)
+        table.cell(bbDashTbl, 1, 4, f_bbTxt(bbH4Tp, bbH4Pr, bbH4Tm), bgcolor=bg, text_color=bbH4Tp == 1 ? color.red : bbH4Tp == -1 ? color.lime : color.white, text_size=bbSz)
+
 f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingShowHighOut, syminfo.ticker + " Swing High")
 f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingShowLowOut, syminfo.ticker + " Swing Low")
 f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingBullDivPlot, syminfo.ticker + " Bullish Divergence (RSI)")
@@ -2088,7 +2165,7 @@ if barstate.islast and sfpEnabled and sfpValidate and sfpShowDash and not na(sfp
 else if barstate.islast and not na(sfpTb) and (not sfpEnabled or not sfpShowDash)
     table.cell(sfpTb, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sfpTableSize)
 
-stAiActive = not onlyShSlMode and ((stAiEnabled and not onlyQmMode) or (qmLiveEnabled and qmLiveShowSupertrend))
+stAiActive = not onlyShSlMode and not onlyBelugaMode and ((stAiEnabled and not onlyQmMode) or (qmLiveEnabled and qmLiveShowSupertrend))
 if stAiEnabled and stAiMinMult > stAiMaxMult
     runtime.error("Minimum factor is greater than maximum factor in the range")
 
@@ -2210,47 +2287,88 @@ if stAiShowNums
     if stAiOs < stAiOs[1]
         label.new(bar_index, stAiTs, str.tostring(int(stAiPerfIdx * 10)), color=stAiBearCss, style=label.style_label_down, textcolor=color.white, size=size.tiny)
 
-stAiTablePosition = stAiDashLoc == "Bottom Left" ? position.bottom_left : stAiDashLoc == "Top Right" ? position.top_right : position.bottom_right
-stAiTableSize = stAiTextSize == "Tiny" ? size.tiny : stAiTextSize == "Small" ? size.small : size.normal
-var table stAiTb = na
-if barstate.isfirst and stAiEnabled and stAiShowDash and stAiActive
-    stAiTb := table.new(stAiTablePosition, 4, 4, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
+bbActive = not onlyShSlMode and (onlyBelugaMode or (qmLiveEnabled and qmLiveShowBelugaSwing))
 
-if stAiEnabled and stAiShowDash and stAiActive and barstate.islast and not na(stAiTb) and not na(stAiPerfClusters)
-    tbTopN = stAiPerfClusters.get(2).out.size()
-    tbMidN = stAiPerfClusters.get(1).out.size()
-    tbBtmN = stAiPerfClusters.get(0).out.size()
-    table.cell(stAiTb, 0, 0, "Cluster", text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 0, 1, "Best", text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 0, 2, "Average", text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 0, 3, "Worst", text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 1, 0, "Size", text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 1, 1, str.tostring(tbTopN), text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 1, 2, str.tostring(tbMidN), text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 1, 3, str.tostring(tbBtmN), text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 2, 0, "Centroid Dispersion", text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 3, 0, "Factors", text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 3, 1, str.tostring(stAiFactorsClusters.get(2).out), text_color=color.white, text_size=stAiTableSize, text_halign=text.align_left)
-    table.cell(stAiTb, 3, 2, str.tostring(stAiFactorsClusters.get(1).out), text_color=color.white, text_size=stAiTableSize, text_halign=text.align_left)
-    table.cell(stAiTb, 3, 3, str.tostring(stAiFactorsClusters.get(0).out), text_color=color.white, text_size=stAiTableSize, text_halign=text.align_left)
-    stAiDisp0 = 0.0
-    stAiDisp1 = 0.0
-    stAiDisp2 = 0.0
-    if tbBtmN > 1
-        for v in stAiPerfClusters.get(0).out
-            stAiDisp0 += math.abs(v - stAiCentroids.get(0))
-        stAiDisp0 /= tbBtmN
-    if tbMidN > 1
-        for v in stAiPerfClusters.get(1).out
-            stAiDisp1 += math.abs(v - stAiCentroids.get(1))
-        stAiDisp1 /= tbMidN
-    if tbTopN > 1
-        for v in stAiPerfClusters.get(2).out
-            stAiDisp2 += math.abs(v - stAiCentroids.get(2))
-        stAiDisp2 /= tbTopN
-    table.cell(stAiTb, 2, 1, str.tostring(stAiDisp2, "#.####"), text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 2, 2, str.tostring(stAiDisp1, "#.####"), text_color=color.white, text_size=stAiTableSize)
-    table.cell(stAiTb, 2, 3, str.tostring(stAiDisp0, "#.####"), text_color=color.white, text_size=stAiTableSize)
+bbLenSel = bbUseTfLen ? (tfIsM1 ? bbLen_M1 : tfIsM15 ? bbLen_M15 : tfIsH1 ? bbLen_H1 : tfIsH4 ? bbLen_H4 : bbLen) : bbLen
+bbH = ta.highest(bbLenSel)
+bbL = ta.lowest(bbLenSel)
+
+var bool bbTrend = na
+var int bbHighIndex = na
+var float bbHighVal = na
+var int bbLowIndex = na
+var float bbLowVal = na
+
+bbSwingHigh = bbActive and high[1] == bbH[1] and high < bbH
+bbSwingLow = bbActive and low[1] == bbL[1] and low > bbL
+
+if bbSwingHigh
+    bbHighIndex := bar_index - 1
+    bbHighVal := high[1]
+
+bbHVwap = ta.vwap(high, bbSwingHigh)
+
+if bbSwingLow
+    bbLowIndex := bar_index - 1
+    bbLowVal := low[1]
+
+bbLVwap = ta.vwap(low, bbSwingLow)
+
+if bbActive and high == bbH
+    bbTrend := true
+if bbActive and low == bbL
+    bbTrend := false
+
+bbDrawActiveVwap(_trend) =>
+    src = _trend ? high : low
+    idx = _trend ? bbLowIndex : bbHighIndex
+    vwapColor = _trend ? bbLvwapCol : bbHvwapCol
+    stl = _trend ? label.style_label_up : label.style_label_down
+
+    var polyline poly = na
+    var label lbl = na
+    var label lbl1 = na
+    var line line_ = na
+
+    polyline.delete(poly)
+    label.delete(lbl)
+    label.delete(lbl1)
+    line.delete(line_)
+
+    cp = array.new<chart.point>()
+
+    if not na(idx)
+        for i = 0 to bar_index - idx
+            vwap_ = _trend ? bbLVwap[i] : bbHVwap[i]
+            if i == 0
+                line_ := line.new(bar_index, vwap_, bar_index + 5, vwap_, color=vwapColor, width=2, style=line.style_arrow_right)
+                lbl1 := label.new(bar_index + 5, vwap_, str.tostring(vwap_, "###,###,###.##"), color=#00000000, style=label.style_label_left, textcolor=chart.fg_color)
+            if i == bar_index - idx
+                lbl := label.new(bar_index - i, src[i], color=vwapColor, style=stl)
+            cp_ = chart.point.from_index(bar_index - i, vwap_)
+            array.push(cp, cp_)
+        poly := polyline.new(cp, line_color=vwapColor, line_width=2)
+
+if bbActive
+    bbDrawActiveVwap(bbTrend)
+
+if bbActive and bbTrend and bbTrend != bbTrend[1] and not na(bbHighIndex)
+    cp = array.new<chart.point>()
+    for i = 0 to bar_index - bbHighIndex
+        if i == bar_index - bbHighIndex
+            label.new(bar_index - i, high[i], color=color.new(bbHvwapCol, 40), style=label.style_label_down)
+        cp_ = chart.point.from_index(bar_index - i, bbHVwap[i])
+        array.push(cp, cp_)
+    polyline.new(cp, line_color=color.new(bbHvwapCol, 30), line_width=bbWidth)
+
+if bbActive and not bbTrend and bbTrend != bbTrend[1] and not na(bbLowIndex)
+    cp = array.new<chart.point>()
+    for i = 0 to bar_index - bbLowIndex
+        if i == bar_index - bbLowIndex
+            label.new(bar_index - i, low[i], color=color.new(bbLvwapCol, 40), style=label.style_label_up)
+        cp_ = chart.point.from_index(bar_index - i, bbLVwap[i])
+        array.push(cp, cp_)
+    polyline.new(cp, line_color=color.new(bbLvwapCol, 40), line_width=bbWidth)
 
 qmPPsel = qmUseTfPivots ? (tfIsM1 ? qmPp_M1 : tfIsM5 ? qmPp_M5 : tfIsM15 ? qmPp_M15 : tfIsH1 ? qmPp_H1 : tfIsH4 ? qmPp_H4 : qmPp) : qmPp
 qmATR = ta.atr(21)

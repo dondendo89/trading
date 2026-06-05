@@ -248,6 +248,8 @@ input group "Swing BigBeluga"
 input bool InpBelugaEnabled = true;
 input bool InpBelugaOnlyMode = true;
 input bool InpBelugaUseTfLen = true;
+enum ENUM_BELUGA_PRESET { BELUGA_PRESET_CUSTOM = 0, BELUGA_PRESET_BALANCED = 1, BELUGA_PRESET_FAST = 2, BELUGA_PRESET_CONSERVATIVE = 3 };
+input ENUM_BELUGA_PRESET InpBelugaPreset = BELUGA_PRESET_CUSTOM;
 input int InpBelugaLen = 50;
 input int InpBelugaLen_M1 = 50;
 input int InpBelugaLen_M15 = 50;
@@ -626,21 +628,74 @@ input bool InpBelugaShowBB = true;
       g_st_prev_close_has = true;
    }
 
+   int BelugaLenForPeriod(const ENUM_TIMEFRAMES tf)
+   {
+      if(InpBelugaPreset == BELUGA_PRESET_BALANCED)
+      {
+         if(tf == PERIOD_M1) return 50;
+         if(tf == PERIOD_M15) return 50;
+         if(tf == PERIOD_H1) return 50;
+         if(tf == PERIOD_H4) return 50;
+      }
+      else if(InpBelugaPreset == BELUGA_PRESET_FAST)
+      {
+         if(tf == PERIOD_M1) return 30;
+         if(tf == PERIOD_M15) return 35;
+         if(tf == PERIOD_H1) return 40;
+         if(tf == PERIOD_H4) return 50;
+      }
+      else if(InpBelugaPreset == BELUGA_PRESET_CONSERVATIVE)
+      {
+         if(tf == PERIOD_M1) return 80;
+         if(tf == PERIOD_M15) return 70;
+         if(tf == PERIOD_H1) return 60;
+         if(tf == PERIOD_H4) return 70;
+      }
+
+      if(!InpBelugaUseTfLen) return InpBelugaLen;
+      if(tf == PERIOD_M1) return InpBelugaLen_M1;
+      if(tf == PERIOD_M15) return InpBelugaLen_M15;
+      if(tf == PERIOD_H1) return InpBelugaLen_H1;
+      if(tf == PERIOD_H4) return InpBelugaLen_H4;
+      return InpBelugaLen;
+   }
+
    void BelugaPushBar(const datetime tBarOpen, const double h, const double l)
    {
-      int len = InpBelugaLen;
-      if(InpBelugaUseTfLen)
-      {
-         if(_Period == PERIOD_M1) len = InpBelugaLen_M1;
-         else if(_Period == PERIOD_M15) len = InpBelugaLen_M15;
-         else if(_Period == PERIOD_H1) len = InpBelugaLen_H1;
-         else if(_Period == PERIOD_H4) len = InpBelugaLen_H4;
-      }
+      int len = BelugaLenForPeriod((ENUM_TIMEFRAMES)_Period);
       if(len < 1) len = 1;
 
       int cap = len + 2;
       if(cap < 5) cap = 5;
       int n = ArraySize(g_bb_times);
+      if(n > 0)
+      {
+         datetime lastT = g_bb_times[n - 1];
+         if(tBarOpen == lastT)
+         {
+            g_bb_highs[n - 1] = h;
+            g_bb_lows[n - 1] = l;
+            return;
+         }
+         if(tBarOpen < lastT)
+         {
+            return;
+         }
+      }
+      if(n > cap)
+      {
+         int start = n - cap;
+         for(int i = 0; i < cap; i++)
+         {
+            g_bb_times[i] = g_bb_times[i + start];
+            g_bb_highs[i] = g_bb_highs[i + start];
+            g_bb_lows[i] = g_bb_lows[i + start];
+         }
+         ArrayResize(g_bb_times, cap);
+         ArrayResize(g_bb_highs, cap);
+         ArrayResize(g_bb_lows, cap);
+         n = cap;
+      }
       if(n < cap)
       {
          ArrayResize(g_bb_times, n + 1);
@@ -749,16 +804,22 @@ input bool InpBelugaShowBB = true;
       CreateOrUpdateTrendSegment(nameLine, tNow, vNow, tFuture, vNow, vwapColor, STYLE_SOLID, 2);
       CreateOrUpdateText(namePrice, tFuture, vNow, DoubleToString(vNow, _Digits), clrWhite, ANCHOR_LEFT);
 
+      double markPx = markerPrice;
+      if(markPx <= 0.0)
+      {
+         markPx = markerUp ? iHigh(_Symbol, _Period, shiftIdx) : iLow(_Symbol, _Period, shiftIdx);
+      }
+
       if(!AllowObjInQmOnly(nameMark)) { ObjectDelete(0, nameMark); return; }
       if(ObjectFind(0, nameMark) < 0)
       {
          ResetLastError();
-         if(!ObjectCreate(0, nameMark, OBJ_ARROW, 0, indexTime, markerPrice)) return;
+         if(!ObjectCreate(0, nameMark, OBJ_ARROW, 0, indexTime, markPx)) return;
          ObjectSetInteger(0, nameMark, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, nameMark, OBJPROP_BACK, false);
          ObjectSetInteger(0, nameMark, OBJPROP_HIDDEN, false);
       }
-      ObjectMove(0, nameMark, 0, indexTime, markerPrice);
+      ObjectMove(0, nameMark, 0, indexTime, markPx);
       ObjectSetInteger(0, nameMark, OBJPROP_COLOR, vwapColor);
       ObjectSetInteger(0, nameMark, OBJPROP_ARROWCODE, markerUp ? 233 : 234);
       ObjectSetInteger(0, nameMark, OBJPROP_WIDTH, 1);
@@ -871,14 +932,7 @@ input bool InpBelugaShowBB = true;
 
       BelugaPushBar(tBarOpen, h, l);
 
-      int len = InpBelugaLen;
-      if(InpBelugaUseTfLen)
-      {
-         if(_Period == PERIOD_M1) len = InpBelugaLen_M1;
-         else if(_Period == PERIOD_M15) len = InpBelugaLen_M15;
-         else if(_Period == PERIOD_H1) len = InpBelugaLen_H1;
-         else if(_Period == PERIOD_H4) len = InpBelugaLen_H4;
-      }
+      int len = BelugaLenForPeriod((ENUM_TIMEFRAMES)_Period);
       if(len < 2) len = 2;
       int n = ArraySize(g_bb_times);
       if(n < len + 1) return;
@@ -916,7 +970,7 @@ input bool InpBelugaShowBB = true;
       bool swingHigh = (prevH == highestPrev && curH < highestCur);
       bool swingLow = (prevL == lowestPrev && curL > lowestCur);
 
-      bool showOther = !InpShowOnlySwingSignals && !InpQmOnlyMode;
+      bool drawBeluga = (InpBelugaOnlyMode || InpBelugaShowBB);
 
       if(swingHigh && prevT != g_bb_last_swing_high_time)
       {
@@ -934,7 +988,11 @@ input bool InpBelugaShowBB = true;
       if(h == highestCur) { g_bb_trend = true; g_bb_trend_has = true; }
       if(l == lowestCur) { g_bb_trend = false; g_bb_trend_has = true; }
 
-      if(showOther && g_bb_trend_has)
+      static datetime lastDrawBar = 0;
+      bool doDraw = (tBarOpen != lastDrawBar);
+      if(doDraw) lastDrawBar = tBarOpen;
+
+      if(doDraw && drawBeluga && g_bb_trend_has)
       {
          if(prevTrendHas && g_bb_trend != prevTrend)
          {
@@ -2050,9 +2108,15 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
    bool AllowObjInQmOnly(const string name)
    {
+      if(InpBelugaOnlyMode)
+      {
+         if(StringFind(name, "BB_") >= 0) return true;
+         return false;
+      }
       if(!InpQmOnlyMode) return true;
       if(StringFind(name, "QM_") >= 0) return true;
       if(StringFind(name, "STATUS") >= 0) return true;
+      if(InpBelugaShowBB && StringFind(name, "BB_") >= 0) return true;
       if(InpQmShowShSl && (StringFind(name, "SP_SH_") >= 0 || StringFind(name, "SP_SL_") >= 0)) return true;
       return false;
    }
@@ -2417,7 +2481,6 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
 
       if(InpBelugaOnlyMode)
       {
-         BelugaUpdate(tBarOpen, h, l);
          g_prev_bar_low = l;
          g_prev_bar_low_has = true;
          g_prev_bar_high = h;
@@ -2456,7 +2519,6 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
       }
 
       StAiUpdate(tBarOpen, h, l, c);
-      BelugaUpdate(tBarOpen, h, l);
 
       if(IsLocalTime(tBarOpen, 0, 0))
       {
@@ -4273,6 +4335,8 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
          {
             int ii = IndexByShift(isSeries, rates_total, sh);
             UpdateWithBar(time[ii], open[ii], high[ii], low[ii], close[ii]);
+            if(InpBelugaEnabled && (InpBelugaOnlyMode || InpBelugaShowBB))
+               BelugaUpdate(time[ii], high[ii], low[ii]);
          }
 
          if(!InpBelugaOnlyMode)
@@ -4348,5 +4412,7 @@ void InstPushBar(const datetime t, const double o, const double h, const double 
             CreateOrUpdateText(g_prefix + "PING", time[curIdx], close[curIdx], "CAP_IND", clrYellow, ANCHOR_LEFT_UPPER);
          }
       }
+      if(InpBelugaEnabled && (InpBelugaOnlyMode || InpBelugaShowBB))
+         BelugaUpdate(time[curIdx], high[curIdx], low[curIdx]);
       return rates_total;
    }

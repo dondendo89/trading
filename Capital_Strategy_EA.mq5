@@ -11,7 +11,7 @@ input int InpDeviationPoints = 50;
 
 input bool InpUseStopLoss = true;
 input bool InpUseTakeProfit = true;
-input double InpRiskReward = 1.0;
+input double InpRiskReward = 3.0;
 input bool InpCloseOpposite = true;
 input bool InpMaxOneTradePerDayPerSide = true;
 
@@ -145,6 +145,17 @@ input bool InpNotifyHistorical = false;
 input group "Quasimodo (QM) Auto Trade"
 input bool InpQmAutoTradeOnEntryCreate = false;
 
+input group "BigBeluga Strategy"
+input bool InpBelugaStrategyEnabled = true;
+input bool InpTradeOnlyBelugaStrategy = true;
+input bool InpBelugaUseTfLen = true;
+input int InpBelugaLen = 50;
+input int InpBelugaLen_M1 = 80;
+input int InpBelugaLen_M15 = 50;
+input int InpBelugaLen_H1 = 50;
+input int InpBelugaLen_H4 = 50;
+input int InpBelugaSlBufferPoints = 0;
+
 CTrade trade;
 
 int g_atr_handle = INVALID_HANDLE;
@@ -152,6 +163,8 @@ int g_rsi_handle = INVALID_HANDLE;
 int g_macd_handle = INVALID_HANDLE;
 string g_prefix = "CAP_EA_";
 long g_qm_last_setup_key_handled = 0;
+datetime g_bb_last_swing_high_time = 0;
+datetime g_bb_last_swing_low_time = 0;
 datetime g_last_bar_time = 0;
 int g_day_key = 0;
 datetime g_day_start_time = 0;
@@ -1096,6 +1109,108 @@ double HighestPrevHigh(const int lookbackBars)
    return v;
 }
 
+double WindowHigh(const int shiftStart, const int count)
+{
+   int n = count;
+   if(n < 1) n = 1;
+   if(iBars(_Symbol, _Period) < (shiftStart + n + 1)) return 0.0;
+   double v = 0.0;
+   for(int sh = shiftStart; sh < shiftStart + n; sh++)
+   {
+      double x = iHigh(_Symbol, _Period, sh);
+      if(x > 0.0 && (v <= 0.0 || x > v)) v = x;
+   }
+   return v;
+}
+
+double WindowLow(const int shiftStart, const int count)
+{
+   int n = count;
+   if(n < 1) n = 1;
+   if(iBars(_Symbol, _Period) < (shiftStart + n + 1)) return 0.0;
+   double v = 0.0;
+   for(int sh = shiftStart; sh < shiftStart + n; sh++)
+   {
+      double x = iLow(_Symbol, _Period, sh);
+      if(x > 0.0 && (v <= 0.0 || x < v)) v = x;
+   }
+   return v;
+}
+
+int BelugaLenForPeriod(const ENUM_TIMEFRAMES tf)
+{
+   if(!InpBelugaUseTfLen) return InpBelugaLen;
+   if(tf == PERIOD_M1) return InpBelugaLen_M1;
+   if(tf == PERIOD_M15) return InpBelugaLen_M15;
+   if(tf == PERIOD_H1) return InpBelugaLen_H1;
+   if(tf == PERIOD_H4) return InpBelugaLen_H4;
+   return InpBelugaLen;
+}
+
+void ProcessBelugaStrategyOnNewBar(const datetime tPrevBarOpen, const double prevClose)
+{
+   if(!InpBelugaStrategyEnabled) return;
+
+   int len = BelugaLenForPeriod((ENUM_TIMEFRAMES)_Period);
+   if(len < 1) len = 1;
+   if(iBars(_Symbol, _Period) < (len + 3)) return;
+
+   double high0 = iHigh(_Symbol, _Period, 0);
+   double low0 = iLow(_Symbol, _Period, 0);
+   double high1 = iHigh(_Symbol, _Period, 1);
+   double low1 = iLow(_Symbol, _Period, 1);
+   if(high0 <= 0.0 || low0 <= 0.0 || high1 <= 0.0 || low1 <= 0.0) return;
+
+   double highestPrev = WindowHigh(1, len);
+   double highestCur = WindowHigh(0, len);
+   double lowestPrev = WindowLow(1, len);
+   double lowestCur = WindowLow(0, len);
+   if(highestPrev <= 0.0 || highestCur <= 0.0 || lowestPrev <= 0.0 || lowestCur <= 0.0) return;
+
+   bool swingHigh = (high1 == highestPrev) && (high0 < highestCur);
+   bool swingLow = (low1 == lowestPrev) && (low0 > lowestCur);
+
+   int slBufPts = InpBelugaSlBufferPoints;
+   if(slBufPts < 0) slBufPts = 0;
+   double slBuf = (double)slBufPts * _Point;
+
+   if(swingLow && tPrevBarOpen != g_bb_last_swing_low_time)
+   {
+      g_bb_last_swing_low_time = tPrevBarOpen;
+      {
+         string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
+         string n = dayPfx + "BB_SL_" + IntegerToString((long)tPrevBarOpen);
+         CreateOrUpdateArrow(n, tPrevBarOpen, low1 - 12 * _Point, true);
+      }
+      if(InpMaxOneTradePerDayPerSide && g_buy_done) return;
+      if(InpCloseOpposite && HasPosition(-1)) ClosePositions(-1);
+      if(!HasPosition(+1))
+      {
+         double slFixed = low1 - slBuf;
+         if(SpreadOk() && TryEnterWithSLTag(true, tPrevBarOpen, prevClose, slFixed, "BUY Beluga")) g_buy_done = true;
+      }
+      return;
+   }
+
+   if(swingHigh && tPrevBarOpen != g_bb_last_swing_high_time)
+   {
+      g_bb_last_swing_high_time = tPrevBarOpen;
+      {
+         string dayPfx = g_prefix + IntegerToString(g_day_key) + "_";
+         string n = dayPfx + "BB_SH_" + IntegerToString((long)tPrevBarOpen);
+         CreateOrUpdateArrow(n, tPrevBarOpen, high1 + 12 * _Point, false);
+      }
+      if(InpMaxOneTradePerDayPerSide && g_sell_done) return;
+      if(InpCloseOpposite && HasPosition(+1)) ClosePositions(+1);
+      if(!HasPosition(-1))
+      {
+         double slFixed = high1 + slBuf;
+         if(SpreadOk() && TryEnterWithSLTag(false, tPrevBarOpen, prevClose, slFixed, "SELL Beluga")) g_sell_done = true;
+      }
+      return;
+   }
+}
+
 void UpdateMtfH1SwingSignals()
 {
    datetime h1BarOpen = iTime(_Symbol, PERIOD_H1, 1);
@@ -1336,6 +1451,8 @@ void ProcessSignalOnNewBar()
    if(o <= 0.0 || h <= 0.0 || l <= 0.0 || c <= 0.0) { g_last_bar_time = t0; return; }
 
    UpdateLevelsWithClosedBar(tBarOpen, h, l);
+   ProcessBelugaStrategyOnNewBar(tBarOpen, c);
+   if(InpTradeOnlyBelugaStrategy) { g_last_bar_time = t0; return; }
    ProcessQmAutoTradeOnNewBar(tBarOpen, c);
 
    if(IsLocalTime(tBarOpen, 2, 0))

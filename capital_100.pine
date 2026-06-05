@@ -187,6 +187,7 @@ qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
 qmLiveShowSupertrend = input.bool(true, "QM Live - Mostra SuperTrend AI", group="QM")
 qmLiveShowBelugaSwing = input.bool(false, "QM Live - Mostra Swing BigBeluga", group="QM")
 bbUseTfLen = input.bool(true, "BigBeluga - Usa periodo per TF (M1/M15/H1/H4)", group="QM")
+bbPreset = input.string("Custom", "BigBeluga - Preset", options=["Custom", "Bilanciato", "Veloce", "Conservativo"], group="QM")
 bbLen = input.int(50, "BigBeluga - Length (fallback)", minval=1, group="QM")
 bbLen_M1 = input.int(50, "M1 - Length", minval=1, group="QM")
 bbLen_M15 = input.int(50, "M15 - Length", minval=1, group="QM")
@@ -196,13 +197,14 @@ bbLvwapCol = input.color(color.lime, "BigBeluga - Low VWAP", group="QM")
 bbHvwapCol = input.color(color.blue, "BigBeluga - High VWAP", group="QM")
 bbWidth = input.int(2, "BigBeluga - Line Width", minval=1, maxval=5, group="QM")
 
-onlyQmMode := onlyQmMode or onlyBelugaMode
-if onlyBelugaMode
-    onlyQmShowShSl := false
-    onlyQmShowDailyHL := false
-    onlyQmShowSessions := false
-    onlyQmShowRsiCross := false
-    onlyQmShowRsiMW := false
+bbPresetM1 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 30 : bbPreset == "Conservativo" ? 80 : na
+bbPresetM15 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 35 : bbPreset == "Conservativo" ? 70 : na
+bbPresetH1 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 40 : bbPreset == "Conservativo" ? 60 : na
+bbPresetH4 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 50 : bbPreset == "Conservativo" ? 70 : na
+
+onlyMainMode = onlyQmMode or onlyBelugaMode
+onlyAllowDailyHL = (not onlyMainMode) or (onlyQmMode and onlyQmShowDailyHL)
+onlyAllowSessions = (not onlyMainMode) or (onlyQmMode and onlyQmShowSessions)
 
 stAiEnabled = input.bool(false, "SuperTrend AI (Clustering) [LuxAlgo]", group="SuperTrend AI")
 stAiAtrLen = input.int(10, "ATR Length", minval=1, group="SuperTrend AI")
@@ -416,13 +418,13 @@ else
     dHigh := math.max(dHigh, high)
     dLow := math.min(dLow, low)
 
-plot(not onlyShSlMode and not onlyQmMode and showUntilNyClose and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and showDailyHL and (not onlyQmMode or onlyQmShowDailyHL) ? dHigh : na, "Daily High", color.red, 1, plot.style_linebr)
-plot(not onlyShSlMode and showUntilNyClose and showDailyHL and (not onlyQmMode or onlyQmShowDailyHL) ? dLow : na, "Daily Low", color.lime, 1, plot.style_linebr)
-
 var label dHighLbl = na
 var label dLowLbl = na
-if not onlyShSlMode and not onlyQmMode and showUntilNyClose and showDailyHL and not na(dHigh) and not na(dLow)
+plot(not onlyShSlMode and not onlyMainMode and showUntilNyClose and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
+plot(not onlyShSlMode and showUntilNyClose and showDailyHL and onlyAllowDailyHL ? dHigh : na, "Daily High", color.red, 1, plot.style_linebr)
+plot(not onlyShSlMode and showUntilNyClose and showDailyHL and onlyAllowDailyHL ? dLow : na, "Daily Low", color.lime, 1, plot.style_linebr)
+
+if not onlyShSlMode and not onlyMainMode and showUntilNyClose and showDailyHL and not na(dHigh) and not na(dLow)
     if na(dHighLbl)
         dHighLbl := label.new(bar_index, dHigh, "Daily High", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
     else
@@ -680,7 +682,7 @@ draw_session(sess_time, sess_name, sess_color, sBox, sLab, sHigh, sLow) =>
                 resLab := na
     [resBox, resLab, resHigh, resLow]
 
-if showSessions and not onlyShSlMode and (not onlyQmMode or onlyQmShowSessions)
+if showSessions and not onlyShSlMode and onlyAllowSessions
     [b1, l1, h1, lw1] = draw_session("0000-0800", "ASIA", color.green, asiaBox, asiaLab, aHigh, aLow)
     asiaBox := b1, asiaLab := l1, aHigh := h1, aLow := lw1
     [b2, l2, h2, lw2] = draw_session("0900-1730", "LONDON", color.blue, londonBox, londonLab, lHigh, lLow)
@@ -1916,15 +1918,15 @@ if barstate.isfirst or bbDashPrev != bbDashLoc
     bbDashTbl := table.new(bbTblPos, 2, 5, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
     bbDashPrev := bbDashLoc
 
-bbLenM1Sel = bbLen_M1
-bbLenM15Sel = bbLen_M15
-bbLenH1Sel = bbLen_H1
-bbLenH4Sel = bbLen_H4
+bbLenM1Sel = bbPreset != "Custom" ? bbPresetM1 : bbUseTfLen ? bbLen_M1 : bbLen
+bbLenM15Sel = bbPreset != "Custom" ? bbPresetM15 : bbUseTfLen ? bbLen_M15 : bbLen
+bbLenH1Sel = bbPreset != "Custom" ? bbPresetH1 : bbUseTfLen ? bbLen_H1 : bbLen
+bbLenH4Sel = bbPreset != "Custom" ? bbPresetH4 : bbUseTfLen ? bbLen_H4 : bbLen
 
-[bbM1Tp, bbM1Pr, bbM1Tm] = request.security(syminfo.tickerid, "1", f_bbLast(bbLenM1Sel), barmerge.gaps_off, barmerge.lookahead_off)
-[bbM15Tp, bbM15Pr, bbM15Tm] = request.security(syminfo.tickerid, "15", f_bbLast(bbLenM15Sel), barmerge.gaps_off, barmerge.lookahead_off)
-[bbH1Tp, bbH1Pr, bbH1Tm] = request.security(syminfo.tickerid, "60", f_bbLast(bbLenH1Sel), barmerge.gaps_off, barmerge.lookahead_off)
-[bbH4Tp, bbH4Pr, bbH4Tm] = request.security(syminfo.tickerid, "240", f_bbLast(bbLenH4Sel), barmerge.gaps_off, barmerge.lookahead_off)
+[bbM1Tp, bbM1Pr, bbM1Tm] = request.security(syminfo.tickerid, "1", f_bbLast(bbLenM1Sel), barmerge.gaps_off, barmerge.lookahead_on)
+[bbM15Tp, bbM15Pr, bbM15Tm] = request.security(syminfo.tickerid, "15", f_bbLast(bbLenM15Sel), barmerge.gaps_off, barmerge.lookahead_on)
+[bbH1Tp, bbH1Pr, bbH1Tm] = request.security(syminfo.tickerid, "60", f_bbLast(bbLenH1Sel), barmerge.gaps_off, barmerge.lookahead_on)
+[bbH4Tp, bbH4Pr, bbH4Tm] = request.security(syminfo.tickerid, "240", f_bbLast(bbLenH4Sel), barmerge.gaps_off, barmerge.lookahead_on)
 
 f_bbTxt(_tp, _pr, _tm) =>
     _tp == 0 or na(_tm) ? "" : str.format("{0} {1} @{2}", str.format_time(_tm, "HH:mm", "Europe/Rome"), _tp == 1 ? "SH" : "SL", str.tostring(_pr, format.mintick))
@@ -2289,7 +2291,7 @@ if stAiShowNums
 
 bbActive = not onlyShSlMode and (onlyBelugaMode or (qmLiveEnabled and qmLiveShowBelugaSwing))
 
-bbLenSel = bbUseTfLen ? (tfIsM1 ? bbLen_M1 : tfIsM15 ? bbLen_M15 : tfIsH1 ? bbLen_H1 : tfIsH4 ? bbLen_H4 : bbLen) : bbLen
+bbLenSel = bbPreset != "Custom" ? (tfIsM1 ? bbPresetM1 : tfIsM15 ? bbPresetM15 : tfIsH1 ? bbPresetH1 : tfIsH4 ? bbPresetH4 : bbLen) : bbUseTfLen ? (tfIsM1 ? bbLen_M1 : tfIsM15 ? bbLen_M15 : tfIsH1 ? bbLen_H1 : tfIsH4 ? bbLen_H4 : bbLen) : bbLen
 bbH = ta.highest(bbLenSel)
 bbL = ta.lowest(bbLenSel)
 
@@ -2301,6 +2303,7 @@ var float bbLowVal = na
 
 bbSwingHigh = bbActive and high[1] == bbH[1] and high < bbH
 bbSwingLow = bbActive and low[1] == bbL[1] and low > bbL
+bgcolor(bbSwingHigh ? color.new(bbHvwapCol, 85) : bbSwingLow ? color.new(bbLvwapCol, 85) : na)
 
 if bbSwingHigh
     bbHighIndex := bar_index - 1

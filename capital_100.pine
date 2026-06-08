@@ -81,6 +81,7 @@ dashPos = input.string("Top Right", "Posizione", options=["Top Right", "Top Left
 dashTextSize = input.string("Small", "Testo", options=["Tiny", "Small", "Normal"], group="Dashboard")
 
 alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
+alertDebugEveryBar = input.bool(false, "Debug: alert ogni barra", group="Alert")
 
 labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
 labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="Layout")
@@ -97,6 +98,7 @@ vpVaColor = input.color(color.new(color.orange, 70), "Colore Value Area", group=
 vpPocColor = input.color(color.new(color.white, 0), "Colore POC", group="Volume Profile")
 
 rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
+rsiCrossAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓", group="RSI Cross")
 rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
 rsiCrossMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI Cross")
 rsiCrossMaLen = input.int(14, "RSI-MA Length", minval=1, group="RSI Cross")
@@ -186,6 +188,7 @@ qmLiveColorM = input.color(color.new(color.red, 0), "QM Live - Colore M (Bear)",
 qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
 qmLiveShowSupertrend = input.bool(true, "QM Live - Mostra SuperTrend AI", group="QM")
 qmLiveShowBelugaSwing = input.bool(false, "QM Live - Mostra Swing BigBeluga", group="QM")
+bbAlertsEnabled = input.bool(true, "BigBeluga - Alert Swing (HIGH/LOW)", group="QM")
 bbUseTfLen = input.bool(true, "BigBeluga - Usa periodo per TF (M1/M15/H1/H4)", group="QM")
 bbPreset = input.string("Custom", "BigBeluga - Preset", options=["Custom", "Bilanciato", "Veloce", "Conservativo"], group="QM")
 bbLen = input.int(50, "BigBeluga - Length (fallback)", minval=1, group="QM")
@@ -221,6 +224,8 @@ stAiAmaBearCss = input.color(color.new(color.red, 50), "AMA", inline="stai_ama",
 stAiAmaBullCss = input.color(color.new(color.teal, 50), "", inline="stai_ama", group="SuperTrend AI - Style")
 stAiShowGradient = input.bool(true, "Candle Coloring", group="SuperTrend AI - Style")
 stAiShowSignals = input.bool(true, "Show Signals", group="SuperTrend AI - Style")
+stAiAlertsEnabled = input.bool(true, "Alert SuperTrend AI (flip)", group="SuperTrend AI - Style")
+stAiAlertsMinScore = input.int(2, "Min Score (>=)", minval=0, group="SuperTrend AI - Style")
 
 bbDashEnabled = input.bool(true, "Dashboard BigBeluga (M1/M15/H1/H4)", group="BigBeluga Dashboard")
 bbDashLoc = input.string("Bottom Right", "Location", options=["Top Right", "Bottom Right", "Bottom Left"], group="BigBeluga Dashboard")
@@ -289,7 +294,7 @@ swingRsiSellAgg = input.int(70, "RSI SELL Aggressive (≥)", minval=50, maxval=9
 swingRsiSellCons = input.int(60, "RSI SELL Conservative (≥)", minval=50, maxval=99, group="Swing Pattern")
 swingMacdConfirmEnabled = input.bool(false, "Conferma MACD cross", group="Swing Pattern")
 swingRequireHammerShootingForShSl = input.bool(false, "Filtro Hammer (SL) / Shooting (SH)", group="Swing Pattern")
-onlyShSlMode = swingRequireHammerShootingForShSl
+onlyShSlMode = input.bool(false, "Mostra solo Swing Pattern (SH/SL)", group="Swing Pattern")
 
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
@@ -324,6 +329,9 @@ f_cellTxt(_t, _p) =>
 f_alert(_cond, _msg) =>
     if alertsEnabled and _cond
         alert(_msg, alert.freq_once_per_bar_close)
+
+if alertsEnabled and alertDebugEveryBar and barstate.isconfirmed
+    alert(syminfo.ticker + " TEST ALERT", alert.freq_once_per_bar_close)
 
 f_vpVa(_arr, _poc, _pct) =>
     n = array.size(_arr)
@@ -1955,8 +1963,8 @@ f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingShowHighOut, syminfo.
 f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingShowLowOut, syminfo.ticker + " Swing Low")
 f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingBullDivPlot, syminfo.ticker + " Bullish Divergence (RSI)")
 f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingBearDivPlot, syminfo.ticker + " Bearish Divergence (RSI)")
-f_alert(not onlyShSlMode and not onlyQmMode and rsiCrossUpSig, syminfo.ticker + " RSI cross UP vs RSI-MA")
-f_alert(not onlyShSlMode and not onlyQmMode and rsiCrossDnSig, syminfo.ticker + " RSI cross DOWN vs RSI-MA")
+f_alert(not onlyShSlMode and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossUpSig, syminfo.ticker + " RSI UP")
+f_alert(not onlyShSlMode and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossDnSig, syminfo.ticker + " RSI DOWN")
 f_alert(not onlyShSlMode and not onlyQmMode and rsiPatternEnabled and rsiWSig, syminfo.ticker + " RSI W pattern")
 f_alert(not onlyShSlMode and not onlyQmMode and rsiPatternEnabled and rsiMSig, syminfo.ticker + " RSI M pattern")
 smtBearAny = smtBearSig1 or smtBearSig2
@@ -2289,7 +2297,13 @@ if stAiShowNums
     if stAiOs < stAiOs[1]
         label.new(bar_index, stAiTs, str.tostring(int(stAiPerfIdx * 10)), color=stAiBearCss, style=label.style_label_down, textcolor=color.white, size=size.tiny)
 
-bbActive = not onlyShSlMode and (onlyBelugaMode or (qmLiveEnabled and qmLiveShowBelugaSwing))
+stAiScore = stAiActive and not na(stAiPerfIdx) ? int(stAiPerfIdx * 10) : na
+f_alert(stAiActive and stAiAlertsEnabled and not na(stAiScore) and stAiScore >= stAiAlertsMinScore and stAiOs > stAiOs[1], syminfo.ticker + " SuperTrend AI BUY score=" + str.tostring(stAiScore))
+f_alert(stAiActive and stAiAlertsEnabled and not na(stAiScore) and stAiScore >= stAiAlertsMinScore and stAiOs < stAiOs[1], syminfo.ticker + " SuperTrend AI SELL score=" + str.tostring(stAiScore))
+
+bbDrawActive = not onlyShSlMode and (onlyBelugaMode or (qmLiveEnabled and qmLiveShowBelugaSwing))
+bbAlertActive = not onlyShSlMode and bbAlertsEnabled
+bbCalcActive = bbDrawActive or bbAlertActive
 
 bbLenSel = bbPreset != "Custom" ? (tfIsM1 ? bbPresetM1 : tfIsM15 ? bbPresetM15 : tfIsH1 ? bbPresetH1 : tfIsH4 ? bbPresetH4 : bbLen) : bbUseTfLen ? (tfIsM1 ? bbLen_M1 : tfIsM15 ? bbLen_M15 : tfIsH1 ? bbLen_H1 : tfIsH4 ? bbLen_H4 : bbLen) : bbLen
 bbH = ta.highest(bbLenSel)
@@ -2301,9 +2315,12 @@ var float bbHighVal = na
 var int bbLowIndex = na
 var float bbLowVal = na
 
-bbSwingHigh = bbActive and high[1] == bbH[1] and high < bbH
-bbSwingLow = bbActive and low[1] == bbL[1] and low > bbL
-bgcolor(bbSwingHigh ? color.new(bbHvwapCol, 85) : bbSwingLow ? color.new(bbLvwapCol, 85) : na)
+bbSwingHigh = bbCalcActive and high[1] == bbH[1] and high < bbH
+bbSwingLow = bbCalcActive and low[1] == bbL[1] and low > bbL
+
+f_alert(bbAlertActive and bbSwingHigh, syminfo.ticker + " BB SWING HIGH")
+f_alert(bbAlertActive and bbSwingLow, syminfo.ticker + " BB SWING LOW")
+bgcolor(bbDrawActive and bbSwingHigh ? color.new(bbHvwapCol, 85) : bbDrawActive and bbSwingLow ? color.new(bbLvwapCol, 85) : na)
 
 if bbSwingHigh
     bbHighIndex := bar_index - 1
@@ -2317,9 +2334,9 @@ if bbSwingLow
 
 bbLVwap = ta.vwap(low, bbSwingLow)
 
-if bbActive and high == bbH
+if bbCalcActive and high == bbH
     bbTrend := true
-if bbActive and low == bbL
+if bbCalcActive and low == bbL
     bbTrend := false
 
 bbDrawActiveVwap(_trend) =>
@@ -2352,10 +2369,10 @@ bbDrawActiveVwap(_trend) =>
             array.push(cp, cp_)
         poly := polyline.new(cp, line_color=vwapColor, line_width=2)
 
-if bbActive
+if bbDrawActive
     bbDrawActiveVwap(bbTrend)
 
-if bbActive and bbTrend and bbTrend != bbTrend[1] and not na(bbHighIndex)
+if bbDrawActive and bbTrend and bbTrend != bbTrend[1] and not na(bbHighIndex)
     cp = array.new<chart.point>()
     for i = 0 to bar_index - bbHighIndex
         if i == bar_index - bbHighIndex
@@ -2364,7 +2381,7 @@ if bbActive and bbTrend and bbTrend != bbTrend[1] and not na(bbHighIndex)
         array.push(cp, cp_)
     polyline.new(cp, line_color=color.new(bbHvwapCol, 30), line_width=bbWidth)
 
-if bbActive and not bbTrend and bbTrend != bbTrend[1] and not na(bbLowIndex)
+if bbDrawActive and not bbTrend and bbTrend != bbTrend[1] and not na(bbLowIndex)
     cp = array.new<chart.point>()
     for i = 0 to bar_index - bbLowIndex
         if i == bar_index - bbLowIndex

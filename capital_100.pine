@@ -301,6 +301,7 @@ swingRsiSellAgg = input.int(70, "RSI SELL Aggressive (≥)", minval=50, maxval=9
 swingRsiSellCons = input.int(60, "RSI SELL Conservative (≥)", minval=50, maxval=99, group="Swing Pattern")
 swingMacdConfirmEnabled = input.bool(false, "Conferma MACD cross", group="Swing Pattern")
 swingRequireHammerShootingForShSl = input.bool(false, "Filtro Hammer (SL) / Shooting (SH)", group="Swing Pattern")
+swingMtfConfirmH1 = input.bool(true, "Conferma SH/SL con H1 (solo M1/M5/M15)", group="Swing Pattern")
 onlyShSlMode = input.bool(false, "Mostra solo Swing Pattern (SH/SL)", group="Swing Pattern")
 
 swingRsiLenSel = swingRsiUseTfLen ? (timeframe.isminutes and timeframe.multiplier == 1 ? swingBullDivRsiLen_M1 : timeframe.isminutes and timeframe.multiplier == 5 ? swingBullDivRsiLen_M5 : timeframe.isminutes and timeframe.multiplier == 15 ? swingBullDivRsiLen_M15 : timeframe.isminutes and timeframe.multiplier == 60 ? swingBullDivRsiLen_H1 : timeframe.isminutes and timeframe.multiplier == 240 ? swingBullDivRsiLen_H4 : swingBullDivRsiLen) : swingBullDivRsiLen
@@ -308,6 +309,11 @@ swingRsiLenSel = swingRsiUseTfLen ? (timeframe.isminutes and timeframe.multiplie
 canShowNonShSl = not onlyShSlMode
 canShowNonMain = canShowNonShSl and not onlyMainMode
 canShowNonQm = canShowNonShSl and not onlyQmMode
+
+leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
+rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
+leftH4 = swingPatternUseTfBars ? swingPatternLeftBars_H4 : swingPatternLeftBars
+rightH4 = swingPatternUseTfBars ? swingPatternRightBars_H4 : swingPatternRightBars
 
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
@@ -332,6 +338,9 @@ f_pivotStats(_left, _right) =>
     slTime = ta.valuewhen(not na(pl), time[_right], 0)
     slPrice = ta.valuewhen(not na(pl), pl, 0)
     [shTime, shPrice, slTime, slPrice]
+
+[dashH1ShT, dashH1ShP, dashH1SlT, dashH1SlP] = request.security(syminfo.tickerid, "60", f_pivotStats(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
+[dashH4ShT, dashH4ShP, dashH4SlT, dashH4SlP] = request.security(syminfo.tickerid, "240", f_pivotStats(leftH4, rightH4), barmerge.gaps_off, barmerge.lookahead_off)
 
 f_lastType(_shTime, _slTime) =>
     na(_shTime) and na(_slTime) ? "—" : na(_slTime) ? "SH" : na(_shTime) ? "SL" : _shTime > _slTime ? "SH" : _slTime > _shTime ? "SL" : "SH/SL"
@@ -1678,6 +1687,10 @@ passHammerSh = not swingRequireHammerShootingForShSl or pivotShootOk
 passHammerSl = not swingRequireHammerShootingForShSl or pivotHammerOk
 swingShowHighOut = swingShowHighFinal and passHammerSh
 swingShowLowOut = swingShowLowFinal and passHammerSl
+if swingMtfConfirmH1 and (tfIsM1 or tfIsM5 or tfIsM15)
+    h1Last = f_lastType(dashH1ShT, dashH1SlT)
+    swingShowHighOut := swingShowHighOut and h1Last == "SH"
+    swingShowLowOut := swingShowLowOut and h1Last == "SL"
 
 crtKillOk = not crtUseKillzone or crtInKill
 crtRsiOkLong = not crtRequireRsiConfirm or crtRsi <= buyThr
@@ -1853,14 +1866,6 @@ if swingBearDivPlot and (na(lastDivBearLblBar) or lastDivBearLblBar != swingPivo
     if array.size(mcSigLabels) > 250
         label.delete(array.shift(mcSigLabels))
     lastDivBearLblBar := swingPivotBar
-
-leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
-rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
-leftH4 = swingPatternUseTfBars ? swingPatternLeftBars_H4 : swingPatternLeftBars
-rightH4 = swingPatternUseTfBars ? swingPatternRightBars_H4 : swingPatternRightBars
-
-[dashH1ShT, dashH1ShP, dashH1SlT, dashH1SlP] = request.security(syminfo.tickerid, "60", f_pivotStats(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
-[dashH4ShT, dashH4ShP, dashH4SlT, dashH4SlP] = request.security(syminfo.tickerid, "240", f_pivotStats(leftH4, rightH4), barmerge.gaps_off, barmerge.lookahead_off)
 
 var table dashTbl = na
 var string dashPosPrev = na

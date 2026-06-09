@@ -99,6 +99,7 @@ vpPocColor = input.color(color.new(color.white, 0), "Colore POC", group="Volume 
 
 rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
 rsiCrossAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓", group="RSI Cross")
+rsiSessionsOnlyMode = input.bool(false, "Mostra solo RSI↑/RSI↓ + Sessioni", group="RSI Cross")
 rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
 rsiCrossMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI Cross")
 rsiCrossMaLen = input.int(14, "RSI-MA Length", minval=1, group="RSI Cross")
@@ -189,6 +190,7 @@ qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
 qmLiveShowSupertrend = input.bool(true, "QM Live - Mostra SuperTrend AI", group="QM")
 qmLiveShowBelugaSwing = input.bool(false, "QM Live - Mostra Swing BigBeluga", group="QM")
 bbAlertsEnabled = input.bool(true, "BigBeluga - Alert Swing (HIGH/LOW)", group="QM")
+bbBgAlertsEnabled = input.bool(false, "BigBeluga - Alert Highlight (sfondo)", group="QM")
 bbUseTfLen = input.bool(true, "BigBeluga - Usa periodo per TF (M1/M15/H1/H4)", group="QM")
 bbPreset = input.string("Custom", "BigBeluga - Preset", options=["Custom", "Bilanciato", "Veloce", "Conservativo"], group="QM")
 bbLen = input.int(50, "BigBeluga - Length (fallback)", minval=1, group="QM")
@@ -205,9 +207,9 @@ bbPresetM15 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 35 : bbPres
 bbPresetH1 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 40 : bbPreset == "Conservativo" ? 60 : na
 bbPresetH4 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 50 : bbPreset == "Conservativo" ? 70 : na
 
-onlyMainMode = onlyQmMode or onlyBelugaMode
+onlyMainMode = onlyQmMode or onlyBelugaMode or rsiSessionsOnlyMode
 onlyAllowDailyHL = (not onlyMainMode) or (onlyQmMode and onlyQmShowDailyHL)
-onlyAllowSessions = (not onlyMainMode) or (onlyQmMode and onlyQmShowSessions)
+onlyAllowSessions = (not onlyMainMode) or (onlyQmMode and onlyQmShowSessions) or rsiSessionsOnlyMode
 
 stAiEnabled = input.bool(false, "SuperTrend AI (Clustering) [LuxAlgo]", group="SuperTrend AI")
 stAiAtrLen = input.int(10, "ATR Length", minval=1, group="SuperTrend AI")
@@ -781,7 +783,7 @@ f_sigSlot(_txt) =>
      _txt == "BUY" or _txt == "SELL" ? 1 : 0
 f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
     allowInOnlyQm = (onlyQmShowRsiCross and (_txt == "RSI↑" or _txt == "RSI↓")) or (onlyQmShowRsiMW and (_txt == "RSI\nM" or _txt == "RSI\nW"))
-    if onlyShSlMode or (onlyQmMode and not allowInOnlyQm)
+    if onlyShSlMode or (rsiSessionsOnlyMode and not (_txt == "RSI↑" or _txt == "RSI↓")) or (onlyQmMode and not allowInOnlyQm)
         na
     else
         step = labelStackTicks * syminfo.mintick
@@ -1804,9 +1806,9 @@ if SmtEnabled and showUntilNyClose and not onlyShSlMode and not onlyQmMode
 rsiCrossPivotBar = bar_index - swingCenter
 rsiCrossUpSig = rsiCrossUpAtPivot and rsiCrossUpOkAtPivot and swingShowLowOut
 rsiCrossDnSig = rsiCrossDnAtPivot and rsiCrossDnOkAtPivot and swingShowHighOut
-if rsiCrossShowLabels and rsiCrossUpSig
+if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossShowLabels and rsiCrossUpSig
     f_addSigLabel(rsiCrossPivotBar, low[swingCenter], "RSI↑", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny)
-if rsiCrossShowLabels and rsiCrossDnSig
+if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossShowLabels and rsiCrossDnSig
     f_addSigLabel(rsiCrossPivotBar, high[swingCenter], "RSI↓", color.new(color.orange, 0), color.black, label.style_label_down, size.tiny)
 
 swingBullDivPlot = not onlyShSlMode and not onlyQmMode and swingBullDiv and (not swingDivShowDailyExtreme or divNearDailyLow)
@@ -1965,6 +1967,7 @@ f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingBullDivPlot, syminfo.
 f_alert(not onlyQmMode and swingPatternOnlyAlerts and swingBearDivPlot, syminfo.ticker + " Bearish Divergence (RSI)")
 f_alert(not onlyShSlMode and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossUpSig, syminfo.ticker + " RSI UP")
 f_alert(not onlyShSlMode and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossDnSig, syminfo.ticker + " RSI DOWN")
+
 f_alert(not onlyShSlMode and not onlyQmMode and rsiPatternEnabled and rsiWSig, syminfo.ticker + " RSI W pattern")
 f_alert(not onlyShSlMode and not onlyQmMode and rsiPatternEnabled and rsiMSig, syminfo.ticker + " RSI M pattern")
 smtBearAny = smtBearSig1 or smtBearSig2
@@ -2320,6 +2323,8 @@ bbSwingLow = bbCalcActive and low[1] == bbL[1] and low > bbL
 
 f_alert(bbAlertActive and bbSwingHigh, syminfo.ticker + " BB SWING HIGH")
 f_alert(bbAlertActive and bbSwingLow, syminfo.ticker + " BB SWING LOW")
+f_alert(bbDrawActive and bbBgAlertsEnabled and bbSwingHigh, syminfo.ticker + " BB HIGHLIGHT HIGH")
+f_alert(bbDrawActive and bbBgAlertsEnabled and bbSwingLow, syminfo.ticker + " BB HIGHLIGHT LOW")
 bgcolor(bbDrawActive and bbSwingHigh ? color.new(bbHvwapCol, 85) : bbDrawActive and bbSwingLow ? color.new(bbLvwapCol, 85) : na)
 
 if bbSwingHigh

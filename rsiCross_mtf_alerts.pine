@@ -1,0 +1,97 @@
+//@version=6
+indicator("RSI Cross MTF Alerts", overlay = false)
+
+alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
+
+rsiLen = input.int(14, "RSI Length", minval=2, group="RSI")
+rsiMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI")
+rsiMaLen = input.int(14, "RSI-MA Length", minval=1, group="RSI")
+
+tfM1 = input.bool(true, "M1", inline="t1", group="Timeframes")
+tfM5 = input.bool(true, "M5", inline="t1", group="Timeframes")
+tfM15 = input.bool(true, "M15", inline="t1", group="Timeframes")
+tfH1 = input.bool(true, "H1", inline="t2", group="Timeframes")
+tfH4 = input.bool(true, "H4", inline="t2", group="Timeframes")
+
+f_mtf() =>
+    r = ta.rsi(close, rsiLen)
+    m = rsiMaType == "EMA" ? ta.ema(r, rsiMaLen) : ta.sma(r, rsiMaLen)
+    up = barstate.isconfirmed and ta.crossover(r, m)
+    dn = barstate.isconfirmed and ta.crossunder(r, m)
+    t = (up or dn) ? time : na
+    [up, dn, t]
+
+[m1Up, m1Dn, m1T] = request.security(syminfo.tickerid, "1", f_mtf(), barmerge.gaps_off, barmerge.lookahead_off)
+[m5Up, m5Dn, m5T] = request.security(syminfo.tickerid, "5", f_mtf(), barmerge.gaps_off, barmerge.lookahead_off)
+[m15Up, m15Dn, m15T] = request.security(syminfo.tickerid, "15", f_mtf(), barmerge.gaps_off, barmerge.lookahead_off)
+[h1Up, h1Dn, h1T] = request.security(syminfo.tickerid, "60", f_mtf(), barmerge.gaps_off, barmerge.lookahead_off)
+[h4Up, h4Dn, h4T] = request.security(syminfo.tickerid, "240", f_mtf(), barmerge.gaps_off, barmerge.lookahead_off)
+
+var int lastM1Up = na
+var int lastM1Dn = na
+var int lastM5Up = na
+var int lastM5Dn = na
+var int lastM15Up = na
+var int lastM15Dn = na
+var int lastH1Up = na
+var int lastH1Dn = na
+var int lastH4Up = na
+var int lastH4Dn = na
+
+fireUp(_en, _t, _last) =>
+    _en and not na(_t) and (na(_last) or _last != _t)
+
+m1UpNew = alertsEnabled and tfM1 and m1Up and fireUp(true, m1T, lastM1Up)
+m1DnNew = alertsEnabled and tfM1 and m1Dn and fireUp(true, m1T, lastM1Dn)
+if m1UpNew
+    lastM1Up := m1T
+if m1DnNew
+    lastM1Dn := m1T
+if m1UpNew
+    alert(syminfo.ticker + " RSI MTF UP TF=M1", alert.freq_once_per_bar_close)
+if m1DnNew
+    alert(syminfo.ticker + " RSI MTF DOWN TF=M1", alert.freq_once_per_bar_close)
+
+m5UpNew = alertsEnabled and tfM5 and m5Up and fireUp(true, m5T, lastM5Up)
+m5DnNew = alertsEnabled and tfM5 and m5Dn and fireUp(true, m5T, lastM5Dn)
+if m5UpNew
+    lastM5Up := m5T
+if m5DnNew
+    lastM5Dn := m5T
+if m5UpNew
+    alert(syminfo.ticker + " RSI MTF UP TF=M5", alert.freq_once_per_bar_close)
+if m5DnNew
+    alert(syminfo.ticker + " RSI MTF DOWN TF=M5", alert.freq_once_per_bar_close)
+
+m15UpNew = alertsEnabled and tfM15 and m15Up and fireUp(true, m15T, lastM15Up)
+m15DnNew = alertsEnabled and tfM15 and m15Dn and fireUp(true, m15T, lastM15Dn)
+if m15UpNew
+    lastM15Up := m15T
+if m15DnNew
+    lastM15Dn := m15T
+if m15UpNew
+    alert(syminfo.ticker + " RSI MTF UP TF=M15", alert.freq_once_per_bar_close)
+if m15DnNew
+    alert(syminfo.ticker + " RSI MTF DOWN TF=M15", alert.freq_once_per_bar_close)
+
+h1UpNew = alertsEnabled and tfH1 and h1Up and fireUp(true, h1T, lastH1Up)
+h1DnNew = alertsEnabled and tfH1 and h1Dn and fireUp(true, h1T, lastH1Dn)
+if h1UpNew
+    lastH1Up := h1T
+if h1DnNew
+    lastH1Dn := h1T
+if h1UpNew
+    alert(syminfo.ticker + " RSI MTF UP TF=H1", alert.freq_once_per_bar_close)
+if h1DnNew
+    alert(syminfo.ticker + " RSI MTF DOWN TF=H1", alert.freq_once_per_bar_close)
+
+h4UpNew = alertsEnabled and tfH4 and h4Up and fireUp(true, h4T, lastH4Up)
+h4DnNew = alertsEnabled and tfH4 and h4Dn and fireUp(true, h4T, lastH4Dn)
+if h4UpNew
+    lastH4Up := h4T
+if h4DnNew
+    lastH4Dn := h4T
+if h4UpNew
+    alert(syminfo.ticker + " RSI MTF UP TF=H4", alert.freq_once_per_bar_close)
+if h4DnNew
+    alert(syminfo.ticker + " RSI MTF DOWN TF=H4", alert.freq_once_per_bar_close)

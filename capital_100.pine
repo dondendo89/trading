@@ -892,8 +892,6 @@ ibSweepUp = not na(ibSweepUpBar)
 // --- 6. LOGICA SEGNALI ---
 isKill = not na(time(timeframe.period, "1430-1630", tz))
 is1m = timeframe.isminutes and timeframe.multiplier == 1
-isStar13 = is1m ? (hour(time, tz) == 12 and minute(time, tz) == 59) : (hour(time, tz) == 13 and minute(time, tz) == 0)
-isStar16 = is1m ? (hour(time, tz) == 15 and minute(time, tz) == 59) : (hour(time, tz) == 16 and minute(time, tz) == 0)
 is_0900 = hour(time, tz) == 9 and minute(time, tz) == 0
 asiaRangeHas = not na(asiaHigh) and not na(asiaLow)
 asiaBiasBuy = asiaRangeHas and is_0900 and low > asiaHigh
@@ -977,10 +975,6 @@ if swingShowOverDaily and overDailyHigh
 f_alert(canShowNonMain and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyLow, syminfo.ticker + " Over Daily Low")
 f_alert(canShowNonMain and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyHigh, syminfo.ticker + " Over Daily High")
 
-if canShowNonQm and isStar13
-    f_addSigLabel(bar_index, low, "★", color.yellow, color.black, label.style_label_up, size.tiny)
-if canShowNonQm and isStar16
-    f_addSigLabel(bar_index, low, "★", color.yellow, color.black, label.style_label_up, size.tiny)
 if validB
     f_addSigLabel(bar_index, low, "BUY", color.green, color.white, label.style_label_up, size.small)
 if validS

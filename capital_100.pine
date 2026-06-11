@@ -76,15 +76,12 @@ SmtShowLabels = input.bool(true, "Mostra etichette", group="SMT")
 SmtShowDailyExtreme = input.bool(false, "Mostra SMT vicino a Daily High/Low", group="SMT")
 SmtDailyExtremeBufferTicks = input.int(0, "Distanza max SMT da Daily High/Low (ticks)", minval=0, group="SMT")
 
-dashEnabled = input.bool(true, "Dashboard SH/SL (H1/H4)", group="Dashboard")
-dashPos = input.string("Top Right", "Posizione", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Dashboard")
-dashTextSize = input.string("Small", "Testo", options=["Tiny", "Small", "Normal"], group="Dashboard")
-
 alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
 
 labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
 labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="Layout")
 labelShiftRightBars = input.int(0, "Sposta segnali a destra (barre)", minval=0, group="Layout")
+labelMergeSameBar = input.bool(true, "Raggruppa segnali stessa candela", group="Layout")
 
 vpEnabled = input.bool(false, "Volume Profile (Asia→NY)", group="Volume Profile")
 vpBinTicks = input.int(10, "Bin size (ticks)", minval=1, group="Volume Profile")
@@ -208,7 +205,7 @@ bbPresetM15 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 35 : bbPres
 bbPresetH1 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 40 : bbPreset == "Conservativo" ? 60 : na
 bbPresetH4 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 50 : bbPreset == "Conservativo" ? 70 : na
 
-onlyMainMode = onlyQmMode or onlyBelugaMode or rsiSessionsOnlyMode
+onlyMainMode = onlyBelugaMode or rsiSessionsOnlyMode
 onlyAllowDailyHL = (not onlyMainMode) or (onlyQmMode and onlyQmShowDailyHL)
 onlyAllowSessions = (not onlyMainMode) or (onlyQmMode and onlyQmShowSessions) or rsiSessionsOnlyMode
 
@@ -310,7 +307,7 @@ swingRsiLenSel = swingRsiUseTfLen ? (timeframe.isminutes and timeframe.multiplie
 
 canShowNonShSl = not onlyShSlMode
 canShowNonMain = canShowNonShSl and not onlyMainMode
-canShowNonQm = canShowNonShSl and not onlyQmMode
+canShowNonQm = canShowNonShSl
 
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
@@ -320,9 +317,6 @@ showUntilNyClose = not isAfterNyClose
 
 instLineStyle(s) =>
     s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
-
-f_dashPos(_s) =>
-    _s == "Top Left" ? position.top_left : _s == "Bottom Right" ? position.bottom_right : _s == "Bottom Left" ? position.bottom_left : position.top_right
 
 f_dashSize(_s) =>
     _s == "Tiny" ? size.tiny : _s == "Normal" ? size.normal : size.small
@@ -801,20 +795,34 @@ f_sigSlot(_txt) =>
      str.contains(_txt, "OVER") ? 2 :
      str.contains(_txt, "KISS") ? 1 :
      _txt == "BUY" or _txt == "SELL" ? 1 : 0
-f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
-    allowInOnlyQm = (onlyQmShowRsiCross and (_txt == "RSI↑" or _txt == "RSI↓")) or (onlyQmShowRsiMW and (_txt == "RSI\nM" or _txt == "RSI\nW")) or (onlyQmShowHs and (_txt == "Hammer" or _txt == "Shooting"))
-    if onlyShSlMode or (rsiSessionsOnlyMode and not (_txt == "RSI↑" or _txt == "RSI↓" or _txt == "Hammer" or _txt == "Shooting")) or (onlyQmMode and not allowInOnlyQm)
+f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, _doAlert) =>
+    var label lastMerged = na
+    var int lastMergedX = na
+    allowInRsiSessOnly = _txt == "RSI↑" or _txt == "RSI↓" or _txt == "Hammer" or _txt == "Shooting" or _txt == "SH" or _txt == "SL" or _txt == "DIV" or str.contains(_txt, "SMT") or _txt == "HH" or _txt == "LH" or _txt == "HL" or _txt == "LL" or str.contains(_txt, "HH\n") or str.contains(_txt, "LH\n") or str.contains(_txt, "HL\n") or str.contains(_txt, "LL\n")
+    if onlyShSlMode or (rsiSessionsOnlyMode and not allowInRsiSessOnly)
         na
     else
+        xAdj = _x + labelShiftRightBars
         step = labelStackTicks * syminfo.mintick
         slot = labelAutoStack and (_style == label.style_label_up or _style == label.style_label_down) ? f_sigSlot(_txt) : 0
         yAdj = _style == label.style_label_up ? (_y - slot * step) : _style == label.style_label_down ? (_y + slot * step) : _y
-        f_alert(true, syminfo.ticker + " " + _txt)
-        lb = label.new(_x + labelShiftRightBars, yAdj, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
-        array.push(mcSigLabels, lb)
-        if array.size(mcSigLabels) > 250
-            label.delete(array.shift(mcSigLabels))
-        lb
+        f_alert(_doAlert, syminfo.ticker + " " + _txt)
+        if labelMergeSameBar and not na(lastMerged) and lastMergedX == xAdj
+            old = label.get_text(lastMerged)
+            if not str.contains(old, _txt)
+                label.set_text(lastMerged, old + "\n" + _txt)
+            lastMerged
+        else
+            lb = label.new(xAdj, yAdj, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
+            lastMerged := lb
+            lastMergedX := xAdj
+            array.push(mcSigLabels, lb)
+            if array.size(mcSigLabels) > 250
+                label.delete(array.shift(mcSigLabels))
+            lb
+
+f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
+    f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, true)
 
 if useAsiaLondonSell13 and is_1300 and c02AboveLondon
     f_addSigLabel(bar_index, high, "SELL", color.red, color.white, label.style_label_down, size.small)
@@ -1003,7 +1011,7 @@ hsConfirmedShoot = hsConfirm ? hsIsShoot[1] and hsIsRed : hsIsShoot
 hsOffset = hsConfirm ? -1 : 0
 hsLblYHammer = hsConfirm ? low[1] : low
 hsLblYShoot = hsConfirm ? high[1] : high
-hsCanShow = canShowNonQm or (onlyQmMode and onlyQmShowHs)
+hsCanShow = canShowNonQm
 if hsCanShow and hsEnabled and hsShowLabels and hsConfirmedHammer and barstate.isconfirmed and not na(hsLblYHammer)
     f_addSigLabel(bar_index + hsOffset, hsLblYHammer, "Hammer", color.new(color.white, 100), color.green, label.style_label_up, size.tiny)
 if hsCanShow and hsEnabled and hsShowLabels and hsConfirmedShoot and barstate.isconfirmed and not na(hsLblYShoot)
@@ -1145,14 +1153,12 @@ if luxEnabled and canShowNonQm and (lux_has_ph or lux_has_pl)
         H = na(lux_phy) ? "HH" : (lux_ph > lux_phy ? "HH" : "LH")
         lux_phy := lux_ph
         if luxShowLabels
-            label.new(bar_index[luxLen], lux_ph, luxTitleForLabel == "" ? H : (H + "\n" + luxTitleForLabel), color=color.new(color.white, 100), style=label.style_label_down, textcolor=luxSwingHColor, size=size.small)
-            f_alert(luxNotifyEnabled and luxNotifySwings, syminfo.ticker + " " + (luxTitleForLabel == "" ? H : (H + " " + luxTitleForLabel)))
+            f_addSigLabelEx(bar_index[luxLen], lux_ph, luxTitleForLabel == "" ? H : (H + "\n" + luxTitleForLabel), color.new(color.white, 100), luxSwingHColor, label.style_label_down, size.small, true)
     else if lux_has_pl
         L = na(lux_ply) ? "HL" : (lux_pl < lux_ply ? "LL" : "HL")
         lux_ply := lux_pl
         if luxShowLabels
-            label.new(bar_index[luxLen], lux_pl, luxTitleForLabel == "" ? L : (L + "\n" + luxTitleForLabel), color=color.new(color.white, 100), style=label.style_label_up, textcolor=luxSwingLColor, size=size.small)
-            f_alert(luxNotifyEnabled and luxNotifySwings, syminfo.ticker + " " + (luxTitleForLabel == "" ? L : (L + " " + luxTitleForLabel)))
+            f_addSigLabelEx(bar_index[luxLen], lux_pl, luxTitleForLabel == "" ? L : (L + "\n" + luxTitleForLabel), color.new(color.white, 100), luxSwingLColor, label.style_label_up, size.small, true)
 
 instLbLeft = 1
 instLbRight = 1
@@ -1260,6 +1266,7 @@ if instEnabled and canShowNonQm
         instSwingHighLblTxt := label.new(bar_index[instLbRight], high[instLbRight], text="Swing\nH", yloc=yloc.abovebar, color=instSwingClr, textcolor=instSwingClr, style=label.style_none, size=size.small)
         array.push(instSwingHighArr, instSwingHighLbl)
         array.push(instSwingHighTextArr, instSwingHighLblTxt)
+        f_alert(true, syminfo.ticker + " Sweep Swing H")
 
     if instShowSwing and not na(instPL) and instBullishSFP[instLbRight] == false
         instStopPrintingLow := false
@@ -1271,6 +1278,7 @@ if instEnabled and canShowNonQm
         instSwingLowLblTxt := label.new(bar_index[instLbRight], low[instLbRight], text="Swing\nL", yloc=yloc.belowbar, color=instSwingClr, textcolor=instSwingClr, style=label.style_none, size=size.small)
         array.push(instSwingLowArr, instSwingLowLbl)
         array.push(instSwingLowTextArr, instSwingLowLblTxt)
+        f_alert(true, syminfo.ticker + " Sweep Swing L")
 
 if canShowNonQm and instEnabled and instBullCond and not na(low[3])
     f_addSigLabel(bar_index - 3, low[3], "Sweep", color.new(instBullColor, 0), color.white, label.style_label_up, size.tiny)
@@ -1347,6 +1355,7 @@ if crtNewSoup
         if not na(crtSoupLbl)
             label.delete(crtSoupLbl)
         crtSoupLbl := label.new(bar_index, close, crtDir == 1 ? "CRT\nBULL" : "CRT\nBEAR", xloc=xloc.bar_index, style=crtDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.black, 0), textcolor=color.white, size=size.tiny)
+        f_alert(true, syminfo.ticker + " " + (crtDir == 1 ? "CRT BULL" : "CRT BEAR"))
     crtLastSoupTime := crtSoupT
 
 if (not crtEnabled) or onlyShSlMode or (not crtShowLabels) or (crtUseKillzone and not crtSoupKillOk)
@@ -1404,7 +1413,7 @@ var int rsiMMidLowBar = na
 rsiWSig = false
 rsiMSig = false
 
-if rsiPatternEnabled and not onlyShSlMode and (not onlyQmMode or onlyQmShowRsiMW)
+if rsiPatternEnabled and not onlyShSlMode
     rsiPatternDailyBuf = rsiPatternDailyExtremeBufferTicks * syminfo.mintick
     if not na(rsiPivotPh)
         phVal = rsiPivotPh
@@ -1770,12 +1779,12 @@ smtBullSig2 = false
 if onlyShSlMode
     while array.size(smtDivLines) > 0
         line.delete(array.shift(smtDivLines))
-if SmtEnabled and showUntilNyClose and canShowNonMain
+if SmtEnabled and not onlyShSlMode
     if not na(mainPh1) and not na(smtPh1_1) and not na(lastMainPh1) and not na(lastSmtPh1_1)
         smtBearSig1 := (not SmtShowDailyExtreme or smtNearDailyHigh) and (mainPh1 > lastMainPh1 and smtPh1_1 <= lastSmtPh1_1)
         pivotBar = bar_index - SmtPivot
         if smtBearSig1 and SmtShowLabels and (na(lastSmtBearPivotBar1) or lastSmtBearPivotBar1 != pivotBar)
-            label.new(pivotBar, mainPh1, "SMT1", style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+            f_addSigLabelEx(pivotBar, mainPh1, "SMT1", color.new(color.fuchsia, 0), color.white, label.style_label_down, size.tiny, true)
             lastSmtBearPivotBar1 := pivotBar
         if smtBearSig1 and not na(lastMainPh1Bar)
             f_addSmtLine(lastMainPh1Bar, lastMainPh1, pivotBar, mainPh1, color.new(color.fuchsia, 0))
@@ -1783,7 +1792,7 @@ if SmtEnabled and showUntilNyClose and canShowNonMain
         smtBullSig1 := (not SmtShowDailyExtreme or smtNearDailyLow) and (mainPl1 < lastMainPl1 and smtPl1_1 >= lastSmtPl1_1)
         pivotBar = bar_index - SmtPivot
         if smtBullSig1 and SmtShowLabels and (na(lastSmtBullPivotBar1) or lastSmtBullPivotBar1 != pivotBar)
-            label.new(pivotBar, mainPl1, "SMT1", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+            f_addSigLabelEx(pivotBar, mainPl1, "SMT1", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny, true)
             lastSmtBullPivotBar1 := pivotBar
         if smtBullSig1 and not na(lastMainPl1Bar)
             f_addSmtLine(lastMainPl1Bar, lastMainPl1, pivotBar, mainPl1, color.new(color.aqua, 0))
@@ -1793,7 +1802,7 @@ if SmtEnabled and showUntilNyClose and canShowNonMain
             smtBearSig2 := (not SmtShowDailyExtreme or smtNearDailyHigh) and (mainPh1 > lastMainPh1 and smtPh1_2 <= lastSmtPh1_2)
             pivotBar = bar_index - SmtPivot
             if smtBearSig2 and SmtShowLabels and (na(lastSmtBearPivotBar2) or lastSmtBearPivotBar2 != pivotBar)
-                label.new(pivotBar, mainPh1, "SMT2", style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+                f_addSigLabelEx(pivotBar, mainPh1, "SMT2", color.new(color.fuchsia, 0), color.white, label.style_label_down, size.tiny, true)
                 lastSmtBearPivotBar2 := pivotBar
             if smtBearSig2 and not na(lastMainPh1Bar)
                 f_addSmtLine(lastMainPh1Bar, lastMainPh1, pivotBar, mainPh1, color.new(color.fuchsia, 0))
@@ -1801,7 +1810,7 @@ if SmtEnabled and showUntilNyClose and canShowNonMain
             smtBullSig2 := (not SmtShowDailyExtreme or smtNearDailyLow) and (mainPl1 < lastMainPl1 and smtPl1_2 >= lastSmtPl1_2)
             pivotBar = bar_index - SmtPivot
             if smtBullSig2 and SmtShowLabels and (na(lastSmtBullPivotBar2) or lastSmtBullPivotBar2 != pivotBar)
-                label.new(pivotBar, mainPl1, "SMT2", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+                f_addSigLabelEx(pivotBar, mainPl1, "SMT2", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny, true)
                 lastSmtBullPivotBar2 := pivotBar
             if smtBullSig2 and not na(lastMainPl1Bar)
                 f_addSmtLine(lastMainPl1Bar, lastMainPl1, pivotBar, mainPl1, color.new(color.aqua, 0))
@@ -1838,82 +1847,25 @@ var int lastSlLblBar = na
 var int lastDivBullLblBar = na
 var int lastDivBearLblBar = na
 
-if (not onlyQmMode or onlyQmShowShSl) and swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
+if swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
     y = high[swingCenter] + (labelAutoStack ? 3 * swingStep : 0)
-    lb = label.new(swingPivotBar, y, "SH", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
-    array.push(mcSigLabels, lb)
-    if array.size(mcSigLabels) > 250
-        label.delete(array.shift(mcSigLabels))
-    f_alert(true, syminfo.ticker + " SH")
+    f_addSigLabelEx(swingPivotBar, y, "SH", color.new(color.red, 0), color.white, label.style_label_down, size.small, true)
     lastShLblBar := swingPivotBar
 
-if (not onlyQmMode or onlyQmShowShSl) and swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
+if swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
     y = low[swingCenter] - (labelAutoStack ? 3 * swingStep : 0)
-    lb = label.new(swingPivotBar, y, "SL", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
-    array.push(mcSigLabels, lb)
-    if array.size(mcSigLabels) > 250
-        label.delete(array.shift(mcSigLabels))
-    f_alert(true, syminfo.ticker + " SL")
+    f_addSigLabelEx(swingPivotBar, y, "SL", color.new(color.lime, 0), color.black, label.style_label_up, size.small, true)
     lastSlLblBar := swingPivotBar
 
 if swingBullDivPlot and (na(lastDivBullLblBar) or lastDivBullLblBar != swingPivotBar)
     y = low[swingCenter] - (labelAutoStack ? 4 * swingStep : 0)
-    lb = label.new(swingPivotBar, y, "DIV", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
-    array.push(mcSigLabels, lb)
-    if array.size(mcSigLabels) > 250
-        label.delete(array.shift(mcSigLabels))
-    f_alert(true, syminfo.ticker + " DIV BULL")
+    f_addSigLabelEx(swingPivotBar, y, "DIV", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny, true)
     lastDivBullLblBar := swingPivotBar
 
 if swingBearDivPlot and (na(lastDivBearLblBar) or lastDivBearLblBar != swingPivotBar)
     y = high[swingCenter] + (labelAutoStack ? 4 * swingStep : 0)
-    lb = label.new(swingPivotBar, y, "DIV", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
-    array.push(mcSigLabels, lb)
-    if array.size(mcSigLabels) > 250
-        label.delete(array.shift(mcSigLabels))
-    f_alert(true, syminfo.ticker + " DIV BEAR")
+    f_addSigLabelEx(swingPivotBar, y, "DIV", color.new(color.fuchsia, 0), color.white, label.style_label_down, size.tiny, true)
     lastDivBearLblBar := swingPivotBar
-
-var table dashTbl = na
-var string dashPosPrev = na
-if barstate.isfirst or dashPosPrev != dashPos
-    if not na(dashTbl)
-        table.delete(dashTbl)
-    dashTbl := table.new(f_dashPos(dashPos), 2, 5, border_width=1)
-    dashPosPrev := dashPos
-
-if barstate.islast and not na(dashTbl)
-    sz = f_dashSize(dashTextSize)
-    if dashEnabled and canShowNonQm
-        hdrBg = color.new(color.black, 0)
-        hdrTx = color.white
-        table.cell(dashTbl, 0, 0, "TF", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
-        table.cell(dashTbl, 1, 0, "LAST", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
-
-        m1Last = f_lastType(dashM1ShT, dashM1SlT)
-        m5Last = f_lastType(dashM5ShT, dashM5SlT)
-        m15Last = f_lastType(dashM15ShT, dashM15SlT)
-        h1Last = f_lastType(dashH1ShT, dashH1SlT)
-        bg1 = color.new(color.black, 80)
-        table.cell(dashTbl, 0, 1, "M1", bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 1, 1, m1Last, bgcolor=bg1, text_color=m1Last == "SH" ? color.red : m1Last == "SL" ? color.lime : color.white, text_size=sz)
-        table.cell(dashTbl, 0, 2, "M5", bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 1, 2, m5Last, bgcolor=bg1, text_color=m5Last == "SH" ? color.red : m5Last == "SL" ? color.lime : color.white, text_size=sz)
-        table.cell(dashTbl, 0, 3, "M15", bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 1, 3, m15Last, bgcolor=bg1, text_color=m15Last == "SH" ? color.red : m15Last == "SL" ? color.lime : color.white, text_size=sz)
-        table.cell(dashTbl, 0, 4, "H1", bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 1, 4, h1Last, bgcolor=bg1, text_color=h1Last == "SH" ? color.red : h1Last == "SL" ? color.lime : color.white, text_size=sz)
-    else
-        table.cell(dashTbl, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 1, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 0, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 1, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 0, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 1, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 0, 3, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 1, 3, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 0, 4, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 1, 4, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
 
 f_bbLast(_len) =>
     h = ta.highest(_len)
@@ -1972,16 +1924,6 @@ if barstate.islast and not na(bbDashTbl)
         table.cell(bbDashTbl, 0, 4, "H4", bgcolor=bg, text_color=color.white, text_size=bbSz)
         table.cell(bbDashTbl, 1, 4, f_bbTxt(bbH4Tp, bbH4Pr, bbH4Tm), bgcolor=bg, text_color=bbH4Tp == 1 ? color.red : bbH4Tp == -1 ? color.lime : color.white, text_size=bbSz)
 
-smtBearAny = smtBearSig1 or smtBearSig2
-smtBullAny = smtBullSig1 or smtBullSig2
-
-f_alert(canShowNonMain and SmtEnabled and SmtShowLabels and smtBearSig1, syminfo.ticker + " SMT1 Bearish vs SMT Symbol 1")
-f_alert(canShowNonMain and SmtEnabled and SmtShowLabels and smtBullSig1, syminfo.ticker + " SMT1 Bullish vs SMT Symbol 1")
-f_alert(canShowNonMain and SmtEnabled and SmtShowLabels and SmtUseSymbol2 and smtBearSig2, syminfo.ticker + " SMT2 Bearish vs SMT Symbol 2")
-f_alert(canShowNonMain and SmtEnabled and SmtShowLabels and SmtUseSymbol2 and smtBullSig2, syminfo.ticker + " SMT2 Bullish vs SMT Symbol 2")
-f_alert(canShowNonMain and SmtEnabled and SmtShowLabels and smtBearAny, syminfo.ticker + " SMT Bearish")
-f_alert(canShowNonMain and SmtEnabled and SmtShowLabels and smtBullAny, syminfo.ticker + " SMT Bullish")
-
 type sfp_piv
     float swing_prc
     int swing_bix
@@ -2036,7 +1978,7 @@ sfpPl = ta.pivotlow(sfpLen, 1)
 [sfpLtfClose, sfpLtfVolume] = request.security_lower_tf(syminfo.tickerid, sfpRes, [close, volume])
 sfpLtfSize = sfpLtfClose.size()
 
-if sfpEnabled and not onlyQmMode
+if sfpEnabled and canShowNonQm
     sfpDailyBuf = sfpDailyExtremeBufferTicks * syminfo.mintick
     sfpMinWick = sfpMinWickTicks * syminfo.mintick
     sfpKillOk = not sfpUseKillzone or isKill
@@ -2100,7 +2042,7 @@ if sfpEnabled and not onlyQmMode
                     if sfpShowUnconfirmed and sfpPivH.wicky_label.get_x() == bar_index
                         sfpPivH.wicky_label.set_text("SFP\n▼")
                     else
-                        label.new(bar_index, high, style=label.style_label_down, text="SFP\n▼", textcolor=sfpColBr, color=sfpINV, size=size.normal)
+                        f_addSigLabelEx(bar_index, high, "SFP\n▼", sfpINV, sfpColBr, label.style_label_down, size.normal, false)
                 f_alert(true, syminfo.ticker + " SFP BEAR")
 
         if (bar_index - sfpPivH.swing_bix > 500) or close > sfpPivH.swing_prc
@@ -2166,7 +2108,7 @@ if sfpEnabled and not onlyQmMode
                     if sfpShowUnconfirmed and sfpPivL.wicky_label.get_x() == bar_index
                         sfpPivL.wicky_label.set_text("▲\nSFP")
                     else
-                        label.new(bar_index, low, style=label.style_label_up, text="▲\nSFP", textcolor=sfpColBl, color=sfpINV, size=size.normal)
+                        f_addSigLabelEx(bar_index, low, "▲\nSFP", sfpINV, sfpColBl, label.style_label_up, size.normal, false)
                 f_alert(true, syminfo.ticker + " SFP BULL")
 
         if (bar_index - sfpPivL.swing_bix > 500) or close < sfpPivL.swing_prc
@@ -2182,7 +2124,7 @@ if barstate.islast and sfpEnabled and sfpValidate and sfpShowDash and not na(sfp
 else if barstate.islast and not na(sfpTb) and (not sfpEnabled or not sfpShowDash)
     table.cell(sfpTb, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sfpTableSize)
 
-stAiActive = not onlyShSlMode and not onlyBelugaMode and ((stAiEnabled and not onlyQmMode) or (qmLiveEnabled and qmLiveShowSupertrend))
+stAiActive = not onlyShSlMode and not onlyBelugaMode and (stAiEnabled or (qmLiveEnabled and qmLiveShowSupertrend))
 if stAiEnabled and stAiMinMult > stAiMaxMult
     runtime.error("Minimum factor is greater than maximum factor in the range")
 
@@ -2641,6 +2583,7 @@ if qmEnabled and (not onlyShSlMode or onlyQmMode) and array.size(qmTypes) > 5
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh2 + (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_alert(true, syminfo.ticker + " QM SELL")
     if not na(qmBearStart) and qmBearStart != vh2
         qmCheckBe := 0
 
@@ -2662,5 +2605,6 @@ if qmEnabled and (not onlyShSlMode or onlyQmMode) and array.size(qmTypes) > 5
         f_qmPushLabel(label.new(il1 + buMove + 1, vl2 - (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(il1 + buMove + 1, vl3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(il1 + buMove + 1, vl1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
+        f_alert(true, syminfo.ticker + " QM BUY")
     if not na(qmBullStart) and qmBullStart != vl2
         qmCheckBu := 0

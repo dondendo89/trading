@@ -1,0 +1,147 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © BFAS76
+
+//@version=5
+indicator("SwingSignal RSI Overlay Advanced", overlay=true, shorttitle="SwingSignal RSI", max_bars_back=1000)
+
+//---------------------------
+// Inputs - RSI
+//---------------------------
+rsiSource     = input.source(close, "RSI Source",       group="RSI Settings")
+rsiLength     = input.int(7,        "RSI Length",       minval=1, group="RSI Settings")
+rsiOverbought = input.int(70,       "RSI Overbought",   minval=51, maxval=100, group="RSI Settings")
+rsiOvesold    = input.int(30,       "RSI Oversold",     minval=1,  maxval=49,  group="RSI Settings")
+
+//---------------------------
+// Inputs - Swing Colors
+//---------------------------
+colorHH = input.color(color.rgb(180, 21, 21),  "HH (Higher High)", group="Swing Colors", tooltip="Topo mais alto que o anterior - continuação bullish")
+colorLH = input.color(color.rgb(242, 245, 92), "LH (Lower High)",  group="Swing Colors", tooltip="Topo mais baixo que o anterior - possível reversão bearish")
+colorLL = input.color(color.rgb(8, 117, 12),   "LL (Lower Low)",   group="Swing Colors", tooltip="Fundo mais baixo que o anterior - continuação bearish")
+colorHL = input.color(color.rgb(10, 7, 179),   "HL (Higher Low)",  group="Swing Colors", tooltip="Fundo mais alto que o anterior - possível reversão bullish")
+
+//---------------------------
+// Inputs - Lines
+//---------------------------
+lineColorUp    = input.color(color.new(#00d9ff, 0), "Line Color (Up Swing)",   group="Line Settings")
+lineColorDown  = input.color(color.new(#00d9ff, 0), "Line Color (Down Swing)", group="Line Settings")
+lineWidth      = input.int(1, "Line Width", minval=1, maxval=5, group="Line Settings")
+lineStyleInput = input.string("Solid", "Line Style", options=["Solid", "Dashed", "Dotted"], group="Line Settings")
+
+lineStyle = lineStyleInput == "Dashed" ? line.style_dashed : lineStyleInput == "Dotted" ? line.style_dotted : line.style_solid
+
+//---------------------------
+// Inputs - Labels
+//---------------------------
+starSize = input.string("Large", "Star Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Label Settings")
+sizeRef  = starSize == "Tiny" ? size.tiny : starSize == "Small" ? size.small : starSize == "Normal" ? size.normal : starSize == "Huge" ? size.huge : size.large
+
+//---------------------------
+// Inputs - Alerts
+//---------------------------
+alertsEnabled = input.bool(true, "Alert segnali", group="Alert Settings")
+
+//---------------------------
+// RSI e estados
+//---------------------------
+rsiValue     = ta.rsi(rsiSource, rsiLength)
+isOverbought = rsiValue >= rsiOverbought
+isOversold   = rsiValue <= rsiOvesold
+
+var int   laststate = 0
+var float hh = low
+var float ll = high
+var label labelll = na
+var label labelhh = na
+var line  line_up   = na
+var line  line_down = na
+var float last_actual_label_hh_price = 0.0
+var float last_actual_label_ll_price = 0.0
+
+topSignal    = laststate == 2 and isOverbought
+bottomSignal = laststate == 1 and isOversold
+
+//---------------------------
+// Helpers
+//---------------------------
+obLabelText() => last_actual_label_hh_price < high ? "HH" : "LH"
+osLabelText() => last_actual_label_ll_price > low  ? "LL" : "HL"
+
+obColor() => obLabelText() == "HH" ? colorHH : colorLH
+osColor() => osLabelText() == "LL" ? colorLL : colorHL
+
+//---------------------------
+// Transição: OS -> OB
+//---------------------------
+if laststate == 2 and isOverbought
+    hh := high
+    labelhh := label.new(bar_index, high, yloc=yloc.abovebar, style=label.style_none, text="★", textcolor=obColor(), size=sizeRef, color=color.new(color.white, 100))
+    int   os_x = na(labelll) ? bar_index : label.get_x(labelll)
+    float os_y = na(labelll) ? low       : label.get_y(labelll)
+    line_up := line.new(x1=bar_index, y1=high, x2=os_x, y2=os_y, width=lineWidth, color=lineColorUp, style=lineStyle)
+    if not na(labelll)
+        last_actual_label_ll_price := os_y
+
+//---------------------------
+// Transição: OB -> OS
+//---------------------------
+if laststate == 1 and isOversold
+    ll := low
+    labelll := label.new(bar_index, low, yloc=yloc.belowbar, style=label.style_none, text="★", textcolor=osColor(), size=sizeRef, color=color.new(color.white, 100))
+    int   ob_x = na(labelhh) ? bar_index : label.get_x(labelhh)
+    float ob_y = na(labelhh) ? high      : label.get_y(labelhh)
+    line_down := line.new(x1=bar_index, y1=high, x2=ob_x, y2=ob_y, width=lineWidth, color=lineColorDown, style=lineStyle)
+    if not na(labelhh)
+        last_actual_label_hh_price := ob_y
+
+//---------------------------
+// Atualizações contínuas
+//---------------------------
+if isOverbought
+    if high >= hh
+        hh := high
+        if not na(labelhh)
+            label.set_x(labelhh, bar_index)
+            label.set_y(labelhh, high)
+            label.set_textcolor(labelhh, obColor())
+        if not na(line_up)
+            line.set_x1(line_up, bar_index)
+            line.set_y1(line_up, high)
+    laststate := 1
+
+if isOversold
+    if low <= ll
+        ll := low
+        if not na(labelll)
+            label.set_x(labelll, bar_index)
+            label.set_y(labelll, low)
+            label.set_textcolor(labelll, osColor())
+        if not na(line_down)
+            line.set_x1(line_down, bar_index)
+            line.set_y1(line_down, low)
+    laststate := 2
+
+if laststate == 1
+    if hh <= high
+        hh := high
+        if not na(labelhh)
+            label.set_x(labelhh, bar_index)
+            label.set_y(labelhh, high)
+            label.set_textcolor(labelhh, obColor())
+        if not na(line_up)
+            line.set_x1(line_up, bar_index)
+            line.set_y1(line_up, high)
+
+if laststate == 2
+    if ll >= low
+        ll := low
+        if not na(labelll)
+            label.set_x(labelll, bar_index)
+            label.set_y(labelll, low)
+            label.set_textcolor(labelll, osColor())
+        if not na(line_down)
+            line.set_x1(line_down, bar_index)
+            line.set_y1(line_down, low)
+
+alertcondition(alertsEnabled and topSignal, "SwingSignal TOP", "{{ticker}} SwingSignal TOP")
+alertcondition(alertsEnabled and bottomSignal, "SwingSignal BOTTOM", "{{ticker}} SwingSignal BOTTOM")

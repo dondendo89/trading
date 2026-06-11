@@ -84,6 +84,7 @@ alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Ale
 
 labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
 labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="Layout")
+labelShiftRightBars = input.int(0, "Sposta segnali a destra (barre)", minval=0, group="Layout")
 
 vpEnabled = input.bool(false, "Volume Profile (Asia→NY)", group="Volume Profile")
 vpBinTicks = input.int(10, "Bin size (ticks)", minval=1, group="Volume Profile")
@@ -172,6 +173,7 @@ onlyQmShowDailyHL = input.bool(false, "Mostra anche Daily High/Low", group="QM")
 onlyQmShowSessions = input.bool(false, "Mostra anche Sessioni", group="QM")
 onlyQmShowRsiCross = input.bool(false, "Mostra anche incrocio RSI", group="QM")
 onlyQmShowRsiMW = input.bool(false, "Mostra anche RSI M/W", group="QM")
+onlyQmShowHs = input.bool(false, "Mostra anche Hammer/Shooting", group="QM")
 onlyBelugaMode = input.bool(false, "Mostra solo Swing BigBeluga", group="QM")
 qmUseTfPivots = input.bool(true, "Usa pivot per TF (M1/M5/M15/H1/H4)", group="QM")
 qmPp = input.int(5, "Pivot Period (fallback)", minval=1, group="QM")
@@ -310,11 +312,6 @@ canShowNonShSl = not onlyShSlMode
 canShowNonMain = canShowNonShSl and not onlyMainMode
 canShowNonQm = canShowNonShSl and not onlyQmMode
 
-leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
-rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
-leftH4 = swingPatternUseTfBars ? swingPatternLeftBars_H4 : swingPatternLeftBars
-rightH4 = swingPatternUseTfBars ? swingPatternRightBars_H4 : swingPatternRightBars
-
 // --- CONFIGURAZIONE ORARI (Roma) ---
 tz = "Europe/Rome"
 
@@ -330,26 +327,32 @@ f_dashPos(_s) =>
 f_dashSize(_s) =>
     _s == "Tiny" ? size.tiny : _s == "Normal" ? size.normal : size.small
 
-f_pivotStats(_left, _right) =>
+f_pivotTimes(_left, _right) =>
     ph = ta.pivothigh(high, _left, _right)
     pl = ta.pivotlow(low, _left, _right)
     shTime = ta.valuewhen(not na(ph), time[_right], 0)
-    shPrice = ta.valuewhen(not na(ph), ph, 0)
     slTime = ta.valuewhen(not na(pl), time[_right], 0)
-    slPrice = ta.valuewhen(not na(pl), pl, 0)
-    [shTime, shPrice, slTime, slPrice]
+    [shTime, slTime]
 
-[dashH1ShT, dashH1ShP, dashH1SlT, dashH1SlP] = request.security(syminfo.tickerid, "60", f_pivotStats(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
-[dashH4ShT, dashH4ShP, dashH4SlT, dashH4SlP] = request.security(syminfo.tickerid, "240", f_pivotStats(leftH4, rightH4), barmerge.gaps_off, barmerge.lookahead_off)
+leftM1 = swingPatternUseTfBars ? swingPatternLeftBars_M1 : swingPatternLeftBars
+rightM1 = swingPatternUseTfBars ? swingPatternRightBars_M1 : swingPatternRightBars
+leftM5 = swingPatternLeftBars
+rightM5 = swingPatternRightBars
+leftM15 = swingPatternUseTfBars ? swingPatternLeftBars_M15 : swingPatternLeftBars
+rightM15 = swingPatternUseTfBars ? swingPatternRightBars_M15 : swingPatternRightBars
+leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
+rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
+
+[dashM1ShT, dashM1SlT] = request.security(syminfo.tickerid, "1", f_pivotTimes(leftM1, rightM1), barmerge.gaps_off, barmerge.lookahead_off)
+[dashM5ShT, dashM5SlT] = request.security(syminfo.tickerid, "5", f_pivotTimes(leftM5, rightM5), barmerge.gaps_off, barmerge.lookahead_off)
+[dashM15ShT, dashM15SlT] = request.security(syminfo.tickerid, "15", f_pivotTimes(leftM15, rightM15), barmerge.gaps_off, barmerge.lookahead_off)
+[dashH1ShT, dashH1SlT] = request.security(syminfo.tickerid, "60", f_pivotTimes(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
 
 f_lastType(_shTime, _slTime) =>
     na(_shTime) and na(_slTime) ? "—" : na(_slTime) ? "SH" : na(_shTime) ? "SL" : _shTime > _slTime ? "SH" : _slTime > _shTime ? "SL" : "SH/SL"
 
-f_cellTxt(_t, _p) =>
-    na(_t) ? "—" : str.format("{0,date,dd/MM HH:mm}", _t) + "\n" + str.tostring(_p, format.mintick)
-
 f_alert(_cond, _msg) =>
-    if alertsEnabled and _cond
+    if alertsEnabled and barstate.isconfirmed and _cond
         alert(_msg, alert.freq_once_per_bar_close)
 
 f_vpVa(_arr, _poc, _pct) =>
@@ -799,14 +802,15 @@ f_sigSlot(_txt) =>
      str.contains(_txt, "KISS") ? 1 :
      _txt == "BUY" or _txt == "SELL" ? 1 : 0
 f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
-    allowInOnlyQm = (onlyQmShowRsiCross and (_txt == "RSI↑" or _txt == "RSI↓")) or (onlyQmShowRsiMW and (_txt == "RSI\nM" or _txt == "RSI\nW"))
-    if onlyShSlMode or (rsiSessionsOnlyMode and not (_txt == "RSI↑" or _txt == "RSI↓")) or (onlyQmMode and not allowInOnlyQm)
+    allowInOnlyQm = (onlyQmShowRsiCross and (_txt == "RSI↑" or _txt == "RSI↓")) or (onlyQmShowRsiMW and (_txt == "RSI\nM" or _txt == "RSI\nW")) or (onlyQmShowHs and (_txt == "Hammer" or _txt == "Shooting"))
+    if onlyShSlMode or (rsiSessionsOnlyMode and not (_txt == "RSI↑" or _txt == "RSI↓" or _txt == "Hammer" or _txt == "Shooting")) or (onlyQmMode and not allowInOnlyQm)
         na
     else
         step = labelStackTicks * syminfo.mintick
         slot = labelAutoStack and (_style == label.style_label_up or _style == label.style_label_down) ? f_sigSlot(_txt) : 0
         yAdj = _style == label.style_label_up ? (_y - slot * step) : _style == label.style_label_down ? (_y + slot * step) : _y
-        lb = label.new(_x, yAdj, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
+        f_alert(true, syminfo.ticker + " " + _txt)
+        lb = label.new(_x + labelShiftRightBars, yAdj, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
         array.push(mcSigLabels, lb)
         if array.size(mcSigLabels) > 250
             label.delete(array.shift(mcSigLabels))
@@ -966,13 +970,11 @@ overLowBuf = swingOverLowL13BufferTicks * syminfo.mintick
 overLowL13 = showUntilNyClose and orangeIsToday and not na(orangeL) and ta.crossunder(low, orangeL - overLowBuf)
 if swingShowOverLowL13 and overLowL13
     f_addSigLabel(bar_index, low, "OVER\nLOW", color.new(color.red, 0), color.white, label.style_label_up, size.tiny)
-f_alert(canShowNonMain and not swingPatternOnlyAlerts and swingShowOverLowL13 and overLowL13, syminfo.ticker + " Over Low (sotto L13)")
 
 overHighBuf = swingOverHighH13BufferTicks * syminfo.mintick
 overHighH13 = showUntilNyClose and orangeIsToday and not na(orangeH) and ta.crossover(high, orangeH + overHighBuf)
 if swingShowOverHighH13 and overHighH13
     f_addSigLabel(bar_index, high, "OVER\nHIGH", color.new(color.lime, 0), color.black, label.style_label_down, size.tiny)
-f_alert(canShowNonMain and not swingPatternOnlyAlerts and swingShowOverHighH13 and overHighH13, syminfo.ticker + " Over High (sopra H13)")
 
 overDailyBuf = swingOverDailyBufferTicks * syminfo.mintick
 overDailyLow = showUntilNyClose and not na(dLow) and ta.crossunder(low, dLow - overDailyBuf)
@@ -981,8 +983,6 @@ if swingShowOverDaily and overDailyLow
     f_addSigLabel(bar_index, low, "OVER\nD LOW", color.new(color.red, 0), color.white, label.style_label_up, size.tiny)
 if swingShowOverDaily and overDailyHigh
     f_addSigLabel(bar_index, high, "OVER\nD HIGH", color.new(color.lime, 0), color.black, label.style_label_down, size.tiny)
-f_alert(canShowNonMain and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyLow, syminfo.ticker + " Over Daily Low")
-f_alert(canShowNonMain and not swingPatternOnlyAlerts and swingShowOverDaily and overDailyHigh, syminfo.ticker + " Over Daily High")
 
 if validB
     f_addSigLabel(bar_index, low, "BUY", color.green, color.white, label.style_label_up, size.small)
@@ -1003,9 +1003,10 @@ hsConfirmedShoot = hsConfirm ? hsIsShoot[1] and hsIsRed : hsIsShoot
 hsOffset = hsConfirm ? -1 : 0
 hsLblYHammer = hsConfirm ? low[1] : low
 hsLblYShoot = hsConfirm ? high[1] : high
-if canShowNonQm and hsEnabled and hsShowLabels and hsConfirmedHammer and not na(hsLblYHammer)
+hsCanShow = canShowNonQm or (onlyQmMode and onlyQmShowHs)
+if hsCanShow and hsEnabled and hsShowLabels and hsConfirmedHammer and barstate.isconfirmed and not na(hsLblYHammer)
     f_addSigLabel(bar_index + hsOffset, hsLblYHammer, "Hammer", color.new(color.white, 100), color.green, label.style_label_up, size.tiny)
-if canShowNonQm and hsEnabled and hsShowLabels and hsConfirmedShoot and not na(hsLblYShoot)
+if hsCanShow and hsEnabled and hsShowLabels and hsConfirmedShoot and barstate.isconfirmed and not na(hsLblYShoot)
     f_addSigLabel(bar_index + hsOffset, hsLblYShoot, "Shooting", color.new(color.white, 100), color.red, label.style_label_down, size.tiny)
 
 var line hsFib0 = na
@@ -1025,7 +1026,7 @@ hsSellTouch = false
 deleteFibNow = false
 createFibNow = false
 
-if hsEnabled and hsFibRetraceEnabled and canShowNonQm
+if hsEnabled and hsFibRetraceEnabled and hsCanShow
     newHammer = hsConfirmedHammer
     newShoot = hsConfirmedShoot
     if newHammer or newShoot
@@ -1145,11 +1146,13 @@ if luxEnabled and canShowNonQm and (lux_has_ph or lux_has_pl)
         lux_phy := lux_ph
         if luxShowLabels
             label.new(bar_index[luxLen], lux_ph, luxTitleForLabel == "" ? H : (H + "\n" + luxTitleForLabel), color=color.new(color.white, 100), style=label.style_label_down, textcolor=luxSwingHColor, size=size.small)
+            f_alert(luxNotifyEnabled and luxNotifySwings, syminfo.ticker + " " + (luxTitleForLabel == "" ? H : (H + " " + luxTitleForLabel)))
     else if lux_has_pl
         L = na(lux_ply) ? "HL" : (lux_pl < lux_ply ? "LL" : "HL")
         lux_ply := lux_pl
         if luxShowLabels
             label.new(bar_index[luxLen], lux_pl, luxTitleForLabel == "" ? L : (L + "\n" + luxTitleForLabel), color=color.new(color.white, 100), style=label.style_label_up, textcolor=luxSwingLColor, size=size.small)
+            f_alert(luxNotifyEnabled and luxNotifySwings, syminfo.ticker + " " + (luxTitleForLabel == "" ? L : (L + " " + luxTitleForLabel)))
 
 instLbLeft = 1
 instLbRight = 1
@@ -1841,6 +1844,7 @@ if (not onlyQmMode or onlyQmShowShSl) and swingShowHighOut and (na(lastShLblBar)
     array.push(mcSigLabels, lb)
     if array.size(mcSigLabels) > 250
         label.delete(array.shift(mcSigLabels))
+    f_alert(true, syminfo.ticker + " SH")
     lastShLblBar := swingPivotBar
 
 if (not onlyQmMode or onlyQmShowShSl) and swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
@@ -1849,6 +1853,7 @@ if (not onlyQmMode or onlyQmShowShSl) and swingShowLowOut and (na(lastSlLblBar) 
     array.push(mcSigLabels, lb)
     if array.size(mcSigLabels) > 250
         label.delete(array.shift(mcSigLabels))
+    f_alert(true, syminfo.ticker + " SL")
     lastSlLblBar := swingPivotBar
 
 if swingBullDivPlot and (na(lastDivBullLblBar) or lastDivBullLblBar != swingPivotBar)
@@ -1857,6 +1862,7 @@ if swingBullDivPlot and (na(lastDivBullLblBar) or lastDivBullLblBar != swingPivo
     array.push(mcSigLabels, lb)
     if array.size(mcSigLabels) > 250
         label.delete(array.shift(mcSigLabels))
+    f_alert(true, syminfo.ticker + " DIV BULL")
     lastDivBullLblBar := swingPivotBar
 
 if swingBearDivPlot and (na(lastDivBearLblBar) or lastDivBearLblBar != swingPivotBar)
@@ -1865,6 +1871,7 @@ if swingBearDivPlot and (na(lastDivBearLblBar) or lastDivBearLblBar != swingPivo
     array.push(mcSigLabels, lb)
     if array.size(mcSigLabels) > 250
         label.delete(array.shift(mcSigLabels))
+    f_alert(true, syminfo.ticker + " DIV BEAR")
     lastDivBearLblBar := swingPivotBar
 
 var table dashTbl = na
@@ -1872,7 +1879,7 @@ var string dashPosPrev = na
 if barstate.isfirst or dashPosPrev != dashPos
     if not na(dashTbl)
         table.delete(dashTbl)
-    dashTbl := table.new(f_dashPos(dashPos), 4, 3, border_width=1)
+    dashTbl := table.new(f_dashPos(dashPos), 2, 5, border_width=1)
     dashPosPrev := dashPos
 
 if barstate.islast and not na(dashTbl)
@@ -1882,34 +1889,31 @@ if barstate.islast and not na(dashTbl)
         hdrTx = color.white
         table.cell(dashTbl, 0, 0, "TF", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
         table.cell(dashTbl, 1, 0, "LAST", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
-        table.cell(dashTbl, 2, 0, "SH", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
-        table.cell(dashTbl, 3, 0, "SL", bgcolor=hdrBg, text_color=hdrTx, text_size=sz)
 
+        m1Last = f_lastType(dashM1ShT, dashM1SlT)
+        m5Last = f_lastType(dashM5ShT, dashM5SlT)
+        m15Last = f_lastType(dashM15ShT, dashM15SlT)
         h1Last = f_lastType(dashH1ShT, dashH1SlT)
-        h4Last = f_lastType(dashH4ShT, dashH4SlT)
         bg1 = color.new(color.black, 80)
-        table.cell(dashTbl, 0, 1, "H1", bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 1, 1, h1Last, bgcolor=bg1, text_color=h1Last == "SH" ? color.red : h1Last == "SL" ? color.lime : color.white, text_size=sz)
-        table.cell(dashTbl, 2, 1, f_cellTxt(dashH1ShT, dashH1ShP), bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 3, 1, f_cellTxt(dashH1SlT, dashH1SlP), bgcolor=bg1, text_color=color.white, text_size=sz)
-
-        table.cell(dashTbl, 0, 2, "H4", bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 1, 2, h4Last, bgcolor=bg1, text_color=h4Last == "SH" ? color.red : h4Last == "SL" ? color.lime : color.white, text_size=sz)
-        table.cell(dashTbl, 2, 2, f_cellTxt(dashH4ShT, dashH4ShP), bgcolor=bg1, text_color=color.white, text_size=sz)
-        table.cell(dashTbl, 3, 2, f_cellTxt(dashH4SlT, dashH4SlP), bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 0, 1, "M1", bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 1, 1, m1Last, bgcolor=bg1, text_color=m1Last == "SH" ? color.red : m1Last == "SL" ? color.lime : color.white, text_size=sz)
+        table.cell(dashTbl, 0, 2, "M5", bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 1, 2, m5Last, bgcolor=bg1, text_color=m5Last == "SH" ? color.red : m5Last == "SL" ? color.lime : color.white, text_size=sz)
+        table.cell(dashTbl, 0, 3, "M15", bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 1, 3, m15Last, bgcolor=bg1, text_color=m15Last == "SH" ? color.red : m15Last == "SL" ? color.lime : color.white, text_size=sz)
+        table.cell(dashTbl, 0, 4, "H1", bgcolor=bg1, text_color=color.white, text_size=sz)
+        table.cell(dashTbl, 1, 4, h1Last, bgcolor=bg1, text_color=h1Last == "SH" ? color.red : h1Last == "SL" ? color.lime : color.white, text_size=sz)
     else
         table.cell(dashTbl, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
         table.cell(dashTbl, 1, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 2, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 3, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
         table.cell(dashTbl, 0, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
         table.cell(dashTbl, 1, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 2, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 3, 1, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
         table.cell(dashTbl, 0, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
         table.cell(dashTbl, 1, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 2, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
-        table.cell(dashTbl, 3, 2, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 0, 3, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 1, 3, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 0, 4, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
+        table.cell(dashTbl, 1, 4, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sz)
 
 f_bbLast(_len) =>
     h = ta.highest(_len)
@@ -1968,15 +1972,6 @@ if barstate.islast and not na(bbDashTbl)
         table.cell(bbDashTbl, 0, 4, "H4", bgcolor=bg, text_color=color.white, text_size=bbSz)
         table.cell(bbDashTbl, 1, 4, f_bbTxt(bbH4Tp, bbH4Pr, bbH4Tm), bgcolor=bg, text_color=bbH4Tp == 1 ? color.red : bbH4Tp == -1 ? color.lime : color.white, text_size=bbSz)
 
-f_alert(not onlyQmMode and not onlyBelugaMode and not rsiSessionsOnlyMode and swingPatternOnlyAlerts and swingShowHighOut, syminfo.ticker + " Swing High")
-f_alert(not onlyQmMode and not onlyBelugaMode and not rsiSessionsOnlyMode and swingPatternOnlyAlerts and swingShowLowOut, syminfo.ticker + " Swing Low")
-f_alert(not onlyQmMode and not onlyBelugaMode and not rsiSessionsOnlyMode and swingPatternOnlyAlerts and swingBullDivPlot, syminfo.ticker + " Bullish Divergence (RSI)")
-f_alert(not onlyQmMode and not onlyBelugaMode and not rsiSessionsOnlyMode and swingPatternOnlyAlerts and swingBearDivPlot, syminfo.ticker + " Bearish Divergence (RSI)")
-f_alert(not onlyShSlMode and rsiCrossEnabled and rsiCrossShowLabels and rsiCrossAlertsEnabled and rsiCrossUpSig and (not onlyQmMode or onlyQmShowRsiCross) and not onlyBelugaMode, syminfo.ticker + " RSI UP")
-f_alert(not onlyShSlMode and rsiCrossEnabled and rsiCrossShowLabels and rsiCrossAlertsEnabled and rsiCrossDnSig and (not onlyQmMode or onlyQmShowRsiCross) and not onlyBelugaMode, syminfo.ticker + " RSI DOWN")
-
-f_alert(canShowNonQm and rsiPatternEnabled and rsiPatternShowLabels and rsiWSig and (not onlyQmMode or onlyQmShowRsiMW) and not onlyBelugaMode, syminfo.ticker + " RSI W pattern")
-f_alert(canShowNonQm and rsiPatternEnabled and rsiPatternShowLabels and rsiMSig and (not onlyQmMode or onlyQmShowRsiMW) and not onlyBelugaMode, syminfo.ticker + " RSI M pattern")
 smtBearAny = smtBearSig1 or smtBearSig2
 smtBullAny = smtBullSig1 or smtBullSig2
 
@@ -2106,6 +2101,7 @@ if sfpEnabled and not onlyQmMode
                         sfpPivH.wicky_label.set_text("SFP\n▼")
                     else
                         label.new(bar_index, high, style=label.style_label_down, text="SFP\n▼", textcolor=sfpColBr, color=sfpINV, size=size.normal)
+                f_alert(true, syminfo.ticker + " SFP BEAR")
 
         if (bar_index - sfpPivH.swing_bix > 500) or close > sfpPivH.swing_prc
             sfpPivH.active := false
@@ -2171,6 +2167,7 @@ if sfpEnabled and not onlyQmMode
                         sfpPivL.wicky_label.set_text("▲\nSFP")
                     else
                         label.new(bar_index, low, style=label.style_label_up, text="▲\nSFP", textcolor=sfpColBl, color=sfpINV, size=size.normal)
+                f_alert(true, syminfo.ticker + " SFP BULL")
 
         if (bar_index - sfpPivL.swing_bix > 500) or close < sfpPivL.swing_prc
             sfpPivL.active := false

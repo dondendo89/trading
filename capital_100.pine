@@ -73,10 +73,25 @@ SmtPivotLen_H1 = input.int(1, "H1 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen_H4 = input.int(1, "H4 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen = input.int(1, "Pivot candele (fallback)", minval=1, group="SMT")
 SmtShowLabels = input.bool(true, "Mostra etichette", group="SMT")
+SmtMtfAlertsEnabled = input.bool(true, "Alert SMT MTF (M1/M3/M5/M15/H1)", group="SMT")
 SmtShowDailyExtreme = input.bool(false, "Mostra SMT vicino a Daily High/Low", group="SMT")
 SmtDailyExtremeBufferTicks = input.int(0, "Distanza max SMT da Daily High/Low (ticks)", minval=0, group="SMT")
 
 alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
+notifyGeneral = input.bool(true, "Notifica: Generali (BUY/SELL/OVER/KISS...)", group="Alert")
+notifyShSl = input.bool(true, "Notifica: SH/SL/DIV", group="Alert")
+notifyRsi = input.bool(true, "Notifica: RSI (↑/↓ + Pattern + MTF)", group="Alert")
+notifyHs = input.bool(true, "Notifica: Hammer/Shooting", group="Alert")
+notifySmt = input.bool(true, "Notifica: SMT (anche MTF)", group="Alert")
+notifyLux = input.bool(true, "Notifica: Lux Swing (HH/LH/HL/LL)", group="Alert")
+notifySweep = input.bool(true, "Notifica: Sweep institutional", group="Alert")
+notifyCrt = input.bool(true, "Notifica: CRT", group="Alert")
+notifyQm = input.bool(true, "Notifica: Quasimodo (QM)", group="Alert")
+notifyTfM1 = input.bool(true, "Notifica TF: M1", group="Alert")
+notifyTfM3 = input.bool(true, "Notifica TF: M3", group="Alert")
+notifyTfM5 = input.bool(true, "Notifica TF: M5", group="Alert")
+notifyTfM15 = input.bool(true, "Notifica TF: M15", group="Alert")
+notifyTfH1 = input.bool(true, "Notifica TF: H1", group="Alert")
 
 labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
 labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="Layout")
@@ -96,6 +111,7 @@ vpPocColor = input.color(color.new(color.white, 0), "Colore POC", group="Volume 
 
 rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
 rsiCrossAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓", group="RSI Cross")
+rsiCrossMtfAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓ MTF (M1/M3/M5/M15/H1)", group="RSI Cross")
 rsiSessionsOnlyMode = input.bool(false, "Mostra solo RSI↑/RSI↓ + Sessioni", group="RSI Cross")
 rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
 rsiCrossMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI Cross")
@@ -181,7 +197,6 @@ qmLiveToCurrent = input.bool(true, "QM Live - Ultimo punto → prezzo attuale", 
 qmLiveColorW = input.color(color.new(color.lime, 0), "QM Live - Colore W (Bull)", group="QM")
 qmLiveColorM = input.color(color.new(color.red, 0), "QM Live - Colore M (Bear)", group="QM")
 qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
-qmLiveShowSupertrend = input.bool(true, "QM Live - Mostra SuperTrend AI", group="QM")
 qmLiveShowBelugaSwing = input.bool(false, "QM Live - Mostra Swing BigBeluga", group="QM")
 bbAlertsEnabled = input.bool(true, "BigBeluga - Alert Swing (HIGH/LOW)", group="QM")
 bbBgAlertsEnabled = input.bool(false, "BigBeluga - Alert Highlight (sfondo)", group="QM")
@@ -204,24 +219,6 @@ bbPresetH4 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 50 : bbPrese
 onlyMainMode = onlyBelugaMode or rsiSessionsOnlyMode
 onlyAllowDailyHL = (not onlyMainMode) or (onlyQmMode and onlyQmShowDailyHL)
 onlyAllowSessions = (not onlyMainMode) or (onlyQmMode and onlyQmShowSessions) or rsiSessionsOnlyMode
-
-stAiEnabled = input.bool(false, "SuperTrend AI (Clustering) [LuxAlgo]", group="SuperTrend AI")
-stAiAtrLen = input.int(10, "ATR Length", minval=1, group="SuperTrend AI")
-stAiMinMult = input.int(1, "Factor Range", minval=0, inline="stai_factor", group="SuperTrend AI")
-stAiMaxMult = input.int(5, "", minval=0, inline="stai_factor", group="SuperTrend AI")
-stAiStep = input.float(0.5, "Step", minval=0, step=0.1, group="SuperTrend AI")
-stAiPerfAlpha = input.float(10, "Performance Memory", minval=2, group="SuperTrend AI")
-stAiFromCluster = input.string("Best", "From Cluster", options=["Best", "Average", "Worst"], group="SuperTrend AI")
-stAiMaxIterIn = input.int(1000, "Maximum Iteration Steps", minval=0, group="SuperTrend AI - Optimization")
-stAiMaxDataIn = input.int(10000, "Historical Bars Calculation", minval=0, group="SuperTrend AI - Optimization")
-stAiBearCss = input.color(color.red, "Trailing Stop", inline="stai_ts", group="SuperTrend AI - Style")
-stAiBullCss = input.color(color.teal, "", inline="stai_ts", group="SuperTrend AI - Style")
-stAiAmaBearCss = input.color(color.new(color.red, 50), "AMA", inline="stai_ama", group="SuperTrend AI - Style")
-stAiAmaBullCss = input.color(color.new(color.teal, 50), "", inline="stai_ama", group="SuperTrend AI - Style")
-stAiShowGradient = input.bool(true, "Candle Coloring", group="SuperTrend AI - Style")
-stAiShowSignals = input.bool(true, "Show Signals", group="SuperTrend AI - Style")
-stAiAlertsEnabled = input.bool(true, "Alert SuperTrend AI (flip)", group="SuperTrend AI - Style")
-stAiAlertsMinScore = input.int(2, "Min Score (>=)", minval=0, group="SuperTrend AI - Style")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
@@ -319,6 +316,42 @@ f_pivotTimes(_left, _right) =>
     shTime = ta.valuewhen(not na(ph), time[_right], 0)
     slTime = ta.valuewhen(not na(pl), time[_right], 0)
     [shTime, slTime]
+
+f_rsiCrossPivotSig(_left, _right) =>
+    rsiLen = swingRsiUseTfLen ? (timeframe.isminutes and timeframe.multiplier == 1 ? swingBullDivRsiLen_M1 : timeframe.isminutes and timeframe.multiplier == 5 ? swingBullDivRsiLen_M5 : timeframe.isminutes and timeframe.multiplier == 15 ? swingBullDivRsiLen_M15 : timeframe.isminutes and timeframe.multiplier == 60 ? swingBullDivRsiLen_H1 : timeframe.isminutes and timeframe.multiplier == 240 ? swingBullDivRsiLen_H4 : swingBullDivRsiLen) : swingBullDivRsiLen
+    rsi = ta.rsi(close, rsiLen)
+    ma = rsiCrossMaType == "EMA" ? ta.ema(rsi, rsiCrossMaLen) : ta.sma(rsi, rsiCrossMaLen)
+    center = _right
+    hasWin = bar_index >= (_left + _right)
+    upAtPivot = hasWin and rsi[center] > ma[center] and rsi[center + 1] <= ma[center + 1]
+    dnAtPivot = hasWin and rsi[center] < ma[center] and rsi[center + 1] >= ma[center + 1]
+    upSig = barstate.isconfirmed and upAtPivot
+    dnSig = barstate.isconfirmed and dnAtPivot
+    [upSig, dnSig, time_close]
+
+f_pivot2Hilo(_len) =>
+    ph = ta.pivothigh(high, _len, _len)
+    pl = ta.pivotlow(low, _len, _len)
+    phV0 = ta.valuewhen(not na(ph), high[_len], 0)
+    phV1 = ta.valuewhen(not na(ph), high[_len], 1)
+    phT0 = ta.valuewhen(not na(ph), time[_len], 0)
+    plV0 = ta.valuewhen(not na(pl), low[_len], 0)
+    plV1 = ta.valuewhen(not na(pl), low[_len], 1)
+    plT0 = ta.valuewhen(not na(pl), time[_len], 0)
+    [phV0, phV1, phT0, plV0, plV1, plT0]
+
+f_smtPivot2Hilo(_len, _inv) =>
+    ph = _inv ? ta.pivotlow(low, _len, _len) : ta.pivothigh(high, _len, _len)
+    phVal = _inv ? low[_len] : high[_len]
+    phV0 = ta.valuewhen(not na(ph), phVal, 0)
+    phV1 = ta.valuewhen(not na(ph), phVal, 1)
+    phT0 = ta.valuewhen(not na(ph), time[_len], 0)
+    pl = _inv ? ta.pivothigh(high, _len, _len) : ta.pivotlow(low, _len, _len)
+    plVal = _inv ? high[_len] : low[_len]
+    plV0 = ta.valuewhen(not na(pl), plVal, 0)
+    plV1 = ta.valuewhen(not na(pl), plVal, 1)
+    plT0 = ta.valuewhen(not na(pl), time[_len], 0)
+    [phV0, phV1, phT0, plV0, plV1, plT0]
 
 leftM1 = swingPatternUseTfBars ? swingPatternLeftBars_M1 : swingPatternLeftBars
 rightM1 = swingPatternUseTfBars ? swingPatternRightBars_M1 : swingPatternRightBars
@@ -787,6 +820,15 @@ f_sigSlot(_txt) =>
      str.contains(_txt, "OVER") ? 2 :
      str.contains(_txt, "KISS") ? 1 :
      _txt == "BUY" or _txt == "SELL" ? 1 : 0
+f_sigNotifyAllowed(_txt) =>
+    str.contains(_txt, "SMT") ? notifySmt :
+     _txt == "SH" or _txt == "SL" or _txt == "DIV" ? notifyShSl :
+     str.contains(_txt, "RSI") ? notifyRsi :
+     _txt == "Hammer" or _txt == "Shooting" ? notifyHs :
+     _txt == "HH" or _txt == "LH" or _txt == "HL" or _txt == "LL" or str.contains(_txt, "HH\n") or str.contains(_txt, "LH\n") or str.contains(_txt, "HL\n") or str.contains(_txt, "LL\n") ? notifyLux :
+     str.contains(_txt, "CRT") ? notifyCrt :
+     _txt == "Sweep" or str.contains(_txt, "Swept") ? notifySweep :
+     notifyGeneral
 f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, _doAlert) =>
     var label lastMerged = na
     var int lastMergedX = na
@@ -801,7 +843,7 @@ f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, _doAlert) =>
         step = labelStackTicks * syminfo.mintick
         slot = labelAutoStack and (_style == label.style_label_up or _style == label.style_label_down) ? f_sigSlot(_txt) : 0
         yAdj = _style == label.style_label_up ? (_y - slot * step) : _style == label.style_label_down ? (_y + slot * step) : _y
-        f_alert(_doAlert, syminfo.ticker + " " + _txt)
+        f_alert(_doAlert and f_sigNotifyAllowed(_txt), syminfo.ticker + " " + _txt)
         if labelMergeSameBar and not na(lastMerged) and lastMergedX == xAdj
             old = label.get_text(lastMerged)
             if not str.contains(old, _txt)
@@ -1281,11 +1323,11 @@ instSwingHighBar = instNewSwingHigh ? bar_index[instLbRight] : na
 instSwingLowBar = instNewSwingLow ? bar_index[instLbRight] : na
 
 if instNewSwingHigh and (na(lastInstSwingHighAlertBar) or lastInstSwingHighAlertBar != instSwingHighBar)
-    f_alert(true, syminfo.ticker + " Sweep Swing H")
+    f_alert(notifySweep, syminfo.ticker + " Sweep Swing H")
     lastInstSwingHighAlertBar := instSwingHighBar
 
 if instNewSwingLow and (na(lastInstSwingLowAlertBar) or lastInstSwingLowAlertBar != instSwingLowBar)
-    f_alert(true, syminfo.ticker + " Sweep Swing L")
+    f_alert(notifySweep, syminfo.ticker + " Sweep Swing L")
     lastInstSwingLowAlertBar := instSwingLowBar
 
 if canShowNonQm and instEnabled and instBullCond and not na(low[3])
@@ -1363,7 +1405,7 @@ if crtNewSoup
         if not na(crtSoupLbl)
             label.delete(crtSoupLbl)
         crtSoupLbl := label.new(bar_index, close, crtDir == 1 ? "CRT\nBULL" : "CRT\nBEAR", xloc=xloc.bar_index, style=crtDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.black, 0), textcolor=color.white, size=size.tiny)
-        f_alert(true, syminfo.ticker + " " + (crtDir == 1 ? "CRT BULL" : "CRT BEAR"))
+        f_alert(notifyCrt, syminfo.ticker + " " + (crtDir == 1 ? "CRT BULL" : "CRT BEAR"))
     crtLastSoupTime := crtSoupT
 
 if (not crtEnabled) or onlyShSlMode or (not crtShowLabels) or (crtUseKillzone and not crtSoupKillOk)
@@ -1730,8 +1772,8 @@ if crtShowLabels and crtEntryShortOk
     if not na(crtEntryLbl)
         label.delete(crtEntryLbl)
     crtEntryLbl := label.new(bar_index, high, "CRT\nSELL", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.black, size=size.tiny)
-f_alert(crtShowLabels and crtEntryLongOk, syminfo.ticker + " CRT BUY")
-f_alert(crtShowLabels and crtEntryShortOk, syminfo.ticker + " CRT SELL")
+f_alert(notifyCrt and crtShowLabels and crtEntryLongOk, syminfo.ticker + " CRT BUY")
+f_alert(notifyCrt and crtShowLabels and crtEntryShortOk, syminfo.ticker + " CRT SELL")
 
 if (not crtEnabled) or onlyShSlMode or (not crtShowLabels)
     if not na(crtEntryLbl)
@@ -1751,6 +1793,55 @@ smtPh1_1 = inv1 ? ta.pivotlow(SmtLow1, SmtPivot, SmtPivot) : ta.pivothigh(SmtHig
 smtPl1_1 = inv1 ? ta.pivothigh(SmtHigh1, SmtPivot, SmtPivot) : ta.pivotlow(SmtLow1, SmtPivot, SmtPivot)
 smtPh1_2 = inv2 ? ta.pivotlow(SmtLow2, SmtPivot, SmtPivot) : ta.pivothigh(SmtHigh2, SmtPivot, SmtPivot)
 smtPl1_2 = inv2 ? ta.pivothigh(SmtHigh2, SmtPivot, SmtPivot) : ta.pivotlow(SmtLow2, SmtPivot, SmtPivot)
+smtLenM1 = SmtUseTfPivots ? SmtPivotLen_M1 : SmtPivotLen
+smtLenM3 = SmtPivotLen
+smtLenM5 = SmtPivotLen
+smtLenM15 = SmtUseTfPivots ? SmtPivotLen_M15 : SmtPivotLen
+smtLenH1 = SmtUseTfPivots ? SmtPivotLen_H1 : SmtPivotLen
+
+[smtMainM1Ph0, smtMainM1Ph1, smtMainM1PhT, smtMainM1Pl0, smtMainM1Pl1, smtMainM1PlT] = request.security(syminfo.tickerid, "1", f_pivot2Hilo(smtLenM1), barmerge.gaps_off, barmerge.lookahead_off)
+[smtS1M1Ph0, smtS1M1Ph1, _, smtS1M1Pl0, smtS1M1Pl1, _] = request.security(SmtSymbol1, "1", f_smtPivot2Hilo(smtLenM1, inv1), barmerge.gaps_off, barmerge.lookahead_off)
+[smtMainM3Ph0, smtMainM3Ph1, smtMainM3PhT, smtMainM3Pl0, smtMainM3Pl1, smtMainM3PlT] = request.security(syminfo.tickerid, "3", f_pivot2Hilo(smtLenM3), barmerge.gaps_off, barmerge.lookahead_off)
+[smtS1M3Ph0, smtS1M3Ph1, _, smtS1M3Pl0, smtS1M3Pl1, _] = request.security(SmtSymbol1, "3", f_smtPivot2Hilo(smtLenM3, inv1), barmerge.gaps_off, barmerge.lookahead_off)
+[smtMainM5Ph0, smtMainM5Ph1, smtMainM5PhT, smtMainM5Pl0, smtMainM5Pl1, smtMainM5PlT] = request.security(syminfo.tickerid, "5", f_pivot2Hilo(smtLenM5), barmerge.gaps_off, barmerge.lookahead_off)
+[smtS1M5Ph0, smtS1M5Ph1, _, smtS1M5Pl0, smtS1M5Pl1, _] = request.security(SmtSymbol1, "5", f_smtPivot2Hilo(smtLenM5, inv1), barmerge.gaps_off, barmerge.lookahead_off)
+[smtMainM15Ph0, smtMainM15Ph1, smtMainM15PhT, smtMainM15Pl0, smtMainM15Pl1, smtMainM15PlT] = request.security(syminfo.tickerid, "15", f_pivot2Hilo(smtLenM15), barmerge.gaps_off, barmerge.lookahead_off)
+[smtS1M15Ph0, smtS1M15Ph1, _, smtS1M15Pl0, smtS1M15Pl1, _] = request.security(SmtSymbol1, "15", f_smtPivot2Hilo(smtLenM15, inv1), barmerge.gaps_off, barmerge.lookahead_off)
+[smtMainH1Ph0, smtMainH1Ph1, smtMainH1PhT, smtMainH1Pl0, smtMainH1Pl1, smtMainH1PlT] = request.security(syminfo.tickerid, "60", f_pivot2Hilo(smtLenH1), barmerge.gaps_off, barmerge.lookahead_off)
+[smtS1H1Ph0, smtS1H1Ph1, _, smtS1H1Pl0, smtS1H1Pl1, _] = request.security(SmtSymbol1, "60", f_smtPivot2Hilo(smtLenH1, inv1), barmerge.gaps_off, barmerge.lookahead_off)
+
+f_smtFireOnce(_arr, _idx, _cond, _t, _msg) =>
+    last = array.get(_arr, _idx)
+    if _cond and (na(last) or last != _t)
+        f_alert(true, _msg)
+        array.set(_arr, _idx, _t)
+
+var int[] smtMtfLast = array.new_int(10, na)
+if barstate.isconfirmed and SmtEnabled and SmtMtfAlertsEnabled and not onlyShSlMode and notifySmt
+    smt1BearM1 = not na(smtMainM1Ph0) and not na(smtMainM1Ph1) and not na(smtS1M1Ph0) and not na(smtS1M1Ph1) and smtMainM1Ph0 > smtMainM1Ph1 and smtS1M1Ph0 <= smtS1M1Ph1
+    smt1BullM1 = not na(smtMainM1Pl0) and not na(smtMainM1Pl1) and not na(smtS1M1Pl0) and not na(smtS1M1Pl1) and smtMainM1Pl0 < smtMainM1Pl1 and smtS1M1Pl0 >= smtS1M1Pl1
+    f_smtFireOnce(smtMtfLast, 0, notifyTfM1 and smt1BearM1, smtMainM1PhT, syminfo.ticker + " SMT1 BEAR M1")
+    f_smtFireOnce(smtMtfLast, 1, notifyTfM1 and smt1BullM1, smtMainM1PlT, syminfo.ticker + " SMT1 BULL M1")
+
+    smt1BearM3 = not na(smtMainM3Ph0) and not na(smtMainM3Ph1) and not na(smtS1M3Ph0) and not na(smtS1M3Ph1) and smtMainM3Ph0 > smtMainM3Ph1 and smtS1M3Ph0 <= smtS1M3Ph1
+    smt1BullM3 = not na(smtMainM3Pl0) and not na(smtMainM3Pl1) and not na(smtS1M3Pl0) and not na(smtS1M3Pl1) and smtMainM3Pl0 < smtMainM3Pl1 and smtS1M3Pl0 >= smtS1M3Pl1
+    f_smtFireOnce(smtMtfLast, 2, notifyTfM3 and smt1BearM3, smtMainM3PhT, syminfo.ticker + " SMT1 BEAR M3")
+    f_smtFireOnce(smtMtfLast, 3, notifyTfM3 and smt1BullM3, smtMainM3PlT, syminfo.ticker + " SMT1 BULL M3")
+
+    smt1BearM5 = not na(smtMainM5Ph0) and not na(smtMainM5Ph1) and not na(smtS1M5Ph0) and not na(smtS1M5Ph1) and smtMainM5Ph0 > smtMainM5Ph1 and smtS1M5Ph0 <= smtS1M5Ph1
+    smt1BullM5 = not na(smtMainM5Pl0) and not na(smtMainM5Pl1) and not na(smtS1M5Pl0) and not na(smtS1M5Pl1) and smtMainM5Pl0 < smtMainM5Pl1 and smtS1M5Pl0 >= smtS1M5Pl1
+    f_smtFireOnce(smtMtfLast, 4, notifyTfM5 and smt1BearM5, smtMainM5PhT, syminfo.ticker + " SMT1 BEAR M5")
+    f_smtFireOnce(smtMtfLast, 5, notifyTfM5 and smt1BullM5, smtMainM5PlT, syminfo.ticker + " SMT1 BULL M5")
+
+    smt1BearM15 = not na(smtMainM15Ph0) and not na(smtMainM15Ph1) and not na(smtS1M15Ph0) and not na(smtS1M15Ph1) and smtMainM15Ph0 > smtMainM15Ph1 and smtS1M15Ph0 <= smtS1M15Ph1
+    smt1BullM15 = not na(smtMainM15Pl0) and not na(smtMainM15Pl1) and not na(smtS1M15Pl0) and not na(smtS1M15Pl1) and smtMainM15Pl0 < smtMainM15Pl1 and smtS1M15Pl0 >= smtS1M15Pl1
+    f_smtFireOnce(smtMtfLast, 6, notifyTfM15 and smt1BearM15, smtMainM15PhT, syminfo.ticker + " SMT1 BEAR M15")
+    f_smtFireOnce(smtMtfLast, 7, notifyTfM15 and smt1BullM15, smtMainM15PlT, syminfo.ticker + " SMT1 BULL M15")
+
+    smt1BearH1 = not na(smtMainH1Ph0) and not na(smtMainH1Ph1) and not na(smtS1H1Ph0) and not na(smtS1H1Ph1) and smtMainH1Ph0 > smtMainH1Ph1 and smtS1H1Ph0 <= smtS1H1Ph1
+    smt1BullH1 = not na(smtMainH1Pl0) and not na(smtMainH1Pl1) and not na(smtS1H1Pl0) and not na(smtS1H1Pl1) and smtMainH1Pl0 < smtMainH1Pl1 and smtS1H1Pl0 >= smtS1H1Pl1
+    f_smtFireOnce(smtMtfLast, 8, notifyTfH1 and smt1BearH1, smtMainH1PhT, syminfo.ticker + " SMT1 BEAR H1")
+    f_smtFireOnce(smtMtfLast, 9, notifyTfH1 and smt1BullH1, smtMainH1PlT, syminfo.ticker + " SMT1 BULL H1")
 smtDailyBuf = SmtDailyExtremeBufferTicks * syminfo.mintick
 dHighAtSmtPivot = dHigh[SmtPivot]
 dLowAtSmtPivot = dLow[SmtPivot]
@@ -1845,6 +1936,26 @@ if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossSho
     f_addSigLabel(rsiCrossPivotBar, low[swingCenter], "RSI↑", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny)
 if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossShowLabels and rsiCrossDnSig
     f_addSigLabel(rsiCrossPivotBar, high[swingCenter], "RSI↓", color.new(color.orange, 0), color.black, label.style_label_down, size.tiny)
+
+[rsiMtfM1Up, rsiMtfM1Dn, rsiMtfM1Tc] = request.security(syminfo.tickerid, "1", f_rsiCrossPivotSig(leftM1, rightM1), barmerge.gaps_off, barmerge.lookahead_off)
+[rsiMtfM3Up, rsiMtfM3Dn, rsiMtfM3Tc] = request.security(syminfo.tickerid, "3", f_rsiCrossPivotSig(leftM1, rightM1), barmerge.gaps_off, barmerge.lookahead_off)
+[rsiMtfM5Up, rsiMtfM5Dn, rsiMtfM5Tc] = request.security(syminfo.tickerid, "5", f_rsiCrossPivotSig(leftM5, rightM5), barmerge.gaps_off, barmerge.lookahead_off)
+[rsiMtfM15Up, rsiMtfM15Dn, rsiMtfM15Tc] = request.security(syminfo.tickerid, "15", f_rsiCrossPivotSig(leftM15, rightM15), barmerge.gaps_off, barmerge.lookahead_off)
+[rsiMtfH1Up, rsiMtfH1Dn, rsiMtfH1Tc] = request.security(syminfo.tickerid, "60", f_rsiCrossPivotSig(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
+
+var int[] rsiMtfLast = array.new_int(10, na)
+
+if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossMtfAlertsEnabled and notifyRsi
+    f_smtFireOnce(rsiMtfLast, 0, notifyTfM1 and rsiMtfM1Up, rsiMtfM1Tc, syminfo.ticker + " RSI↑ M1")
+    f_smtFireOnce(rsiMtfLast, 1, notifyTfM1 and rsiMtfM1Dn, rsiMtfM1Tc, syminfo.ticker + " RSI↓ M1")
+    f_smtFireOnce(rsiMtfLast, 2, notifyTfM3 and rsiMtfM3Up, rsiMtfM3Tc, syminfo.ticker + " RSI↑ M3")
+    f_smtFireOnce(rsiMtfLast, 3, notifyTfM3 and rsiMtfM3Dn, rsiMtfM3Tc, syminfo.ticker + " RSI↓ M3")
+    f_smtFireOnce(rsiMtfLast, 4, notifyTfM5 and rsiMtfM5Up, rsiMtfM5Tc, syminfo.ticker + " RSI↑ M5")
+    f_smtFireOnce(rsiMtfLast, 5, notifyTfM5 and rsiMtfM5Dn, rsiMtfM5Tc, syminfo.ticker + " RSI↓ M5")
+    f_smtFireOnce(rsiMtfLast, 6, notifyTfM15 and rsiMtfM15Up, rsiMtfM15Tc, syminfo.ticker + " RSI↑ M15")
+    f_smtFireOnce(rsiMtfLast, 7, notifyTfM15 and rsiMtfM15Dn, rsiMtfM15Tc, syminfo.ticker + " RSI↓ M15")
+    f_smtFireOnce(rsiMtfLast, 8, notifyTfH1 and rsiMtfH1Up, rsiMtfH1Tc, syminfo.ticker + " RSI↑ H1")
+    f_smtFireOnce(rsiMtfLast, 9, notifyTfH1 and rsiMtfH1Dn, rsiMtfH1Tc, syminfo.ticker + " RSI↓ H1")
 
 swingBullDivPlot = canShowNonQm and swingBullDiv and (not swingDivShowDailyExtreme or divNearDailyLow)
 swingBearDivPlot = canShowNonQm and swingBearDiv and (not swingDivShowDailyExtreme or divNearDailyHigh)
@@ -2058,132 +2169,6 @@ if sfpEnabled and canShowNonQm
                 sfpPivL.oppos_line.delete()
                 sfpPivL.wicky_line.delete()
                 sfpPivL.wicky_label.delete()
-
-stAiActive = not onlyShSlMode and not onlyBelugaMode and (stAiEnabled or (qmLiveEnabled and qmLiveShowSupertrend))
-if stAiEnabled and stAiMinMult > stAiMaxMult
-    runtime.error("Minimum factor is greater than maximum factor in the range")
-
-type stAi_supertrend
-    float upper = hl2
-    float lower = hl2
-    float output
-    float perf = 0.0
-    float factor
-    int trend = 0
-
-type stAi_vector
-    array<float> out
-
-var stAiHolder = array.new<stAi_supertrend>(0)
-var stAiFactors = array.new<float>(0)
-
-if barstate.isfirst and stAiActive
-    for i = 0 to int((stAiMaxMult - stAiMinMult) / stAiStep)
-        array.push(stAiFactors, stAiMinMult + i * stAiStep)
-        array.push(stAiHolder, stAi_supertrend.new())
-
-stAiAtr = stAiActive ? ta.atr(stAiAtrLen) : na
-
-if stAiActive and array.size(stAiFactors) > 0
-    stAiK = 0
-    for factor in stAiFactors
-        stAiGet = array.get(stAiHolder, stAiK)
-        stAiUp = hl2 + stAiAtr * factor
-        stAiDn = hl2 - stAiAtr * factor
-        stAiGet.trend := close > stAiGet.upper ? 1 : close < stAiGet.lower ? 0 : stAiGet.trend
-        stAiGet.upper := close[1] < stAiGet.upper ? math.min(stAiUp, stAiGet.upper) : stAiUp
-        stAiGet.lower := close[1] > stAiGet.lower ? math.max(stAiDn, stAiGet.lower) : stAiDn
-        stAiDiff = nz(math.sign(close[1] - stAiGet.output))
-        stAiGet.perf += 2.0 / (stAiPerfAlpha + 1.0) * (nz(close - close[1]) * stAiDiff - stAiGet.perf)
-        stAiGet.output := stAiGet.trend == 1 ? stAiGet.lower : stAiGet.upper
-        stAiGet.factor := factor
-        stAiK += 1
-
-stAiMaxIter = math.max(0, stAiMaxIterIn)
-stAiMaxData = math.max(0, stAiMaxDataIn)
-stAiCalc = stAiActive and (last_bar_index - bar_index <= stAiMaxData)
-
-stAiFactorArray = array.new<float>(0)
-stAiData = array.new<float>(0)
-if stAiCalc
-    for element in stAiHolder
-        array.push(stAiData, element.perf)
-        array.push(stAiFactorArray, element.factor)
-
-stAiCentroids = array.new<float>(0)
-if stAiCalc and array.size(stAiData) > 0
-    array.push(stAiCentroids, stAiData.percentile_linear_interpolation(25))
-    array.push(stAiCentroids, stAiData.percentile_linear_interpolation(50))
-    array.push(stAiCentroids, stAiData.percentile_linear_interpolation(75))
-
-var array<stAi_vector> stAiFactorsClusters = na
-var array<stAi_vector> stAiPerfClusters = na
-
-if stAiCalc and array.size(stAiCentroids) == 3
-    for _ = 0 to stAiMaxIter
-        stAiFactorsClusters := array.from(stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)))
-        stAiPerfClusters := array.from(stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)), stAi_vector.new(array.new<float>(0)))
-        stAiI = 0
-        for value in stAiData
-            stAiDist = array.new<float>(0)
-            for centroid in stAiCentroids
-                array.push(stAiDist, math.abs(value - centroid))
-            stAiIdx = stAiDist.indexof(stAiDist.min())
-            array.push(stAiPerfClusters.get(stAiIdx).out, value)
-            array.push(stAiFactorsClusters.get(stAiIdx).out, array.get(stAiFactorArray, stAiI))
-            stAiI += 1
-        stAiNewCentroids = array.new<float>(0)
-        for cluster_ in stAiPerfClusters
-            array.push(stAiNewCentroids, cluster_.out.avg())
-        if stAiNewCentroids.get(0) == stAiCentroids.get(0) and stAiNewCentroids.get(1) == stAiCentroids.get(1) and stAiNewCentroids.get(2) == stAiCentroids.get(2)
-            break
-        stAiCentroids := stAiNewCentroids
-
-stAiFrom = stAiFromCluster == "Best" ? 2 : stAiFromCluster == "Average" ? 1 : 0
-stAiDen = stAiActive ? ta.ema(math.abs(close - close[1]), int(stAiPerfAlpha)) : na
-
-var float stAiTargetFactor = na
-var float stAiPerfIdx = na
-var float stAiPerfAma = na
-
-if stAiActive and not na(stAiPerfClusters)
-    stAiTargetFactor := nz(stAiFactorsClusters.get(stAiFrom).out.avg(), stAiTargetFactor)
-    stAiPerfIdx := math.max(nz(stAiPerfClusters.get(stAiFrom).out.avg()), 0) / stAiDen
-
-var float stAiUpper = hl2
-var float stAiLower = hl2
-var int stAiOs = 0
-
-stAiUp2 = stAiActive ? (hl2 + stAiAtr * stAiTargetFactor) : na
-stAiDn2 = stAiActive ? (hl2 - stAiAtr * stAiTargetFactor) : na
-if stAiActive and not na(stAiUp2) and not na(stAiDn2)
-    stAiUpper := close[1] < stAiUpper ? math.min(stAiUp2, stAiUpper) : stAiUp2
-    stAiLower := close[1] > stAiLower ? math.max(stAiDn2, stAiLower) : stAiDn2
-    stAiOs := close > stAiUpper ? 1 : close < stAiLower ? 0 : stAiOs
-
-stAiTs = stAiOs == 1 ? stAiLower : stAiUpper
-if stAiActive and na(stAiTs[1]) and not na(stAiTs)
-    stAiPerfAma := stAiTs
-else if stAiActive and not na(stAiPerfIdx)
-    stAiPerfAma += stAiPerfIdx * (stAiTs - stAiPerfAma)
-
-stAiCss = stAiOs == 1 ? stAiBullCss : stAiBearCss
-stAiPlot = stAiActive
-
-plot(stAiPlot ? stAiTs : na, "SuperTrend AI - Trailing Stop", stAiOs != stAiOs[1] ? na : stAiCss)
-plot(stAiPlot ? stAiPerfAma : na, "SuperTrend AI - Trailing Stop AMA", ta.cross(close, stAiPerfAma) ? na : close > stAiPerfAma ? stAiAmaBullCss : stAiAmaBearCss)
-barcolor(stAiPlot and stAiEnabled and stAiShowGradient ? color.from_gradient(stAiPerfIdx, 0, 1, color.new(stAiCss, 80), stAiCss) : na)
-
-stAiShowNums = stAiPlot and stAiShowSignals and (stAiEnabled or (qmLiveEnabled and qmLiveShowSupertrend)) and not na(stAiPerfIdx)
-if stAiShowNums
-    if stAiOs > stAiOs[1]
-        label.new(bar_index, stAiTs, str.tostring(int(stAiPerfIdx * 10)), color=stAiBullCss, style=label.style_label_up, textcolor=color.white, size=size.tiny)
-    if stAiOs < stAiOs[1]
-        label.new(bar_index, stAiTs, str.tostring(int(stAiPerfIdx * 10)), color=stAiBearCss, style=label.style_label_down, textcolor=color.white, size=size.tiny)
-
-stAiScore = stAiActive and not na(stAiPerfIdx) ? int(stAiPerfIdx * 10) : na
-f_alert(stAiActive and stAiAlertsEnabled and not rsiSessionsOnlyMode and not na(stAiScore) and stAiScore >= stAiAlertsMinScore and stAiOs > stAiOs[1], syminfo.ticker + " SuperTrend AI BUY score=" + str.tostring(stAiScore))
-f_alert(stAiActive and stAiAlertsEnabled and not rsiSessionsOnlyMode and not na(stAiScore) and stAiScore >= stAiAlertsMinScore and stAiOs < stAiOs[1], syminfo.ticker + " SuperTrend AI SELL score=" + str.tostring(stAiScore))
 
 bbDrawActive = not onlyShSlMode and (onlyBelugaMode or (qmLiveEnabled and qmLiveShowBelugaSwing))
 bbAlertActive = bbDrawActive and bbAlertsEnabled
@@ -2518,7 +2503,7 @@ if qmEnabled and (not onlyShSlMode or onlyQmMode) and array.size(qmTypes) > 5
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh2 + (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
-        f_alert(true, syminfo.ticker + " QM SELL")
+        f_alert(notifyQm, syminfo.ticker + " QM SELL")
     if not na(qmBearStart) and qmBearStart != vh2
         qmCheckBe := 0
 
@@ -2540,6 +2525,6 @@ if qmEnabled and (not onlyShSlMode or onlyQmMode) and array.size(qmTypes) > 5
         f_qmPushLabel(label.new(il1 + buMove + 1, vl2 - (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(il1 + buMove + 1, vl3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(il1 + buMove + 1, vl1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
-        f_alert(true, syminfo.ticker + " QM BUY")
+        f_alert(notifyQm, syminfo.ticker + " QM BUY")
     if not na(qmBullStart) and qmBullStart != vl2
         qmCheckBu := 0

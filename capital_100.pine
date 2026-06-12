@@ -145,10 +145,6 @@ sfpMlt = input.int(50, "Auto Mult", group="SFP Lux - Volume Validation")
 sfpRes = input.timeframe("1", "LTF", group="SFP Lux - Volume Validation")
 sfpPrem = input.bool(false, "Premium", group="SFP Lux - Volume Validation")
 
-sfpShowDash = input.bool(true, "Show Dashboard", group="SFP Lux - Dashboard")
-sfpDashLoc = input.string("Top Right", "Location", options=["Top Right", "Bottom Right", "Bottom Left"], group="SFP Lux - Dashboard")
-sfpTextSize = input.string("Normal", "Size", options=["Tiny", "Small", "Normal"], group="SFP Lux - Dashboard")
-
 sfpSwingLine = input.bool(true, "Swing Lines", group="SFP Lux - Style")
 sfpOpposLine = input.bool(true, "Confirmation Lines", group="SFP Lux - Style")
 sfpSfpLine = input.bool(true, "Swing Failure Wick", group="SFP Lux - Style")
@@ -226,10 +222,6 @@ stAiShowGradient = input.bool(true, "Candle Coloring", group="SuperTrend AI - St
 stAiShowSignals = input.bool(true, "Show Signals", group="SuperTrend AI - Style")
 stAiAlertsEnabled = input.bool(true, "Alert SuperTrend AI (flip)", group="SuperTrend AI - Style")
 stAiAlertsMinScore = input.int(2, "Min Score (>=)", minval=0, group="SuperTrend AI - Style")
-
-bbDashEnabled = input.bool(true, "Dashboard BigBeluga (M1/M15/H1/H4)", group="BigBeluga Dashboard")
-bbDashLoc = input.string("Bottom Right", "Location", options=["Top Right", "Bottom Right", "Bottom Left"], group="BigBeluga Dashboard")
-bbDashTextSize = input.string("Small", "Size", options=["Tiny", "Small", "Normal"], group="BigBeluga Dashboard")
 
 earlySwingEnabled = input.bool(true, "Early Swing Anticipation", group="Early Swing")
 earlyShowPossibleSWH = input.bool(true, "Mostra Possible SWH", group="Early Swing")
@@ -347,7 +339,7 @@ f_lastType(_shTime, _slTime) =>
 
 f_alert(_cond, _msg) =>
     if alertsEnabled and barstate.isconfirmed and _cond
-        alert(_msg, alert.freq_once_per_bar_close)
+        alert(_msg, alert.freq_all)
 
 f_vpVa(_arr, _poc, _pct) =>
     n = array.size(_arr)
@@ -798,8 +790,11 @@ f_sigSlot(_txt) =>
 f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, _doAlert) =>
     var label lastMerged = na
     var int lastMergedX = na
+    if not barstate.isconfirmed
+        na
     allowInRsiSessOnly = _txt == "RSI↑" or _txt == "RSI↓" or _txt == "Hammer" or _txt == "Shooting" or _txt == "SH" or _txt == "SL" or _txt == "DIV" or str.contains(_txt, "SMT") or _txt == "HH" or _txt == "LH" or _txt == "HL" or _txt == "LL" or str.contains(_txt, "HH\n") or str.contains(_txt, "LH\n") or str.contains(_txt, "HL\n") or str.contains(_txt, "LL\n")
-    if onlyShSlMode or (rsiSessionsOnlyMode and not allowInRsiSessOnly)
+    allowInOnlyShSl = _txt == "SH" or _txt == "SL" or _txt == "DIV"
+    if (onlyShSlMode and not allowInOnlyShSl) or (rsiSessionsOnlyMode and not allowInRsiSessOnly)
         na
     else
         xAdj = _x + labelShiftRightBars
@@ -1190,6 +1185,8 @@ var instSwingHighArr = array.new_label(0)
 var instSwingHighTextArr = array.new_label(0)
 var instSwingLowArr = array.new_label(0)
 var instSwingLowTextArr = array.new_label(0)
+var int lastInstSwingHighAlertBar = na
+var int lastInstSwingLowAlertBar = na
 
 instPL = ta.pivotlow(low, instLbLeft, instLbRight)
 instPH = ta.pivothigh(high, instLbLeft, instLbRight)
@@ -1266,7 +1263,6 @@ if instEnabled and canShowNonQm
         instSwingHighLblTxt := label.new(bar_index[instLbRight], high[instLbRight], text="Swing\nH", yloc=yloc.abovebar, color=instSwingClr, textcolor=instSwingClr, style=label.style_none, size=size.small)
         array.push(instSwingHighArr, instSwingHighLbl)
         array.push(instSwingHighTextArr, instSwingHighLblTxt)
-        f_alert(true, syminfo.ticker + " Sweep Swing H")
 
     if instShowSwing and not na(instPL) and instBullishSFP[instLbRight] == false
         instStopPrintingLow := false
@@ -1278,7 +1274,19 @@ if instEnabled and canShowNonQm
         instSwingLowLblTxt := label.new(bar_index[instLbRight], low[instLbRight], text="Swing\nL", yloc=yloc.belowbar, color=instSwingClr, textcolor=instSwingClr, style=label.style_none, size=size.small)
         array.push(instSwingLowArr, instSwingLowLbl)
         array.push(instSwingLowTextArr, instSwingLowLblTxt)
-        f_alert(true, syminfo.ticker + " Sweep Swing L")
+
+instNewSwingHigh = instEnabled and canShowNonQm and not na(instPH) and instBearishSFP[instLbRight] == false
+instNewSwingLow = instEnabled and canShowNonQm and not na(instPL) and instBullishSFP[instLbRight] == false
+instSwingHighBar = instNewSwingHigh ? bar_index[instLbRight] : na
+instSwingLowBar = instNewSwingLow ? bar_index[instLbRight] : na
+
+if instNewSwingHigh and (na(lastInstSwingHighAlertBar) or lastInstSwingHighAlertBar != instSwingHighBar)
+    f_alert(true, syminfo.ticker + " Sweep Swing H")
+    lastInstSwingHighAlertBar := instSwingHighBar
+
+if instNewSwingLow and (na(lastInstSwingLowAlertBar) or lastInstSwingLowAlertBar != instSwingLowBar)
+    f_alert(true, syminfo.ticker + " Sweep Swing L")
+    lastInstSwingLowAlertBar := instSwingLowBar
 
 if canShowNonQm and instEnabled and instBullCond and not na(low[3])
     f_addSigLabel(bar_index - 3, low[3], "Sweep", color.new(instBullColor, 0), color.white, label.style_label_up, size.tiny)
@@ -1847,82 +1855,25 @@ var int lastSlLblBar = na
 var int lastDivBullLblBar = na
 var int lastDivBearLblBar = na
 
-if swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
+if barstate.isconfirmed and swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
     y = high[swingCenter] + (labelAutoStack ? 3 * swingStep : 0)
     f_addSigLabelEx(swingPivotBar, y, "SH", color.new(color.red, 0), color.white, label.style_label_down, size.small, true)
     lastShLblBar := swingPivotBar
 
-if swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
+if barstate.isconfirmed and swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
     y = low[swingCenter] - (labelAutoStack ? 3 * swingStep : 0)
     f_addSigLabelEx(swingPivotBar, y, "SL", color.new(color.lime, 0), color.black, label.style_label_up, size.small, true)
     lastSlLblBar := swingPivotBar
 
-if swingBullDivPlot and (na(lastDivBullLblBar) or lastDivBullLblBar != swingPivotBar)
+if barstate.isconfirmed and swingBullDivPlot and (na(lastDivBullLblBar) or lastDivBullLblBar != swingPivotBar)
     y = low[swingCenter] - (labelAutoStack ? 4 * swingStep : 0)
     f_addSigLabelEx(swingPivotBar, y, "DIV", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny, true)
     lastDivBullLblBar := swingPivotBar
 
-if swingBearDivPlot and (na(lastDivBearLblBar) or lastDivBearLblBar != swingPivotBar)
+if barstate.isconfirmed and swingBearDivPlot and (na(lastDivBearLblBar) or lastDivBearLblBar != swingPivotBar)
     y = high[swingCenter] + (labelAutoStack ? 4 * swingStep : 0)
     f_addSigLabelEx(swingPivotBar, y, "DIV", color.new(color.fuchsia, 0), color.white, label.style_label_down, size.tiny, true)
     lastDivBearLblBar := swingPivotBar
-
-f_bbLast(_len) =>
-    h = ta.highest(_len)
-    l = ta.lowest(_len)
-    sh = high[1] == h[1] and high < h
-    sl = low[1] == l[1] and low > l
-    shT = ta.valuewhen(sh, time[1], 0)
-    slT = ta.valuewhen(sl, time[1], 0)
-    shP = ta.valuewhen(sh, high[1], 0)
-    slP = ta.valuewhen(sl, low[1], 0)
-    tp = na(shT) and na(slT) ? 0 : na(slT) ? 1 : na(shT) ? -1 : (shT > slT ? 1 : -1)
-    pr = tp == 1 ? shP : tp == -1 ? slP : na
-    tm = tp == 1 ? shT : tp == -1 ? slT : na
-    [tp, pr, tm]
-
-bbSz = f_dashSize(bbDashTextSize)
-bbTblPos = bbDashLoc == "Bottom Left" ? position.bottom_left : bbDashLoc == "Top Right" ? position.top_right : position.bottom_right
-var table bbDashTbl = na
-var string bbDashPrev = na
-if barstate.isfirst or bbDashPrev != bbDashLoc
-    if not na(bbDashTbl)
-        table.delete(bbDashTbl)
-    bbDashTbl := table.new(bbTblPos, 2, 5, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
-    bbDashPrev := bbDashLoc
-
-bbLenM1Sel = bbPreset != "Custom" ? bbPresetM1 : bbUseTfLen ? bbLen_M1 : bbLen
-bbLenM15Sel = bbPreset != "Custom" ? bbPresetM15 : bbUseTfLen ? bbLen_M15 : bbLen
-bbLenH1Sel = bbPreset != "Custom" ? bbPresetH1 : bbUseTfLen ? bbLen_H1 : bbLen
-bbLenH4Sel = bbPreset != "Custom" ? bbPresetH4 : bbUseTfLen ? bbLen_H4 : bbLen
-
-[bbM1Tp, bbM1Pr, bbM1Tm] = request.security(syminfo.tickerid, "1", f_bbLast(bbLenM1Sel), barmerge.gaps_off, barmerge.lookahead_on)
-[bbM15Tp, bbM15Pr, bbM15Tm] = request.security(syminfo.tickerid, "15", f_bbLast(bbLenM15Sel), barmerge.gaps_off, barmerge.lookahead_on)
-[bbH1Tp, bbH1Pr, bbH1Tm] = request.security(syminfo.tickerid, "60", f_bbLast(bbLenH1Sel), barmerge.gaps_off, barmerge.lookahead_on)
-[bbH4Tp, bbH4Pr, bbH4Tm] = request.security(syminfo.tickerid, "240", f_bbLast(bbLenH4Sel), barmerge.gaps_off, barmerge.lookahead_on)
-
-f_bbTxt(_tp, _pr, _tm) =>
-    _tp == 0 or na(_tm) ? "" : str.format("{0} {1} @{2}", str.format_time(_tm, "HH:mm", "Europe/Rome"), _tp == 1 ? "SH" : "SL", str.tostring(_pr, format.mintick))
-
-if barstate.islast and not na(bbDashTbl)
-    if bbDashEnabled and not onlyShSlMode
-        hdrBg = color.new(color.black, 0)
-        hdrTx = color.white
-        bg = color.new(color.black, 80)
-        table.cell(bbDashTbl, 0, 0, "TF", bgcolor=hdrBg, text_color=hdrTx, text_size=bbSz)
-        table.cell(bbDashTbl, 1, 0, "LAST", bgcolor=hdrBg, text_color=hdrTx, text_size=bbSz)
-
-        table.cell(bbDashTbl, 0, 1, "M1", bgcolor=bg, text_color=color.white, text_size=bbSz)
-        table.cell(bbDashTbl, 1, 1, f_bbTxt(bbM1Tp, bbM1Pr, bbM1Tm), bgcolor=bg, text_color=bbM1Tp == 1 ? color.red : bbM1Tp == -1 ? color.lime : color.white, text_size=bbSz)
-
-        table.cell(bbDashTbl, 0, 2, "M15", bgcolor=bg, text_color=color.white, text_size=bbSz)
-        table.cell(bbDashTbl, 1, 2, f_bbTxt(bbM15Tp, bbM15Pr, bbM15Tm), bgcolor=bg, text_color=bbM15Tp == 1 ? color.red : bbM15Tp == -1 ? color.lime : color.white, text_size=bbSz)
-
-        table.cell(bbDashTbl, 0, 3, "H1", bgcolor=bg, text_color=color.white, text_size=bbSz)
-        table.cell(bbDashTbl, 1, 3, f_bbTxt(bbH1Tp, bbH1Pr, bbH1Tm), bgcolor=bg, text_color=bbH1Tp == 1 ? color.red : bbH1Tp == -1 ? color.lime : color.white, text_size=bbSz)
-
-        table.cell(bbDashTbl, 0, 4, "H4", bgcolor=bg, text_color=color.white, text_size=bbSz)
-        table.cell(bbDashTbl, 1, 4, f_bbTxt(bbH4Tp, bbH4Pr, bbH4Tm), bgcolor=bg, text_color=bbH4Tp == 1 ? color.red : bbH4Tp == -1 ? color.lime : color.white, text_size=bbSz)
 
 type sfp_piv
     float swing_prc
@@ -1946,17 +1897,6 @@ sfpINV = color(na)
 sfpValidate = sfpIVal != "None"
 sfpValHigher = sfpIVal == "Volume outside swing > Threshold"
 sfpValLower = sfpIVal == "Volume outside swing < Threshold"
-
-sfpTablePosition = sfpDashLoc == "Bottom Left" ? position.bottom_left : sfpDashLoc == "Top Right" ? position.top_right : position.bottom_right
-sfpTableSize = sfpTextSize == "Tiny" ? size.tiny : sfpTextSize == "Small" ? size.small : size.normal
-
-var table sfpTb = na
-var string sfpDashLocPrev = na
-if (barstate.isfirst or sfpDashLocPrev != sfpDashLoc)
-    if not na(sfpTb)
-        table.delete(sfpTb)
-    sfpTb := table.new(sfpTablePosition, 2, 3, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
-    sfpDashLocPrev := sfpDashLoc
 
 var sfp_swing sfpSwingH = sfp_swing.new()
 var sfp_swing sfpSwingL = sfp_swing.new()
@@ -2118,11 +2058,6 @@ if sfpEnabled and canShowNonQm
                 sfpPivL.oppos_line.delete()
                 sfpPivL.wicky_line.delete()
                 sfpPivL.wicky_label.delete()
-
-if barstate.islast and sfpEnabled and sfpValidate and sfpShowDash and not na(sfpTb)
-    table.cell(sfpTb, 0, 0, str.format("LTF: {0}", sfpRes), text_color=color.white, text_size=sfpTableSize)
-else if barstate.islast and not na(sfpTb) and (not sfpEnabled or not sfpShowDash)
-    table.cell(sfpTb, 0, 0, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.white, 100), text_size=sfpTableSize)
 
 stAiActive = not onlyShSlMode and not onlyBelugaMode and (stAiEnabled or (qmLiveEnabled and qmLiveShowSupertrend))
 if stAiEnabled and stAiMinMult > stAiMaxMult

@@ -39,16 +39,16 @@ luxLen = input.int(21, "Length", minval=1, group="Lux Swing")
 luxShowLabels = input.bool(true, "Show Labels", group="Lux Swing")
 luxSwingHColor = input.color(color.red, "Swing High", group="Lux Swing")
 luxSwingLColor = input.color(color.teal, "Swing Low", group="Lux Swing")
-luxNotifyEnabled = input.bool(true, "Notifiche Lux (alert)", group="Lux Swing")
-luxNotifySwings = input.bool(true, "Notifica Swing HH/HL", group="Lux Swing")
-luxNotifyPatterns = input.bool(true, "Notifica Candle Patterns", group="Lux Swing")
-luxNotifyHammer = input.bool(true, "Hammer", group="Lux Swing")
-luxNotifyInvertedHammer = input.bool(true, "Inverted Hammer", group="Lux Swing")
-luxNotifyBullishEngulfing = input.bool(true, "Bullish Engulfing", group="Lux Swing")
-luxNotifyHangingMan = input.bool(true, "Hanging Man", group="Lux Swing")
-luxNotifyShootingStar = input.bool(true, "Shooting Star", group="Lux Swing")
-luxNotifyBearishEngulfing = input.bool(true, "Bearish Engulfing", group="Lux Swing")
-luxNotifyNone = input.bool(true, "None", group="Lux Swing")
+luxNotifyEnabled = input.bool(true, "Notifiche Lux (alert)", group="Alert")
+luxNotifySwings = input.bool(true, "Notifica Swing HH/HL", group="Alert")
+luxNotifyPatterns = input.bool(true, "Notifica Candle Patterns", group="Alert")
+luxNotifyHammer = input.bool(true, "Hammer", group="Alert")
+luxNotifyInvertedHammer = input.bool(true, "Inverted Hammer", group="Alert")
+luxNotifyBullishEngulfing = input.bool(true, "Bullish Engulfing", group="Alert")
+luxNotifyHangingMan = input.bool(true, "Hanging Man", group="Alert")
+luxNotifyShootingStar = input.bool(true, "Shooting Star", group="Alert")
+luxNotifyBearishEngulfing = input.bool(true, "Bearish Engulfing", group="Alert")
+luxNotifyNone = input.bool(true, "None", group="Alert")
 
 instEnabled = input.bool(true, "Sweep institutional", group="Sweep institutional")
 instCooldownPeriod = input.int(10, title="Cooldown Period", minval=0, group="Sweep institutional")
@@ -73,11 +73,12 @@ SmtPivotLen_H1 = input.int(1, "H1 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen_H4 = input.int(1, "H4 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen = input.int(1, "Pivot candele (fallback)", minval=1, group="SMT")
 SmtShowLabels = input.bool(true, "Mostra etichette", group="SMT")
-SmtMtfAlertsEnabled = input.bool(true, "Alert SMT MTF (M1/M3/M5/M15/H1)", group="SMT")
+SmtMtfAlertsEnabled = input.bool(true, "Alert SMT MTF (M1/M3/M5/M15/H1)", group="Alert")
 SmtShowDailyExtreme = input.bool(false, "Mostra SMT vicino a Daily High/Low", group="SMT")
 SmtDailyExtremeBufferTicks = input.int(0, "Distanza max SMT da Daily High/Low (ticks)", minval=0, group="SMT")
 
 alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
+alertIncludeTime = input.bool(true, "Includi orario nella notifica", group="Alert")
 notifyGeneral = input.bool(true, "Notifica: Generali (BUY/SELL/OVER/KISS...)", group="Alert")
 notifyShSl = input.bool(true, "Notifica: SH/SL/DIV", group="Alert")
 notifyRsi = input.bool(true, "Notifica: RSI (↑/↓ + Pattern + MTF)", group="Alert")
@@ -110,8 +111,8 @@ vpVaColor = input.color(color.new(color.orange, 70), "Colore Value Area", group=
 vpPocColor = input.color(color.new(color.white, 0), "Colore POC", group="Volume Profile")
 
 rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
-rsiCrossAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓", group="RSI Cross")
-rsiCrossMtfAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓ MTF (M1/M3/M5/M15/H1)", group="RSI Cross")
+rsiCrossAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓", group="Alert")
+rsiCrossMtfAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓ MTF (M1/M3/M5/M15/H1)", group="Alert")
 rsiSessionsOnlyMode = input.bool(false, "Mostra solo RSI↑/RSI↓ + Sessioni", group="RSI Cross")
 rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
 rsiCrossMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI Cross")
@@ -198,8 +199,7 @@ qmLiveColorW = input.color(color.new(color.lime, 0), "QM Live - Colore W (Bull)"
 qmLiveColorM = input.color(color.new(color.red, 0), "QM Live - Colore M (Bear)", group="QM")
 qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
 qmLiveShowBelugaSwing = input.bool(false, "QM Live - Mostra Swing BigBeluga", group="QM")
-bbAlertsEnabled = input.bool(true, "BigBeluga - Alert Swing (HIGH/LOW)", group="QM")
-bbBgAlertsEnabled = input.bool(false, "BigBeluga - Alert Highlight (sfondo)", group="QM")
+bbAlertsEnabled = input.bool(true, "BigBeluga - Alert Swing (HIGH/LOW)", group="Alert")
 bbUseTfLen = input.bool(true, "BigBeluga - Usa periodo per TF (M1/M15/H1/H4)", group="QM")
 bbPreset = input.string("Custom", "BigBeluga - Preset", options=["Custom", "Bilanciato", "Veloce", "Conservativo"], group="QM")
 bbLen = input.int(50, "BigBeluga - Length (fallback)", minval=1, group="QM")
@@ -307,9 +307,6 @@ showUntilNyClose = not isAfterNyClose
 instLineStyle(s) =>
     s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
 
-f_dashSize(_s) =>
-    _s == "Tiny" ? size.tiny : _s == "Normal" ? size.normal : size.small
-
 f_pivotTimes(_left, _right) =>
     ph = ta.pivothigh(high, _left, _right)
     pl = ta.pivotlow(low, _left, _right)
@@ -362,17 +359,16 @@ rightM15 = swingPatternUseTfBars ? swingPatternRightBars_M15 : swingPatternRight
 leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
 rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
 
-[dashM1ShT, dashM1SlT] = request.security(syminfo.tickerid, "1", f_pivotTimes(leftM1, rightM1), barmerge.gaps_off, barmerge.lookahead_off)
-[dashM5ShT, dashM5SlT] = request.security(syminfo.tickerid, "5", f_pivotTimes(leftM5, rightM5), barmerge.gaps_off, barmerge.lookahead_off)
-[dashM15ShT, dashM15SlT] = request.security(syminfo.tickerid, "15", f_pivotTimes(leftM15, rightM15), barmerge.gaps_off, barmerge.lookahead_off)
 [dashH1ShT, dashH1SlT] = request.security(syminfo.tickerid, "60", f_pivotTimes(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
 
 f_lastType(_shTime, _slTime) =>
     na(_shTime) and na(_slTime) ? "—" : na(_slTime) ? "SH" : na(_shTime) ? "SL" : _shTime > _slTime ? "SH" : _slTime > _shTime ? "SL" : "SH/SL"
 
-f_alert(_cond, _msg) =>
+f_alert_at(_cond, _msg, _t) =>
     if alertsEnabled and barstate.isconfirmed and _cond
-        alert(_msg, alert.freq_all)
+        tUse = na(_t) ? time_close : _t
+        msg = alertIncludeTime ? (_msg + " " + str.format_time(tUse, "dd/MM HH:mm", tz)) : _msg
+        alert(msg, alert.freq_all)
 
 f_vpVa(_arr, _poc, _pct) =>
     n = array.size(_arr)
@@ -843,7 +839,7 @@ f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, _doAlert) =>
         step = labelStackTicks * syminfo.mintick
         slot = labelAutoStack and (_style == label.style_label_up or _style == label.style_label_down) ? f_sigSlot(_txt) : 0
         yAdj = _style == label.style_label_up ? (_y - slot * step) : _style == label.style_label_down ? (_y + slot * step) : _y
-        f_alert(_doAlert and f_sigNotifyAllowed(_txt), syminfo.ticker + " " + _txt)
+        f_alert_at(_doAlert and f_sigNotifyAllowed(_txt), syminfo.ticker + " " + _txt, time_close)
         if labelMergeSameBar and not na(lastMerged) and lastMergedX == xAdj
             old = label.get_text(lastMerged)
             if not str.contains(old, _txt)
@@ -1317,17 +1313,17 @@ if instEnabled and canShowNonQm
         array.push(instSwingLowArr, instSwingLowLbl)
         array.push(instSwingLowTextArr, instSwingLowLblTxt)
 
-instNewSwingHigh = instEnabled and canShowNonQm and not na(instPH) and instBearishSFP[instLbRight] == false
-instNewSwingLow = instEnabled and canShowNonQm and not na(instPL) and instBullishSFP[instLbRight] == false
+instNewSwingHigh = instEnabled and canShowNonQm and instShowSwing and not na(instPH) and instBearishSFP[instLbRight] == false
+instNewSwingLow = instEnabled and canShowNonQm and instShowSwing and not na(instPL) and instBullishSFP[instLbRight] == false
 instSwingHighBar = instNewSwingHigh ? bar_index[instLbRight] : na
 instSwingLowBar = instNewSwingLow ? bar_index[instLbRight] : na
 
 if instNewSwingHigh and (na(lastInstSwingHighAlertBar) or lastInstSwingHighAlertBar != instSwingHighBar)
-    f_alert(notifySweep, syminfo.ticker + " Sweep Swing H")
+    f_alert_at(notifySweep, syminfo.ticker + " Sweep Swing H", time_close)
     lastInstSwingHighAlertBar := instSwingHighBar
 
 if instNewSwingLow and (na(lastInstSwingLowAlertBar) or lastInstSwingLowAlertBar != instSwingLowBar)
-    f_alert(notifySweep, syminfo.ticker + " Sweep Swing L")
+    f_alert_at(notifySweep, syminfo.ticker + " Sweep Swing L", time_close)
     lastInstSwingLowAlertBar := instSwingLowBar
 
 if canShowNonQm and instEnabled and instBullCond and not na(low[3])
@@ -1362,9 +1358,6 @@ if canShowNonQm and earlyShowPossibleSWH and earlySwingHigh
         f_addSigLabel(bar_index, high, "Possible SWH", color.yellow, color.black, label.style_label_down, size.small)
     else
         f_addSigLabel(bar_index, high, "SWH?", color.yellow, color.black, label.style_label_down, size.tiny)
-
-f_alert(canShowNonMain and not swingPatternOnlyAlerts and earlySwingLow, "Possibile Swing Low in formazione")
-f_alert(canShowNonMain and not swingPatternOnlyAlerts and earlySwingHigh, "Possibile Swing High in formazione")
 
 tfIsM1 = timeframe.isminutes and timeframe.multiplier == 1
 tfIsM5 = timeframe.isminutes and timeframe.multiplier == 5
@@ -1405,7 +1398,7 @@ if crtNewSoup
         if not na(crtSoupLbl)
             label.delete(crtSoupLbl)
         crtSoupLbl := label.new(bar_index, close, crtDir == 1 ? "CRT\nBULL" : "CRT\nBEAR", xloc=xloc.bar_index, style=crtDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.black, 0), textcolor=color.white, size=size.tiny)
-        f_alert(notifyCrt, syminfo.ticker + " " + (crtDir == 1 ? "CRT BULL" : "CRT BEAR"))
+        f_alert_at(notifyCrt, syminfo.ticker + " " + (crtDir == 1 ? "CRT BULL" : "CRT BEAR"), time_close)
     crtLastSoupTime := crtSoupT
 
 if (not crtEnabled) or onlyShSlMode or (not crtShowLabels) or (crtUseKillzone and not crtSoupKillOk)
@@ -1772,8 +1765,8 @@ if crtShowLabels and crtEntryShortOk
     if not na(crtEntryLbl)
         label.delete(crtEntryLbl)
     crtEntryLbl := label.new(bar_index, high, "CRT\nSELL", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.black, size=size.tiny)
-f_alert(notifyCrt and crtShowLabels and crtEntryLongOk, syminfo.ticker + " CRT BUY")
-f_alert(notifyCrt and crtShowLabels and crtEntryShortOk, syminfo.ticker + " CRT SELL")
+f_alert_at(notifyCrt and crtShowLabels and crtEntryLongOk, syminfo.ticker + " CRT BUY", time_close)
+f_alert_at(notifyCrt and crtShowLabels and crtEntryShortOk, syminfo.ticker + " CRT SELL", time_close)
 
 if (not crtEnabled) or onlyShSlMode or (not crtShowLabels)
     if not na(crtEntryLbl)
@@ -1813,7 +1806,7 @@ smtLenH1 = SmtUseTfPivots ? SmtPivotLen_H1 : SmtPivotLen
 f_smtFireOnce(_arr, _idx, _cond, _t, _msg) =>
     last = array.get(_arr, _idx)
     if _cond and (na(last) or last != _t)
-        f_alert(true, _msg)
+        f_alert_at(true, _msg, _t)
         array.set(_arr, _idx, _t)
 
 var int[] smtMtfLast = array.new_int(10, na)
@@ -2094,7 +2087,7 @@ if sfpEnabled and canShowNonQm
                         sfpPivH.wicky_label.set_text("SFP\n▼")
                     else
                         f_addSigLabelEx(bar_index, high, "SFP\n▼", sfpINV, sfpColBr, label.style_label_down, size.normal, false)
-                f_alert(true, syminfo.ticker + " SFP BEAR")
+                f_alert_at(true, syminfo.ticker + " SFP BEAR", time_close)
 
         if (bar_index - sfpPivH.swing_bix > 500) or close > sfpPivH.swing_prc
             sfpPivH.active := false
@@ -2160,7 +2153,7 @@ if sfpEnabled and canShowNonQm
                         sfpPivL.wicky_label.set_text("▲\nSFP")
                     else
                         f_addSigLabelEx(bar_index, low, "▲\nSFP", sfpINV, sfpColBl, label.style_label_up, size.normal, false)
-                f_alert(true, syminfo.ticker + " SFP BULL")
+                f_alert_at(true, syminfo.ticker + " SFP BULL", time_close)
 
         if (bar_index - sfpPivL.swing_bix > 500) or close < sfpPivL.swing_prc
             sfpPivL.active := false
@@ -2187,11 +2180,8 @@ var float bbLowVal = na
 bbSwingHigh = bbCalcActive and high[1] == bbH[1] and high < bbH
 bbSwingLow = bbCalcActive and low[1] == bbL[1] and low > bbL
 
-f_alert(bbAlertActive and bbSwingHigh, syminfo.ticker + " BB SWING HIGH")
-f_alert(bbAlertActive and bbSwingLow, syminfo.ticker + " BB SWING LOW")
-f_alert(bbDrawActive and bbBgAlertsEnabled and bbSwingHigh, syminfo.ticker + " BB HIGHLIGHT HIGH")
-f_alert(bbDrawActive and bbBgAlertsEnabled and bbSwingLow, syminfo.ticker + " BB HIGHLIGHT LOW")
-bgcolor(bbDrawActive and bbSwingHigh ? color.new(bbHvwapCol, 85) : bbDrawActive and bbSwingLow ? color.new(bbLvwapCol, 85) : na)
+f_alert_at(bbAlertActive and bbSwingHigh, syminfo.ticker + " BB SWING HIGH", time_close)
+f_alert_at(bbAlertActive and bbSwingLow, syminfo.ticker + " BB SWING LOW", time_close)
 
 if bbSwingHigh
     bbHighIndex := bar_index - 1
@@ -2503,7 +2493,7 @@ if qmEnabled and (not onlyShSlMode or onlyQmMode) and array.size(qmTypes) > 5
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh2 + (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(ih1 + beMove + 1, vh1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
-        f_alert(notifyQm, syminfo.ticker + " QM SELL")
+        f_alert_at(notifyQm, syminfo.ticker + " QM SELL", time_close)
     if not na(qmBearStart) and qmBearStart != vh2
         qmCheckBe := 0
 
@@ -2525,6 +2515,6 @@ if qmEnabled and (not onlyShSlMode or onlyQmMode) and array.size(qmTypes) > 5
         f_qmPushLabel(label.new(il1 + buMove + 1, vl2 - (qmATR / 2), "SL", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(il1 + buMove + 1, vl3, "TP1", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
         f_qmPushLabel(label.new(il1 + buMove + 1, vl1, "TP2", color=color.rgb(255, 255, 255, 100), style=label.style_text_outline))
-        f_alert(notifyQm, syminfo.ticker + " QM BUY")
+        f_alert_at(notifyQm, syminfo.ticker + " QM BUY", time_close)
     if not na(qmBullStart) and qmBullStart != vl2
         qmCheckBu := 0

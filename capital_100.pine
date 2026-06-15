@@ -1817,7 +1817,7 @@ f_smtFireOnce(_arr, _idx, _cond, _t, _msg) =>
         array.set(_arr, _idx, _t)
 
 var int[] smtMtfLast = array.new_int(10, na)
-if barstate.isconfirmed and SmtEnabled and SmtMtfAlertsEnabled and not onlyShSlMode and notifySmt
+if barstate.isconfirmed and SmtEnabled and SmtMtfAlertsEnabled and notifySmt
     smt1BearM1 = not na(smtMainM1Ph0) and not na(smtMainM1Ph1) and not na(smtS1M1Ph0) and not na(smtS1M1Ph1) and smtMainM1Ph0 > smtMainM1Ph1 and smtS1M1Ph0 <= smtS1M1Ph1
     smt1BullM1 = not na(smtMainM1Pl0) and not na(smtMainM1Pl1) and not na(smtS1M1Pl0) and not na(smtS1M1Pl1) and smtMainM1Pl0 < smtMainM1Pl1 and smtS1M1Pl0 >= smtS1M1Pl1
     f_smtFireOnce(smtMtfLast, 0, notifyTfM1 and smt1BearM1, smtMainM1PhT, syminfo.ticker + " SMT1 BEAR M1")
@@ -1945,7 +1945,7 @@ if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossSho
 
 var int[] rsiMtfLast = array.new_int(10, na)
 
-if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossMtfAlertsEnabled and notifyRsi
+if barstate.isconfirmed and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossMtfAlertsEnabled and notifyRsi
     f_smtFireOnce(rsiMtfLast, 0, notifyTfM1 and rsiMtfM1Up, rsiMtfM1Tc, syminfo.ticker + " RSI↑ M1")
     f_smtFireOnce(rsiMtfLast, 1, notifyTfM1 and rsiMtfM1Dn, rsiMtfM1Tc, syminfo.ticker + " RSI↓ M1")
     f_smtFireOnce(rsiMtfLast, 2, notifyTfM3 and rsiMtfM3Up, rsiMtfM3Tc, syminfo.ticker + " RSI↑ M3")

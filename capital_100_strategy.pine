@@ -1,5 +1,5 @@
 //@version=5
-indicator("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_polylines_count=100, max_bars_back=5000)
+strategy("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, pyramiding=0, max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_polylines_count=100, max_bars_back=5000, default_qty_type=strategy.fixed, default_qty_value=1)
 
 // --- INPUT ---
 showSessions = input.bool(false, "Mostra Box Sessioni (Asia, London, NY)")
@@ -79,18 +79,11 @@ SmtDailyExtremeBufferTicks = input.int(0, "Distanza max SMT da Daily High/Low (t
 
 alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
 alertIncludeTime = input.bool(true, "Includi orario nella notifica", group="Alert")
-emaCrossTf = input.string("60", "EMA 50/200 TF", options=["1", "5", "15", "60"], group="Alert")
-emaFastM1 = input.int(50, "EMA veloce M1", minval=1, group="Alert")
-emaSlowM1 = input.int(200, "EMA lenta M1", minval=1, group="Alert")
-emaFastM5 = input.int(50, "EMA veloce M5", minval=1, group="Alert")
-emaSlowM5 = input.int(200, "EMA lenta M5", minval=1, group="Alert")
-emaFastM15 = input.int(50, "EMA veloce M15", minval=1, group="Alert")
-emaSlowM15 = input.int(200, "EMA lenta M15", minval=1, group="Alert")
-emaFastH1 = input.int(50, "EMA veloce H1", minval=1, group="Alert")
-emaSlowH1 = input.int(200, "EMA lenta H1", minval=1, group="Alert")
-notifyEma50200 = input.bool(true, "Notifica: EMA 50/200 Cross", group="Alert")
-showEma50200 = input.bool(true, "Mostra EMA 50/200", group="Alert")
+notifyEma50200 = input.bool(true, "Notifica: EMA 50/200 Cross (H1)", group="Alert")
+showEma50200 = input.bool(true, "Mostra EMA 50/200 (H1)", group="Alert")
 showEma50200Signals = input.bool(true, "Mostra segnali EMA 50/200 (BUY/SELL)", group="Alert")
+emaStrategyEnabled = input.bool(true, "Strategy: Apri posizioni su EMA 50/200 (H1)", group="Strategy")
+emaStrategyQtyPct = input.int(100, "Strategy: Size %", minval=1, maxval=100, group="Strategy")
 notifyGeneral = input.bool(true, "Notifica: Generali (BUY/SELL/OVER/KISS...)", group="Alert")
 notifyShSl = input.bool(true, "Notifica: SH/SL/DIV", group="Alert")
 notifyRsi = input.bool(true, "Notifica: RSI (↑/↓ + Pattern + MTF)", group="Alert")
@@ -448,11 +441,11 @@ else
 
 var label dHighLbl = na
 var label dLowLbl = na
-plot(canShowNonMain and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
-plot(canShowNonShSl and showDailyHL and onlyAllowDailyHL ? dHigh : na, "Daily High", color.red, 1, plot.style_linebr)
-plot(canShowNonShSl and showDailyHL and onlyAllowDailyHL ? dLow : na, "Daily Low", color.lime, 1, plot.style_linebr)
+plot(canShowNonMain and showUntilNyClose and showDailyOpen ? dailyOpen : na, "Daily Open", color.new(color.purple, 50), 1, plot.style_linebr)
+plot(canShowNonShSl and showUntilNyClose and showDailyHL and onlyAllowDailyHL ? dHigh : na, "Daily High", color.red, 1, plot.style_linebr)
+plot(canShowNonShSl and showUntilNyClose and showDailyHL and onlyAllowDailyHL ? dLow : na, "Daily Low", color.lime, 1, plot.style_linebr)
 
-if canShowNonMain and showDailyHL and not na(dHigh) and not na(dLow)
+if canShowNonMain and showUntilNyClose and showDailyHL and not na(dHigh) and not na(dLow)
     if na(dHighLbl)
         dHighLbl := label.new(bar_index, dHigh, "Daily High", color=color.new(color.white, 100), textcolor=color.red, style=label.style_label_right, size=size.small)
     else
@@ -1800,26 +1793,36 @@ if barstate.isconfirmed and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCro
     f_smtFireOnce(rsiMtfLast, 8, notifyTfH1 and rsiMtfH1Up, rsiMtfH1Tc, syminfo.ticker + " RSI↑ H1")
     f_smtFireOnce(rsiMtfLast, 9, notifyTfH1 and rsiMtfH1Dn, rsiMtfH1Tc, syminfo.ticker + " RSI↓ H1")
 
-emaTfLabel = emaCrossTf == "1" ? "M1" : emaCrossTf == "5" ? "M5" : emaCrossTf == "15" ? "M15" : "H1"
-emaTfNotifyOn = emaCrossTf == "1" ? notifyTfM1 : emaCrossTf == "5" ? notifyTfM5 : emaCrossTf == "15" ? notifyTfM15 : notifyTfH1
-emaFastLen = emaCrossTf == "1" ? emaFastM1 : emaCrossTf == "5" ? emaFastM5 : emaCrossTf == "15" ? emaFastM15 : emaFastH1
-emaSlowLen = emaCrossTf == "1" ? emaSlowM1 : emaCrossTf == "5" ? emaSlowM5 : emaCrossTf == "15" ? emaSlowM15 : emaSlowH1
-[emaUpSel, emaDnSel, emaTcSel, emaFastSel, emaSlowSel] = request.security(syminfo.tickerid, emaCrossTf, [barstate.isconfirmed and ta.crossover(ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)), barstate.isconfirmed and ta.crossunder(ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)), time_close, ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)], barmerge.gaps_off, barmerge.lookahead_off)
+[emaUpH1, emaDnH1, emaTcH1, ema50H1, ema200H1] = request.security(syminfo.tickerid, "60", [barstate.isconfirmed and ta.crossover(ta.ema(close, 50), ta.ema(close, 200)), barstate.isconfirmed and ta.crossunder(ta.ema(close, 50), ta.ema(close, 200)), time_close, ta.ema(close, 50), ta.ema(close, 200)], barmerge.gaps_off, barmerge.lookahead_off)
 var int lastEmaUpTc = na
 var int lastEmaDnTc = na
-if notifyEma50200 and emaTfNotifyOn and emaUpSel and (na(lastEmaUpTc) or lastEmaUpTc != emaTcSel)
+var int lastEmaStratUpTc = na
+var int lastEmaStratDnTc = na
+if notifyEma50200 and notifyTfH1 and emaUpH1 and (na(lastEmaUpTc) or lastEmaUpTc != emaTcH1)
     if showEma50200Signals
         f_addSigLabelEx(bar_index, low, "EMA\nBUY", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny, false)
-    f_alert_at(true, syminfo.ticker + " EMA50/EMA200 BUY " + emaTfLabel, emaTcSel)
-    lastEmaUpTc := emaTcSel
-if notifyEma50200 and emaTfNotifyOn and emaDnSel and (na(lastEmaDnTc) or lastEmaDnTc != emaTcSel)
+    f_alert_at(true, syminfo.ticker + " EMA50/EMA200 BUY", emaTcH1)
+    lastEmaUpTc := emaTcH1
+if notifyEma50200 and notifyTfH1 and emaDnH1 and (na(lastEmaDnTc) or lastEmaDnTc != emaTcH1)
     if showEma50200Signals
         f_addSigLabelEx(bar_index, high, "EMA\nSELL", color.new(color.red, 0), color.white, label.style_label_down, size.tiny, false)
-    f_alert_at(true, syminfo.ticker + " EMA50/EMA200 SELL " + emaTfLabel, emaTcSel)
-    lastEmaDnTc := emaTcSel
+    f_alert_at(true, syminfo.ticker + " EMA50/EMA200 SELL", emaTcH1)
+    lastEmaDnTc := emaTcH1
 
-plot(showEma50200 ? emaFastSel : na, "EMA Fast", color.new(color.orange, 0), 2, plot.style_line)
-plot(showEma50200 ? emaSlowSel : na, "EMA Slow", color.new(color.blue, 0), 2, plot.style_line)
+if emaStrategyEnabled
+    rawQty = close > 0 ? (strategy.equity * (emaStrategyQtyPct / 100.0)) / close : 0.0
+    emaStrategyQty = (syminfo.type == "stock" or syminfo.type == "futures") ? math.max(1.0, math.floor(rawQty)) : math.max(0.00000001, rawQty)
+    if emaUpH1 and (na(lastEmaStratUpTc) or lastEmaStratUpTc != emaTcH1)
+        strategy.close("EMA-S")
+        strategy.entry("EMA-L", strategy.long, qty=emaStrategyQty)
+        lastEmaStratUpTc := emaTcH1
+    else if emaDnH1 and (na(lastEmaStratDnTc) or lastEmaStratDnTc != emaTcH1)
+        strategy.close("EMA-L")
+        strategy.entry("EMA-S", strategy.short, qty=emaStrategyQty)
+        lastEmaStratDnTc := emaTcH1
+
+plot(showEma50200 ? ema50H1 : na, "EMA 50 (H1)", color.new(color.orange, 0), 2, plot.style_line)
+plot(showEma50200 ? ema200H1 : na, "EMA 200 (H1)", color.new(color.blue, 0), 2, plot.style_line)
 
 swingBullDivPlot = canShowNonQm and swingBullDiv and (not swingDivShowDailyExtreme or divNearDailyLow)
 swingBearDivPlot = canShowNonQm and swingBearDiv and (not swingDivShowDailyExtreme or divNearDailyHigh)

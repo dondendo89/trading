@@ -79,7 +79,7 @@ SmtDailyExtremeBufferTicks = input.int(0, "Distanza max SMT da Daily High/Low (t
 
 alertsEnabled = input.bool(true, "Alert (Any alert() function call)", group="Alert")
 alertIncludeTime = input.bool(true, "Includi orario nella notifica", group="Alert")
-emaCrossTf = input.string("60", "EMA 50/200 TF", options=["1", "5", "15", "60"], group="Alert")
+emaCrossTf = input.string("60", "EMA Cross TF", options=["1", "5", "15", "60"], group="Alert")
 emaFastM1 = input.int(50, "EMA veloce M1", minval=1, group="Alert")
 emaSlowM1 = input.int(200, "EMA lenta M1", minval=1, group="Alert")
 emaFastM5 = input.int(50, "EMA veloce M5", minval=1, group="Alert")
@@ -88,9 +88,9 @@ emaFastM15 = input.int(50, "EMA veloce M15", minval=1, group="Alert")
 emaSlowM15 = input.int(200, "EMA lenta M15", minval=1, group="Alert")
 emaFastH1 = input.int(50, "EMA veloce H1", minval=1, group="Alert")
 emaSlowH1 = input.int(200, "EMA lenta H1", minval=1, group="Alert")
-notifyEma50200 = input.bool(true, "Notifica: EMA 50/200 Cross", group="Alert")
-showEma50200 = input.bool(true, "Mostra EMA 50/200", group="Alert")
-showEma50200Signals = input.bool(true, "Mostra segnali EMA 50/200 (BUY/SELL)", group="Alert")
+notifyEma50200 = input.bool(true, "Notifica: EMA Cross", group="Alert")
+showEma50200 = input.bool(true, "Mostra EMA Cross", group="Alert")
+showEma50200Signals = input.bool(true, "Mostra segnali EMA Cross (BUY/SELL)", group="Alert")
 notifyGeneral = input.bool(true, "Notifica: Generali (BUY/SELL/OVER/KISS...)", group="Alert")
 notifyShSl = input.bool(true, "Notifica: SH/SL/DIV", group="Alert")
 notifyRsi = input.bool(true, "Notifica: RSI (↑/↓ + Pattern + MTF)", group="Alert")
@@ -105,6 +105,7 @@ notifyTfM3 = input.bool(true, "Notifica TF: M3", group="Alert")
 notifyTfM5 = input.bool(true, "Notifica TF: M5", group="Alert")
 notifyTfM15 = input.bool(true, "Notifica TF: M15", group="Alert")
 notifyTfH1 = input.bool(true, "Notifica TF: H1", group="Alert")
+mtfAlertsOnlyOnMatchingChartTf = input.bool(true, "MTF: Alert solo se sei sul TF del segnale", group="Alert")
 
 labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
 labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="Layout")
@@ -185,7 +186,6 @@ onlyQmShowSessions = input.bool(false, "Mostra anche Sessioni", group="QM")
 onlyQmShowRsiCross = input.bool(false, "Mostra anche incrocio RSI", group="QM")
 onlyQmShowRsiMW = input.bool(false, "Mostra anche RSI M/W", group="QM")
 onlyQmShowHs = input.bool(false, "Mostra anche Hammer/Shooting", group="QM")
-onlyBelugaMode = input.bool(false, "Mostra solo Swing BigBeluga", group="QM")
 qmUseTfPivots = input.bool(true, "Usa pivot per TF (M1/M5/M15/H1/H4)", group="QM")
 qmPp = input.int(5, "Pivot Period (fallback)", minval=1, group="QM")
 qmPp_M1 = input.int(5, "M1 - Pivot Period", minval=1, group="QM")
@@ -199,25 +199,7 @@ qmLiveToCurrent = input.bool(true, "QM Live - Ultimo punto → prezzo attuale", 
 qmLiveColorW = input.color(color.new(color.lime, 0), "QM Live - Colore W (Bull)", group="QM")
 qmLiveColorM = input.color(color.new(color.red, 0), "QM Live - Colore M (Bear)", group="QM")
 qmLiveWidth = input.int(2, "QM Live - Spessore", minval=1, maxval=5, group="QM")
-qmLiveShowBelugaSwing = input.bool(false, "QM Live - Mostra Swing BigBeluga", group="QM")
-bbAlertsEnabled = input.bool(true, "BigBeluga - Alert Swing (HIGH/LOW)", group="Alert")
-bbUseTfLen = input.bool(true, "BigBeluga - Usa periodo per TF (M1/M15/H1/H4)", group="QM")
-bbPreset = input.string("Custom", "BigBeluga - Preset", options=["Custom", "Bilanciato", "Veloce", "Conservativo"], group="QM")
-bbLen = input.int(50, "BigBeluga - Length (fallback)", minval=1, group="QM")
-bbLen_M1 = input.int(50, "M1 - Length", minval=1, group="QM")
-bbLen_M15 = input.int(50, "M15 - Length", minval=1, group="QM")
-bbLen_H1 = input.int(50, "H1 - Length", minval=1, group="QM")
-bbLen_H4 = input.int(50, "H4 - Length", minval=1, group="QM")
-bbLvwapCol = input.color(color.lime, "BigBeluga - Low VWAP", group="QM")
-bbHvwapCol = input.color(color.blue, "BigBeluga - High VWAP", group="QM")
-bbWidth = input.int(2, "BigBeluga - Line Width", minval=1, maxval=5, group="QM")
-
-bbPresetM1 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 30 : bbPreset == "Conservativo" ? 80 : na
-bbPresetM15 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 35 : bbPreset == "Conservativo" ? 70 : na
-bbPresetH1 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 40 : bbPreset == "Conservativo" ? 60 : na
-bbPresetH4 = bbPreset == "Bilanciato" ? 50 : bbPreset == "Veloce" ? 50 : bbPreset == "Conservativo" ? 70 : na
-
-onlyMainMode = onlyBelugaMode or rsiSessionsOnlyMode
+onlyMainMode = rsiSessionsOnlyMode
 onlyAllowDailyHL = (not onlyMainMode) or (onlyQmMode and onlyQmShowDailyHL)
 onlyAllowSessions = (not onlyMainMode) or (onlyQmMode and onlyQmShowSessions) or rsiSessionsOnlyMode
 
@@ -291,7 +273,8 @@ swingRsiSellCons = input.int(60, "RSI SELL Conservative (≥)", minval=50, maxva
 swingMacdConfirmEnabled = input.bool(false, "Conferma MACD cross", group="Swing Pattern")
 swingRequireHammerShootingForShSl = input.bool(false, "Filtro Hammer (SL) / Shooting (SH)", group="Swing Pattern")
 swingMtfConfirmH1 = input.bool(true, "Conferma SH/SL con H1 (solo M1/M5/M15)", group="Swing Pattern")
-onlyShSlMode = input.bool(false, "Mostra solo Swing Pattern (SH/SL)", group="Swing Pattern")
+swingShowShSlLabels = input.bool(true, "Mostra SH/SL (senza nascondere altro)", group="Swing Pattern")
+onlyShSlMode = input.bool(false, "Mostra solo SH/SL (nasconde gli altri)", group="Swing Pattern")
 
 swingRsiLenSel = swingRsiUseTfLen ? (timeframe.isminutes and timeframe.multiplier == 1 ? swingBullDivRsiLen_M1 : timeframe.isminutes and timeframe.multiplier == 5 ? swingBullDivRsiLen_M5 : timeframe.isminutes and timeframe.multiplier == 15 ? swingBullDivRsiLen_M15 : timeframe.isminutes and timeframe.multiplier == 60 ? swingBullDivRsiLen_H1 : timeframe.isminutes and timeframe.multiplier == 240 ? swingBullDivRsiLen_H4 : swingBullDivRsiLen) : swingBullDivRsiLen
 
@@ -1210,6 +1193,7 @@ if canShowNonQm and earlyShowPossibleSWH and earlySwingHigh
         f_addSigLabel(bar_index, high, "SWH?", color.yellow, color.black, label.style_label_down, size.tiny)
 
 tfIsM1 = timeframe.isminutes and timeframe.multiplier == 1
+tfIsM3 = timeframe.isminutes and timeframe.multiplier == 3
 tfIsM5 = timeframe.isminutes and timeframe.multiplier == 5
 tfIsM15 = timeframe.isminutes and timeframe.multiplier == 15
 tfIsH1 = timeframe.isminutes and timeframe.multiplier == 60
@@ -1259,8 +1243,8 @@ if (not crtEnabled) or onlyShSlMode or (not crtShowLabels) or (crtUseKillzone an
 crtEntryLongRaw = crtEnabled and canShowNonMain and crtEntryLong and crtBullOk and crtSoupKillOk
 crtEntryShortRaw = crtEnabled and canShowNonMain and crtEntryShort and crtBearOk and crtSoupKillOk
 
-swingLbL = swingPatternUseTfBars ? (tfIsM1 ? swingPatternLeftBars_M1 : tfIsM15 ? swingPatternLeftBars_M15 : tfIsH1 ? swingPatternLeftBars_H1 : tfIsH4 ? swingPatternLeftBars_H4 : swingPatternLeftBars) : swingPatternLeftBars
-swingLbR = swingPatternUseTfBars ? (tfIsM1 ? swingPatternRightBars_M1 : tfIsM15 ? swingPatternRightBars_M15 : tfIsH1 ? swingPatternRightBars_H1 : tfIsH4 ? swingPatternRightBars_H4 : swingPatternRightBars) : swingPatternRightBars
+swingLbL = swingPatternUseTfBars ? (tfIsM1 or tfIsM3 ? swingPatternLeftBars_M1 : tfIsM15 ? swingPatternLeftBars_M15 : tfIsH1 ? swingPatternLeftBars_H1 : tfIsH4 ? swingPatternLeftBars_H4 : swingPatternLeftBars) : swingPatternLeftBars
+swingLbR = swingPatternUseTfBars ? (tfIsM1 or tfIsM3 ? swingPatternRightBars_M1 : tfIsM15 ? swingPatternRightBars_M15 : tfIsH1 ? swingPatternRightBars_H1 : tfIsH4 ? swingPatternRightBars_H4 : swingPatternRightBars) : swingPatternRightBars
 
 swingWin = swingLbL + swingLbR
 swingCenter = swingLbR
@@ -1661,30 +1645,36 @@ f_smtFireOnce(_arr, _idx, _cond, _t, _msg) =>
 
 var int[] smtMtfLast = array.new_int(10, na)
 if barstate.isconfirmed and SmtEnabled and SmtMtfAlertsEnabled and notifySmt
+    smtLocalAlertOn = SmtShowLabels and not onlyShSlMode
+    allowMtfM1 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM1
+    allowMtfM3 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM3
+    allowMtfM5 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM5
+    allowMtfM15 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM15
+    allowMtfH1 = not mtfAlertsOnlyOnMatchingChartTf or tfIsH1
     smt1BearM1 = not na(smtMainM1Ph0) and not na(smtMainM1Ph1) and not na(smtS1M1Ph0) and not na(smtS1M1Ph1) and smtMainM1Ph0 > smtMainM1Ph1 and smtS1M1Ph0 <= smtS1M1Ph1
     smt1BullM1 = not na(smtMainM1Pl0) and not na(smtMainM1Pl1) and not na(smtS1M1Pl0) and not na(smtS1M1Pl1) and smtMainM1Pl0 < smtMainM1Pl1 and smtS1M1Pl0 >= smtS1M1Pl1
-    f_smtFireOnce(smtMtfLast, 0, notifyTfM1 and smt1BearM1, smtMainM1PhT, syminfo.ticker + " SMT1 BEAR M1")
-    f_smtFireOnce(smtMtfLast, 1, notifyTfM1 and smt1BullM1, smtMainM1PlT, syminfo.ticker + " SMT1 BULL M1")
+    f_smtFireOnce(smtMtfLast, 0, allowMtfM1 and notifyTfM1 and smt1BearM1 and not (tfIsM1 and smtLocalAlertOn), smtMainM1PhT, syminfo.ticker + " SMT1 BEAR M1")
+    f_smtFireOnce(smtMtfLast, 1, allowMtfM1 and notifyTfM1 and smt1BullM1 and not (tfIsM1 and smtLocalAlertOn), smtMainM1PlT, syminfo.ticker + " SMT1 BULL M1")
 
     smt1BearM3 = not na(smtMainM3Ph0) and not na(smtMainM3Ph1) and not na(smtS1M3Ph0) and not na(smtS1M3Ph1) and smtMainM3Ph0 > smtMainM3Ph1 and smtS1M3Ph0 <= smtS1M3Ph1
     smt1BullM3 = not na(smtMainM3Pl0) and not na(smtMainM3Pl1) and not na(smtS1M3Pl0) and not na(smtS1M3Pl1) and smtMainM3Pl0 < smtMainM3Pl1 and smtS1M3Pl0 >= smtS1M3Pl1
-    f_smtFireOnce(smtMtfLast, 2, notifyTfM3 and smt1BearM3, smtMainM3PhT, syminfo.ticker + " SMT1 BEAR M3")
-    f_smtFireOnce(smtMtfLast, 3, notifyTfM3 and smt1BullM3, smtMainM3PlT, syminfo.ticker + " SMT1 BULL M3")
+    f_smtFireOnce(smtMtfLast, 2, allowMtfM3 and notifyTfM3 and smt1BearM3 and not (tfIsM3 and smtLocalAlertOn), smtMainM3PhT, syminfo.ticker + " SMT1 BEAR M3")
+    f_smtFireOnce(smtMtfLast, 3, allowMtfM3 and notifyTfM3 and smt1BullM3 and not (tfIsM3 and smtLocalAlertOn), smtMainM3PlT, syminfo.ticker + " SMT1 BULL M3")
 
     smt1BearM5 = not na(smtMainM5Ph0) and not na(smtMainM5Ph1) and not na(smtS1M5Ph0) and not na(smtS1M5Ph1) and smtMainM5Ph0 > smtMainM5Ph1 and smtS1M5Ph0 <= smtS1M5Ph1
     smt1BullM5 = not na(smtMainM5Pl0) and not na(smtMainM5Pl1) and not na(smtS1M5Pl0) and not na(smtS1M5Pl1) and smtMainM5Pl0 < smtMainM5Pl1 and smtS1M5Pl0 >= smtS1M5Pl1
-    f_smtFireOnce(smtMtfLast, 4, notifyTfM5 and smt1BearM5, smtMainM5PhT, syminfo.ticker + " SMT1 BEAR M5")
-    f_smtFireOnce(smtMtfLast, 5, notifyTfM5 and smt1BullM5, smtMainM5PlT, syminfo.ticker + " SMT1 BULL M5")
+    f_smtFireOnce(smtMtfLast, 4, allowMtfM5 and notifyTfM5 and smt1BearM5 and not (tfIsM5 and smtLocalAlertOn), smtMainM5PhT, syminfo.ticker + " SMT1 BEAR M5")
+    f_smtFireOnce(smtMtfLast, 5, allowMtfM5 and notifyTfM5 and smt1BullM5 and not (tfIsM5 and smtLocalAlertOn), smtMainM5PlT, syminfo.ticker + " SMT1 BULL M5")
 
     smt1BearM15 = not na(smtMainM15Ph0) and not na(smtMainM15Ph1) and not na(smtS1M15Ph0) and not na(smtS1M15Ph1) and smtMainM15Ph0 > smtMainM15Ph1 and smtS1M15Ph0 <= smtS1M15Ph1
     smt1BullM15 = not na(smtMainM15Pl0) and not na(smtMainM15Pl1) and not na(smtS1M15Pl0) and not na(smtS1M15Pl1) and smtMainM15Pl0 < smtMainM15Pl1 and smtS1M15Pl0 >= smtS1M15Pl1
-    f_smtFireOnce(smtMtfLast, 6, notifyTfM15 and smt1BearM15, smtMainM15PhT, syminfo.ticker + " SMT1 BEAR M15")
-    f_smtFireOnce(smtMtfLast, 7, notifyTfM15 and smt1BullM15, smtMainM15PlT, syminfo.ticker + " SMT1 BULL M15")
+    f_smtFireOnce(smtMtfLast, 6, allowMtfM15 and notifyTfM15 and smt1BearM15 and not (tfIsM15 and smtLocalAlertOn), smtMainM15PhT, syminfo.ticker + " SMT1 BEAR M15")
+    f_smtFireOnce(smtMtfLast, 7, allowMtfM15 and notifyTfM15 and smt1BullM15 and not (tfIsM15 and smtLocalAlertOn), smtMainM15PlT, syminfo.ticker + " SMT1 BULL M15")
 
     smt1BearH1 = not na(smtMainH1Ph0) and not na(smtMainH1Ph1) and not na(smtS1H1Ph0) and not na(smtS1H1Ph1) and smtMainH1Ph0 > smtMainH1Ph1 and smtS1H1Ph0 <= smtS1H1Ph1
     smt1BullH1 = not na(smtMainH1Pl0) and not na(smtMainH1Pl1) and not na(smtS1H1Pl0) and not na(smtS1H1Pl1) and smtMainH1Pl0 < smtMainH1Pl1 and smtS1H1Pl0 >= smtS1H1Pl1
-    f_smtFireOnce(smtMtfLast, 8, notifyTfH1 and smt1BearH1, smtMainH1PhT, syminfo.ticker + " SMT1 BEAR H1")
-    f_smtFireOnce(smtMtfLast, 9, notifyTfH1 and smt1BullH1, smtMainH1PlT, syminfo.ticker + " SMT1 BULL H1")
+    f_smtFireOnce(smtMtfLast, 8, allowMtfH1 and notifyTfH1 and smt1BearH1 and not (tfIsH1 and smtLocalAlertOn), smtMainH1PhT, syminfo.ticker + " SMT1 BEAR H1")
+    f_smtFireOnce(smtMtfLast, 9, allowMtfH1 and notifyTfH1 and smt1BullH1 and not (tfIsH1 and smtLocalAlertOn), smtMainH1PlT, syminfo.ticker + " SMT1 BULL H1")
 smtDailyBuf = SmtDailyExtremeBufferTicks * syminfo.mintick
 dHighAtSmtPivot = dHigh[SmtPivot]
 dLowAtSmtPivot = dLow[SmtPivot]
@@ -1789,33 +1779,40 @@ if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossSho
 var int[] rsiMtfLast = array.new_int(10, na)
 
 if barstate.isconfirmed and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossMtfAlertsEnabled and notifyRsi
-    f_smtFireOnce(rsiMtfLast, 0, notifyTfM1 and rsiMtfM1Up, rsiMtfM1Tc, syminfo.ticker + " RSI↑ M1")
-    f_smtFireOnce(rsiMtfLast, 1, notifyTfM1 and rsiMtfM1Dn, rsiMtfM1Tc, syminfo.ticker + " RSI↓ M1")
-    f_smtFireOnce(rsiMtfLast, 2, notifyTfM3 and rsiMtfM3Up, rsiMtfM3Tc, syminfo.ticker + " RSI↑ M3")
-    f_smtFireOnce(rsiMtfLast, 3, notifyTfM3 and rsiMtfM3Dn, rsiMtfM3Tc, syminfo.ticker + " RSI↓ M3")
-    f_smtFireOnce(rsiMtfLast, 4, notifyTfM5 and rsiMtfM5Up, rsiMtfM5Tc, syminfo.ticker + " RSI↑ M5")
-    f_smtFireOnce(rsiMtfLast, 5, notifyTfM5 and rsiMtfM5Dn, rsiMtfM5Tc, syminfo.ticker + " RSI↓ M5")
-    f_smtFireOnce(rsiMtfLast, 6, notifyTfM15 and rsiMtfM15Up, rsiMtfM15Tc, syminfo.ticker + " RSI↑ M15")
-    f_smtFireOnce(rsiMtfLast, 7, notifyTfM15 and rsiMtfM15Dn, rsiMtfM15Tc, syminfo.ticker + " RSI↓ M15")
-    f_smtFireOnce(rsiMtfLast, 8, notifyTfH1 and rsiMtfH1Up, rsiMtfH1Tc, syminfo.ticker + " RSI↑ H1")
-    f_smtFireOnce(rsiMtfLast, 9, notifyTfH1 and rsiMtfH1Dn, rsiMtfH1Tc, syminfo.ticker + " RSI↓ H1")
+    rsiLocalAlertOn = rsiCrossShowLabels and not onlyShSlMode
+    allowMtfM1 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM1
+    allowMtfM3 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM3
+    allowMtfM5 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM5
+    allowMtfM15 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM15
+    allowMtfH1 = not mtfAlertsOnlyOnMatchingChartTf or tfIsH1
+    f_smtFireOnce(rsiMtfLast, 0, allowMtfM1 and notifyTfM1 and rsiMtfM1Up and not (tfIsM1 and rsiLocalAlertOn), rsiMtfM1Tc, syminfo.ticker + " RSI↑ M1")
+    f_smtFireOnce(rsiMtfLast, 1, allowMtfM1 and notifyTfM1 and rsiMtfM1Dn and not (tfIsM1 and rsiLocalAlertOn), rsiMtfM1Tc, syminfo.ticker + " RSI↓ M1")
+    f_smtFireOnce(rsiMtfLast, 2, allowMtfM3 and notifyTfM3 and rsiMtfM3Up and not (tfIsM3 and rsiLocalAlertOn), rsiMtfM3Tc, syminfo.ticker + " RSI↑ M3")
+    f_smtFireOnce(rsiMtfLast, 3, allowMtfM3 and notifyTfM3 and rsiMtfM3Dn and not (tfIsM3 and rsiLocalAlertOn), rsiMtfM3Tc, syminfo.ticker + " RSI↓ M3")
+    f_smtFireOnce(rsiMtfLast, 4, allowMtfM5 and notifyTfM5 and rsiMtfM5Up and not (tfIsM5 and rsiLocalAlertOn), rsiMtfM5Tc, syminfo.ticker + " RSI↑ M5")
+    f_smtFireOnce(rsiMtfLast, 5, allowMtfM5 and notifyTfM5 and rsiMtfM5Dn and not (tfIsM5 and rsiLocalAlertOn), rsiMtfM5Tc, syminfo.ticker + " RSI↓ M5")
+    f_smtFireOnce(rsiMtfLast, 6, allowMtfM15 and notifyTfM15 and rsiMtfM15Up and not (tfIsM15 and rsiLocalAlertOn), rsiMtfM15Tc, syminfo.ticker + " RSI↑ M15")
+    f_smtFireOnce(rsiMtfLast, 7, allowMtfM15 and notifyTfM15 and rsiMtfM15Dn and not (tfIsM15 and rsiLocalAlertOn), rsiMtfM15Tc, syminfo.ticker + " RSI↓ M15")
+    f_smtFireOnce(rsiMtfLast, 8, allowMtfH1 and notifyTfH1 and rsiMtfH1Up and not (tfIsH1 and rsiLocalAlertOn), rsiMtfH1Tc, syminfo.ticker + " RSI↑ H1")
+    f_smtFireOnce(rsiMtfLast, 9, allowMtfH1 and notifyTfH1 and rsiMtfH1Dn and not (tfIsH1 and rsiLocalAlertOn), rsiMtfH1Tc, syminfo.ticker + " RSI↓ H1")
 
 emaTfLabel = emaCrossTf == "1" ? "M1" : emaCrossTf == "5" ? "M5" : emaCrossTf == "15" ? "M15" : "H1"
 emaTfNotifyOn = emaCrossTf == "1" ? notifyTfM1 : emaCrossTf == "5" ? notifyTfM5 : emaCrossTf == "15" ? notifyTfM15 : notifyTfH1
 emaFastLen = emaCrossTf == "1" ? emaFastM1 : emaCrossTf == "5" ? emaFastM5 : emaCrossTf == "15" ? emaFastM15 : emaFastH1
 emaSlowLen = emaCrossTf == "1" ? emaSlowM1 : emaCrossTf == "5" ? emaSlowM5 : emaCrossTf == "15" ? emaSlowM15 : emaSlowH1
+emaCrossName = "EMA" + str.tostring(emaFastLen) + "/" + str.tostring(emaSlowLen)
 [emaUpSel, emaDnSel, emaTcSel, emaFastSel, emaSlowSel] = request.security(syminfo.tickerid, emaCrossTf, [barstate.isconfirmed and ta.crossover(ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)), barstate.isconfirmed and ta.crossunder(ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)), time_close, ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)], barmerge.gaps_off, barmerge.lookahead_off)
 var int lastEmaUpTc = na
 var int lastEmaDnTc = na
 if notifyEma50200 and emaTfNotifyOn and emaUpSel and (na(lastEmaUpTc) or lastEmaUpTc != emaTcSel)
     if showEma50200Signals
         f_addSigLabelEx(bar_index, low, "EMA\nBUY", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny, false)
-    f_alert_at(true, syminfo.ticker + " EMA50/EMA200 BUY " + emaTfLabel, emaTcSel)
+    f_alert_at(true, syminfo.ticker + " " + emaCrossName + " BUY " + emaTfLabel, emaTcSel)
     lastEmaUpTc := emaTcSel
 if notifyEma50200 and emaTfNotifyOn and emaDnSel and (na(lastEmaDnTc) or lastEmaDnTc != emaTcSel)
     if showEma50200Signals
         f_addSigLabelEx(bar_index, high, "EMA\nSELL", color.new(color.red, 0), color.white, label.style_label_down, size.tiny, false)
-    f_alert_at(true, syminfo.ticker + " EMA50/EMA200 SELL " + emaTfLabel, emaTcSel)
+    f_alert_at(true, syminfo.ticker + " " + emaCrossName + " SELL " + emaTfLabel, emaTcSel)
     lastEmaDnTc := emaTcSel
 
 plot(showEma50200 ? emaFastSel : na, "EMA Fast", color.new(color.orange, 0), 2, plot.style_line)
@@ -1830,12 +1827,12 @@ var int lastSlLblBar = na
 var int lastDivBullLblBar = na
 var int lastDivBearLblBar = na
 
-if barstate.isconfirmed and swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
+if barstate.isconfirmed and swingShowShSlLabels and swingShowHighOut and (na(lastShLblBar) or lastShLblBar != swingPivotBar)
     y = high[swingCenter] + (labelAutoStack ? 3 * swingStep : 0)
     f_addSigLabelEx(swingPivotBar, y, "SH", color.new(color.red, 0), color.white, label.style_label_down, size.small, true)
     lastShLblBar := swingPivotBar
 
-if barstate.isconfirmed and swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
+if barstate.isconfirmed and swingShowShSlLabels and swingShowLowOut and (na(lastSlLblBar) or lastSlLblBar != swingPivotBar)
     y = low[swingCenter] - (labelAutoStack ? 3 * swingStep : 0)
     f_addSigLabelEx(swingPivotBar, y, "SL", color.new(color.lime, 0), color.black, label.style_label_up, size.small, true)
     lastSlLblBar := swingPivotBar
@@ -2034,94 +2031,6 @@ if sfpEnabled and canShowNonQm
                 sfpPivL.wicky_line.delete()
                 sfpPivL.wicky_label.delete()
 
-bbDrawActive = not onlyShSlMode and (onlyBelugaMode or (qmLiveEnabled and qmLiveShowBelugaSwing))
-bbAlertActive = bbDrawActive and bbAlertsEnabled
-bbCalcActive = bbDrawActive
-
-bbLenSel = bbPreset != "Custom" ? (tfIsM1 ? bbPresetM1 : tfIsM15 ? bbPresetM15 : tfIsH1 ? bbPresetH1 : tfIsH4 ? bbPresetH4 : bbLen) : bbUseTfLen ? (tfIsM1 ? bbLen_M1 : tfIsM15 ? bbLen_M15 : tfIsH1 ? bbLen_H1 : tfIsH4 ? bbLen_H4 : bbLen) : bbLen
-bbH = ta.highest(bbLenSel)
-bbL = ta.lowest(bbLenSel)
-
-var bool bbTrend = na
-var int bbHighIndex = na
-var float bbHighVal = na
-var int bbLowIndex = na
-var float bbLowVal = na
-
-bbSwingHigh = bbCalcActive and high[1] == bbH[1] and high < bbH
-bbSwingLow = bbCalcActive and low[1] == bbL[1] and low > bbL
-
-f_alert_at(bbAlertActive and bbSwingHigh, syminfo.ticker + " BB SWING HIGH", time_close)
-f_alert_at(bbAlertActive and bbSwingLow, syminfo.ticker + " BB SWING LOW", time_close)
-
-if bbSwingHigh
-    bbHighIndex := bar_index - 1
-    bbHighVal := high[1]
-
-bbHVwap = ta.vwap(high, bbSwingHigh)
-
-if bbSwingLow
-    bbLowIndex := bar_index - 1
-    bbLowVal := low[1]
-
-bbLVwap = ta.vwap(low, bbSwingLow)
-
-if bbCalcActive and high == bbH
-    bbTrend := true
-if bbCalcActive and low == bbL
-    bbTrend := false
-
-bbDrawActiveVwap(_trend) =>
-    src = _trend ? high : low
-    idx = _trend ? bbLowIndex : bbHighIndex
-    vwapColor = _trend ? bbLvwapCol : bbHvwapCol
-    stl = _trend ? label.style_label_up : label.style_label_down
-
-    var polyline poly = na
-    var label lbl = na
-    var label lbl1 = na
-    var line line_ = na
-
-    polyline.delete(poly)
-    label.delete(lbl)
-    label.delete(lbl1)
-    line.delete(line_)
-
-    cp = array.new<chart.point>()
-
-    if not na(idx)
-        for i = 0 to bar_index - idx
-            vwap_ = _trend ? bbLVwap[i] : bbHVwap[i]
-            if i == 0
-                line_ := line.new(bar_index, vwap_, bar_index + 5, vwap_, color=vwapColor, width=2, style=line.style_arrow_right)
-                lbl1 := label.new(bar_index + 5, vwap_, str.tostring(vwap_, "###,###,###.##"), color=#00000000, style=label.style_label_left, textcolor=chart.fg_color)
-            if i == bar_index - idx
-                lbl := label.new(bar_index - i, src[i], color=vwapColor, style=stl)
-            cp_ = chart.point.from_index(bar_index - i, vwap_)
-            array.push(cp, cp_)
-        poly := polyline.new(cp, line_color=vwapColor, line_width=2)
-
-if bbDrawActive
-    bbDrawActiveVwap(bbTrend)
-
-if bbDrawActive and bbTrend and bbTrend != bbTrend[1] and not na(bbHighIndex)
-    cp = array.new<chart.point>()
-    for i = 0 to bar_index - bbHighIndex
-        if i == bar_index - bbHighIndex
-            label.new(bar_index - i, high[i], color=color.new(bbHvwapCol, 40), style=label.style_label_down)
-        cp_ = chart.point.from_index(bar_index - i, bbHVwap[i])
-        array.push(cp, cp_)
-    polyline.new(cp, line_color=color.new(bbHvwapCol, 30), line_width=bbWidth)
-
-if bbDrawActive and not bbTrend and bbTrend != bbTrend[1] and not na(bbLowIndex)
-    cp = array.new<chart.point>()
-    for i = 0 to bar_index - bbLowIndex
-        if i == bar_index - bbLowIndex
-            label.new(bar_index - i, low[i], color=color.new(bbLvwapCol, 40), style=label.style_label_up)
-        cp_ = chart.point.from_index(bar_index - i, bbLVwap[i])
-        array.push(cp, cp_)
-    polyline.new(cp, line_color=color.new(bbLvwapCol, 40), line_width=bbWidth)
-
 qmPPsel = qmUseTfPivots ? (tfIsM1 ? qmPp_M1 : tfIsM5 ? qmPp_M5 : tfIsM15 ? qmPp_M15 : tfIsH1 ? qmPp_H1 : tfIsH4 ? qmPp_H4 : qmPp) : qmPp
 qmATR = ta.atr(21)
 var string[] qmTypes = array.new_string()
@@ -2141,6 +2050,12 @@ f_qmPushLabel(_lb) =>
     array.push(qmLabels, _lb)
     if array.size(qmLabels) > qmMaxObjs
         label.delete(array.shift(qmLabels))
+
+f_qmTrimState() =>
+    while array.size(qmTypes) > qmMaxObjs
+        array.shift(qmTypes)
+        array.shift(qmVals)
+        array.shift(qmIdxs)
 
 qmHighPivot = ta.pivothigh(qmPPsel, qmPPsel)
 qmLowPivot = ta.pivotlow(qmPPsel, qmPPsel)
@@ -2265,6 +2180,9 @@ if qmEnabled and (not onlyShSlMode or onlyQmMode)
                     array.push(qmTypes, array.size(qmTypes) > 2 ? array.get(qmVals, array.size(qmTypes) - 2) < qmLowValue ? "HL" : "LL" : "L")
                     array.push(qmVals, qmLowValue)
                     array.push(qmIdxs, qmLowIndex)
+
+if qmEnabled and (not onlyShSlMode or onlyQmMode)
+    f_qmTrimState()
 
 if qmEnabled and qmLiveEnabled and (not onlyShSlMode or onlyQmMode)
     qmS = array.size(qmIdxs)

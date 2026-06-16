@@ -1,5 +1,5 @@
 //@version=5
-strategy("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, pyramiding=0, max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_polylines_count=100, max_bars_back=5000, default_qty_type=strategy.fixed, default_qty_value=1)
+strategy("Matteo Capital - Box Session & Signals Final FIXED V3", overlay=true, pyramiding=0, max_labels_count=200, max_lines_count=200, max_boxes_count=200, max_polylines_count=0, max_bars_back=2000, default_qty_type=strategy.fixed, default_qty_value=1, dynamic_requests=true)
 
 // --- INPUT ---
 showSessions = input.bool(false, "Mostra Box Sessioni (Asia, London, NY)")
@@ -82,8 +82,10 @@ alertIncludeTime = input.bool(true, "Includi orario nella notifica", group="Aler
 notifyEma50200 = input.bool(true, "Notifica: EMA 50/200 Cross (H1)", group="Alert")
 showEma50200 = input.bool(true, "Mostra EMA 50/200 (H1)", group="Alert")
 showEma50200Signals = input.bool(true, "Mostra segnali EMA 50/200 (BUY/SELL)", group="Alert")
-emaStrategyEnabled = input.bool(true, "Strategy: Apri posizioni su EMA 50/200 (H1)", group="Strategy")
-emaStrategyQtyPct = input.int(100, "Strategy: Size %", minval=1, maxval=100, group="Strategy")
+rsiStrategyEnabled = input.bool(true, "Strategy: RSI↑ BUY / RSI↓ SELL", group="Strategy")
+emaStrategyEnabled = input.bool(true, "Strategy: EMA BUY/SELL (H1)", group="Strategy")
+strategyQtyPct = input.int(100, "Strategy: Size %", minval=1, maxval=100, group="Strategy")
+replayLight = input.bool(true, "Strategy: Replay leggero (meno disegni)", group="Strategy")
 notifyGeneral = input.bool(true, "Notifica: Generali (BUY/SELL/OVER/KISS...)", group="Alert")
 notifyShSl = input.bool(true, "Notifica: SH/SL/DIV", group="Alert")
 notifyRsi = input.bool(true, "Notifica: RSI (↑/↓ + Pattern + MTF)", group="Alert")
@@ -104,7 +106,7 @@ labelStackTicks = input.int(10, "Spaziatura segnali (ticks)", minval=0, group="L
 labelShiftRightBars = input.int(0, "Sposta segnali a destra (barre)", minval=0, group="Layout")
 labelMergeSameBar = input.bool(true, "Raggruppa segnali stessa candela", group="Layout")
 
-rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
+rsiCrossEnabled = input.bool(true, "Incrocio RSI vs RSI-MA", group="RSI Cross")
 rsiCrossAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓", group="Alert")
 rsiCrossMtfAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓ MTF (M1/M3/M5/M15/H1)", group="Alert")
 rsiSessionsOnlyMode = input.bool(false, "Mostra solo RSI↑/RSI↓ + Sessioni", group="RSI Cross")
@@ -170,7 +172,7 @@ sfpDailyExtremeBufferTicks = input.int(20, "Distanza max da Daily (ticks)", minv
 sfpMinWickTicks = input.int(10, "Min wick oltre swing (ticks)", minval=0, group="SFP Lux - Filtri")
 sfpShowUnconfirmed = input.bool(false, "Mostra pattern non confermato", group="SFP Lux - Filtri")
 
-qmEnabled = input.bool(true, "Quasimodo (TradingFinder)", group="QM")
+qmEnabled = input.bool(false, "Quasimodo (TradingFinder)", group="QM")
 onlyQmMode = input.bool(false, "Mostra solo Quasimodo", group="QM")
 onlyQmShowShSl = input.bool(false, "Mostra anche SH/SL", group="QM")
 onlyQmShowDailyHL = input.bool(false, "Mostra anche Daily High/Low", group="QM")
@@ -288,7 +290,7 @@ onlyShSlMode = input.bool(false, "Mostra solo Swing Pattern (SH/SL)", group="Swi
 
 swingRsiLenSel = swingRsiUseTfLen ? (timeframe.isminutes and timeframe.multiplier == 1 ? swingBullDivRsiLen_M1 : timeframe.isminutes and timeframe.multiplier == 5 ? swingBullDivRsiLen_M5 : timeframe.isminutes and timeframe.multiplier == 15 ? swingBullDivRsiLen_M15 : timeframe.isminutes and timeframe.multiplier == 60 ? swingBullDivRsiLen_H1 : timeframe.isminutes and timeframe.multiplier == 240 ? swingBullDivRsiLen_H4 : swingBullDivRsiLen) : swingBullDivRsiLen
 
-canShowNonShSl = not onlyShSlMode
+canShowNonShSl = not onlyShSlMode and not replayLight
 canShowNonMain = canShowNonShSl and not onlyMainMode
 canShowNonQm = canShowNonShSl
 
@@ -683,19 +685,22 @@ f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, _doAlert) =>
         slot = labelAutoStack and (_style == label.style_label_up or _style == label.style_label_down) ? f_sigSlot(_txt) : 0
         yAdj = _style == label.style_label_up ? (_y - slot * step) : _style == label.style_label_down ? (_y + slot * step) : _y
         f_alert_at(_doAlert and f_sigNotifyAllowed(_txt), syminfo.ticker + " " + _txt, time_close)
-        if labelMergeSameBar and not na(lastMerged) and lastMergedX == xAdj
-            old = label.get_text(lastMerged)
-            if not str.contains(old, _txt)
-                label.set_text(lastMerged, old + "\n" + _txt)
-            lastMerged
+        if replayLight
+            na
         else
-            lb = label.new(xAdj, yAdj, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
-            lastMerged := lb
-            lastMergedX := xAdj
-            array.push(mcSigLabels, lb)
-            if array.size(mcSigLabels) > 250
-                label.delete(array.shift(mcSigLabels))
-            lb
+            if labelMergeSameBar and not na(lastMerged) and lastMergedX == xAdj
+                old = label.get_text(lastMerged)
+                if not str.contains(old, _txt)
+                    label.set_text(lastMerged, old + "\n" + _txt)
+                lastMerged
+            else
+                lb = label.new(xAdj, yAdj, _txt, xloc=xloc.bar_index, style=_style, color=_bg, textcolor=_tc, size=_size)
+                lastMerged := lb
+                lastMergedX := xAdj
+                array.push(mcSigLabels, lb)
+                if array.size(mcSigLabels) > 250
+                    label.delete(array.shift(mcSigLabels))
+                lb
 
 f_addSigLabel(_x, _y, _txt, _bg, _tc, _style, _size) =>
     f_addSigLabelEx(_x, _y, _txt, _bg, _tc, _style, _size, true)
@@ -1796,8 +1801,6 @@ if barstate.isconfirmed and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCro
 [emaUpH1, emaDnH1, emaTcH1, ema50H1, ema200H1] = request.security(syminfo.tickerid, "60", [barstate.isconfirmed and ta.crossover(ta.ema(close, 50), ta.ema(close, 200)), barstate.isconfirmed and ta.crossunder(ta.ema(close, 50), ta.ema(close, 200)), time_close, ta.ema(close, 50), ta.ema(close, 200)], barmerge.gaps_off, barmerge.lookahead_off)
 var int lastEmaUpTc = na
 var int lastEmaDnTc = na
-var int lastEmaStratUpTc = na
-var int lastEmaStratDnTc = na
 if notifyEma50200 and notifyTfH1 and emaUpH1 and (na(lastEmaUpTc) or lastEmaUpTc != emaTcH1)
     if showEma50200Signals
         f_addSigLabelEx(bar_index, low, "EMA\nBUY", color.new(color.aqua, 0), color.black, label.style_label_up, size.tiny, false)
@@ -1809,16 +1812,35 @@ if notifyEma50200 and notifyTfH1 and emaDnH1 and (na(lastEmaDnTc) or lastEmaDnTc
     f_alert_at(true, syminfo.ticker + " EMA50/EMA200 SELL", emaTcH1)
     lastEmaDnTc := emaTcH1
 
-if emaStrategyEnabled
-    rawQty = close > 0 ? (strategy.equity * (emaStrategyQtyPct / 100.0)) / close : 0.0
-    emaStrategyQty = (syminfo.type == "stock" or syminfo.type == "futures") ? math.max(1.0, math.floor(rawQty)) : math.max(0.00000001, rawQty)
-    if emaUpH1 and (na(lastEmaStratUpTc) or lastEmaStratUpTc != emaTcH1)
+tradeRawQty = close > 0 ? (strategy.equity * (strategyQtyPct / 100.0)) / close : 0.0
+tradeQty = (syminfo.type == "stock" or syminfo.type == "futures") ? math.max(1.0, math.floor(tradeRawQty)) : math.max(0.00000001, tradeRawQty)
+
+var int lastRsiStratUpBar = na
+var int lastRsiStratDnBar = na
+if rsiStrategyEnabled
+    if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossUpSig and (na(lastRsiStratUpBar) or lastRsiStratUpBar != rsiCrossPivotBar) and strategy.position_size <= 0
+        strategy.close("RSI-S")
         strategy.close("EMA-S")
-        strategy.entry("EMA-L", strategy.long, qty=emaStrategyQty)
-        lastEmaStratUpTc := emaTcH1
-    else if emaDnH1 and (na(lastEmaStratDnTc) or lastEmaStratDnTc != emaTcH1)
+        strategy.entry("RSI-L", strategy.long, qty=tradeQty)
+        lastRsiStratUpBar := rsiCrossPivotBar
+    else if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossDnSig and (na(lastRsiStratDnBar) or lastRsiStratDnBar != rsiCrossPivotBar) and strategy.position_size >= 0
+        strategy.close("RSI-L")
         strategy.close("EMA-L")
-        strategy.entry("EMA-S", strategy.short, qty=emaStrategyQty)
+        strategy.entry("RSI-S", strategy.short, qty=tradeQty)
+        lastRsiStratDnBar := rsiCrossPivotBar
+
+var int lastEmaStratUpTc = na
+var int lastEmaStratDnTc = na
+if emaStrategyEnabled
+    if emaUpH1 and (na(lastEmaStratUpTc) or lastEmaStratUpTc != emaTcH1) and strategy.position_size <= 0
+        strategy.close("RSI-S")
+        strategy.close("EMA-S")
+        strategy.entry("EMA-L", strategy.long, qty=tradeQty)
+        lastEmaStratUpTc := emaTcH1
+    else if emaDnH1 and (na(lastEmaStratDnTc) or lastEmaStratDnTc != emaTcH1) and strategy.position_size >= 0
+        strategy.close("RSI-L")
+        strategy.close("EMA-L")
+        strategy.entry("EMA-S", strategy.short, qty=tradeQty)
         lastEmaStratDnTc := emaTcH1
 
 plot(showEma50200 ? ema50H1 : na, "EMA 50 (H1)", color.new(color.orange, 0), 2, plot.style_line)
@@ -1893,7 +1915,9 @@ else
 sfpPh = ta.pivothigh(sfpLen, 1)
 sfpPl = ta.pivotlow(sfpLen, 1)
 
-[sfpLtfClose, sfpLtfVolume] = request.security_lower_tf(syminfo.tickerid, sfpRes, [close, volume])
+sfpNeedLtf = sfpEnabled and canShowNonQm and sfpValidate
+float[] sfpLtfClose = sfpNeedLtf ? request.security_lower_tf(syminfo.tickerid, sfpRes, close) : array.new_float()
+float[] sfpLtfVolume = sfpNeedLtf ? request.security_lower_tf(syminfo.tickerid, sfpRes, volume) : array.new_float()
 sfpLtfSize = sfpLtfClose.size()
 
 if sfpEnabled and canShowNonQm

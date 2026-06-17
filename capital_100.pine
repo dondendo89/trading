@@ -73,7 +73,7 @@ SmtPivotLen_H1 = input.int(1, "H1 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen_H4 = input.int(1, "H4 - Pivot candele", minval=1, group="SMT")
 SmtPivotLen = input.int(1, "Pivot candele (fallback)", minval=1, group="SMT")
 SmtShowLabels = input.bool(true, "Mostra etichette", group="SMT")
-SmtMtfAlertsEnabled = input.bool(true, "Alert SMT MTF (M1/M3/M5/M15/H1)", group="Alert")
+SmtMtfAlertsEnabled = input.bool(true, "Alert SMT MTF (M1/M3/M5/M15/H1/H4)", group="Alert")
 SmtShowDailyExtreme = input.bool(false, "Mostra SMT vicino a Daily High/Low", group="SMT")
 SmtDailyExtremeBufferTicks = input.int(0, "Distanza max SMT da Daily High/Low (ticks)", minval=0, group="SMT")
 
@@ -105,6 +105,7 @@ notifyTfM3 = input.bool(true, "Notifica TF: M3", group="Alert")
 notifyTfM5 = input.bool(true, "Notifica TF: M5", group="Alert")
 notifyTfM15 = input.bool(true, "Notifica TF: M15", group="Alert")
 notifyTfH1 = input.bool(true, "Notifica TF: H1", group="Alert")
+notifyTfH4 = input.bool(true, "Notifica TF: H4", group="Alert")
 mtfAlertsOnlyOnMatchingChartTf = input.bool(true, "MTF: Alert solo se sei sul TF del segnale", group="Alert")
 
 labelAutoStack = input.bool(true, "Evita sovrapposizioni (auto)", group="Layout")
@@ -114,7 +115,7 @@ labelMergeSameBar = input.bool(true, "Raggruppa segnali stessa candela", group="
 
 rsiCrossEnabled = input.bool(false, "Incrocio RSI vs RSI-MA", group="RSI Cross")
 rsiCrossAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓", group="Alert")
-rsiCrossMtfAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓ MTF (M1/M3/M5/M15/H1)", group="Alert")
+rsiCrossMtfAlertsEnabled = input.bool(true, "Alert RSI↑/RSI↓ MTF (M1/M3/M5/M15/H1/H4)", group="Alert")
 rsiSessionsOnlyMode = input.bool(false, "Mostra solo RSI↑/RSI↓ + Sessioni", group="RSI Cross")
 rsiCrossShowLabels = input.bool(true, "Mostra etichette", group="RSI Cross")
 rsiCrossMaType = input.string("SMA", "Tipo MA", options=["SMA", "EMA"], group="RSI Cross")
@@ -342,6 +343,8 @@ leftM15 = swingPatternUseTfBars ? swingPatternLeftBars_M15 : swingPatternLeftBar
 rightM15 = swingPatternUseTfBars ? swingPatternRightBars_M15 : swingPatternRightBars
 leftH1 = swingPatternUseTfBars ? swingPatternLeftBars_H1 : swingPatternLeftBars
 rightH1 = swingPatternUseTfBars ? swingPatternRightBars_H1 : swingPatternRightBars
+leftH4 = swingPatternUseTfBars ? swingPatternLeftBars_H4 : swingPatternLeftBars
+rightH4 = swingPatternUseTfBars ? swingPatternRightBars_H4 : swingPatternRightBars
 
 [dashH1ShT, dashH1SlT] = request.security(syminfo.tickerid, "60", f_pivotTimes(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
 
@@ -1625,6 +1628,7 @@ smtLenM3 = SmtPivotLen
 smtLenM5 = SmtPivotLen
 smtLenM15 = SmtUseTfPivots ? SmtPivotLen_M15 : SmtPivotLen
 smtLenH1 = SmtUseTfPivots ? SmtPivotLen_H1 : SmtPivotLen
+smtLenH4 = SmtUseTfPivots ? SmtPivotLen_H4 : SmtPivotLen
 
 [smtMainM1Ph0, smtMainM1Ph1, smtMainM1PhT, smtMainM1Pl0, smtMainM1Pl1, smtMainM1PlT] = request.security(syminfo.tickerid, "1", f_pivot2Hilo(smtLenM1), barmerge.gaps_off, barmerge.lookahead_off)
 [smtS1M1Ph0, smtS1M1Ph1, _, smtS1M1Pl0, smtS1M1Pl1, _] = request.security(SmtSymbol1, "1", f_smtPivot2Hilo(smtLenM1, inv1), barmerge.gaps_off, barmerge.lookahead_off)
@@ -1636,6 +1640,8 @@ smtLenH1 = SmtUseTfPivots ? SmtPivotLen_H1 : SmtPivotLen
 [smtS1M15Ph0, smtS1M15Ph1, _, smtS1M15Pl0, smtS1M15Pl1, _] = request.security(SmtSymbol1, "15", f_smtPivot2Hilo(smtLenM15, inv1), barmerge.gaps_off, barmerge.lookahead_off)
 [smtMainH1Ph0, smtMainH1Ph1, smtMainH1PhT, smtMainH1Pl0, smtMainH1Pl1, smtMainH1PlT] = request.security(syminfo.tickerid, "60", f_pivot2Hilo(smtLenH1), barmerge.gaps_off, barmerge.lookahead_off)
 [smtS1H1Ph0, smtS1H1Ph1, _, smtS1H1Pl0, smtS1H1Pl1, _] = request.security(SmtSymbol1, "60", f_smtPivot2Hilo(smtLenH1, inv1), barmerge.gaps_off, barmerge.lookahead_off)
+[smtMainH4Ph0, smtMainH4Ph1, smtMainH4PhT, smtMainH4Pl0, smtMainH4Pl1, smtMainH4PlT] = request.security(syminfo.tickerid, "240", f_pivot2Hilo(smtLenH4), barmerge.gaps_off, barmerge.lookahead_off)
+[smtS1H4Ph0, smtS1H4Ph1, _, smtS1H4Pl0, smtS1H4Pl1, _] = request.security(SmtSymbol1, "240", f_smtPivot2Hilo(smtLenH4, inv1), barmerge.gaps_off, barmerge.lookahead_off)
 
 f_smtFireOnce(_arr, _idx, _cond, _t, _msg) =>
     last = array.get(_arr, _idx)
@@ -1643,7 +1649,7 @@ f_smtFireOnce(_arr, _idx, _cond, _t, _msg) =>
         f_alert_at(true, _msg, _t)
         array.set(_arr, _idx, _t)
 
-var int[] smtMtfLast = array.new_int(10, na)
+var int[] smtMtfLast = array.new_int(12, na)
 if barstate.isconfirmed and SmtEnabled and SmtMtfAlertsEnabled and notifySmt
     smtLocalAlertOn = SmtShowLabels and not onlyShSlMode
     allowMtfM1 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM1
@@ -1651,6 +1657,7 @@ if barstate.isconfirmed and SmtEnabled and SmtMtfAlertsEnabled and notifySmt
     allowMtfM5 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM5
     allowMtfM15 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM15
     allowMtfH1 = not mtfAlertsOnlyOnMatchingChartTf or tfIsH1
+    allowMtfH4 = not mtfAlertsOnlyOnMatchingChartTf or tfIsH4
     smt1BearM1 = not na(smtMainM1Ph0) and not na(smtMainM1Ph1) and not na(smtS1M1Ph0) and not na(smtS1M1Ph1) and smtMainM1Ph0 > smtMainM1Ph1 and smtS1M1Ph0 <= smtS1M1Ph1
     smt1BullM1 = not na(smtMainM1Pl0) and not na(smtMainM1Pl1) and not na(smtS1M1Pl0) and not na(smtS1M1Pl1) and smtMainM1Pl0 < smtMainM1Pl1 and smtS1M1Pl0 >= smtS1M1Pl1
     f_smtFireOnce(smtMtfLast, 0, allowMtfM1 and notifyTfM1 and smt1BearM1 and not (tfIsM1 and smtLocalAlertOn), smtMainM1PhT, syminfo.ticker + " SMT1 BEAR M1")
@@ -1675,6 +1682,11 @@ if barstate.isconfirmed and SmtEnabled and SmtMtfAlertsEnabled and notifySmt
     smt1BullH1 = not na(smtMainH1Pl0) and not na(smtMainH1Pl1) and not na(smtS1H1Pl0) and not na(smtS1H1Pl1) and smtMainH1Pl0 < smtMainH1Pl1 and smtS1H1Pl0 >= smtS1H1Pl1
     f_smtFireOnce(smtMtfLast, 8, allowMtfH1 and notifyTfH1 and smt1BearH1 and not (tfIsH1 and smtLocalAlertOn), smtMainH1PhT, syminfo.ticker + " SMT1 BEAR H1")
     f_smtFireOnce(smtMtfLast, 9, allowMtfH1 and notifyTfH1 and smt1BullH1 and not (tfIsH1 and smtLocalAlertOn), smtMainH1PlT, syminfo.ticker + " SMT1 BULL H1")
+
+    smt1BearH4 = not na(smtMainH4Ph0) and not na(smtMainH4Ph1) and not na(smtS1H4Ph0) and not na(smtS1H4Ph1) and smtMainH4Ph0 > smtMainH4Ph1 and smtS1H4Ph0 <= smtS1H4Ph1
+    smt1BullH4 = not na(smtMainH4Pl0) and not na(smtMainH4Pl1) and not na(smtS1H4Pl0) and not na(smtS1H4Pl1) and smtMainH4Pl0 < smtMainH4Pl1 and smtS1H4Pl0 >= smtS1H4Pl1
+    f_smtFireOnce(smtMtfLast, 10, allowMtfH4 and notifyTfH4 and smt1BearH4 and not (tfIsH4 and smtLocalAlertOn), smtMainH4PhT, syminfo.ticker + " SMT1 BEAR H4")
+    f_smtFireOnce(smtMtfLast, 11, allowMtfH4 and notifyTfH4 and smt1BullH4 and not (tfIsH4 and smtLocalAlertOn), smtMainH4PlT, syminfo.ticker + " SMT1 BULL H4")
 smtDailyBuf = SmtDailyExtremeBufferTicks * syminfo.mintick
 dHighAtSmtPivot = dHigh[SmtPivot]
 dLowAtSmtPivot = dLow[SmtPivot]
@@ -1775,8 +1787,9 @@ if barstate.isconfirmed and not onlyShSlMode and rsiCrossEnabled and rsiCrossSho
 [rsiMtfM5Up, rsiMtfM5Dn, rsiMtfM5Tc] = request.security(syminfo.tickerid, "5", f_rsiCrossPivotSig(leftM5, rightM5), barmerge.gaps_off, barmerge.lookahead_off)
 [rsiMtfM15Up, rsiMtfM15Dn, rsiMtfM15Tc] = request.security(syminfo.tickerid, "15", f_rsiCrossPivotSig(leftM15, rightM15), barmerge.gaps_off, barmerge.lookahead_off)
 [rsiMtfH1Up, rsiMtfH1Dn, rsiMtfH1Tc] = request.security(syminfo.tickerid, "60", f_rsiCrossPivotSig(leftH1, rightH1), barmerge.gaps_off, barmerge.lookahead_off)
+[rsiMtfH4Up, rsiMtfH4Dn, rsiMtfH4Tc] = request.security(syminfo.tickerid, "240", f_rsiCrossPivotSig(leftH4, rightH4), barmerge.gaps_off, barmerge.lookahead_off)
 
-var int[] rsiMtfLast = array.new_int(10, na)
+var int[] rsiMtfLast = array.new_int(12, na)
 
 if barstate.isconfirmed and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCrossMtfAlertsEnabled and notifyRsi
     rsiLocalAlertOn = rsiCrossShowLabels and not onlyShSlMode
@@ -1785,6 +1798,7 @@ if barstate.isconfirmed and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCro
     allowMtfM5 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM5
     allowMtfM15 = not mtfAlertsOnlyOnMatchingChartTf or tfIsM15
     allowMtfH1 = not mtfAlertsOnlyOnMatchingChartTf or tfIsH1
+    allowMtfH4 = not mtfAlertsOnlyOnMatchingChartTf or tfIsH4
     f_smtFireOnce(rsiMtfLast, 0, allowMtfM1 and notifyTfM1 and rsiMtfM1Up and not (tfIsM1 and rsiLocalAlertOn), rsiMtfM1Tc, syminfo.ticker + " RSI↑ M1")
     f_smtFireOnce(rsiMtfLast, 1, allowMtfM1 and notifyTfM1 and rsiMtfM1Dn and not (tfIsM1 and rsiLocalAlertOn), rsiMtfM1Tc, syminfo.ticker + " RSI↓ M1")
     f_smtFireOnce(rsiMtfLast, 2, allowMtfM3 and notifyTfM3 and rsiMtfM3Up and not (tfIsM3 and rsiLocalAlertOn), rsiMtfM3Tc, syminfo.ticker + " RSI↑ M3")
@@ -1795,6 +1809,8 @@ if barstate.isconfirmed and rsiCrossEnabled and rsiCrossAlertsEnabled and rsiCro
     f_smtFireOnce(rsiMtfLast, 7, allowMtfM15 and notifyTfM15 and rsiMtfM15Dn and not (tfIsM15 and rsiLocalAlertOn), rsiMtfM15Tc, syminfo.ticker + " RSI↓ M15")
     f_smtFireOnce(rsiMtfLast, 8, allowMtfH1 and notifyTfH1 and rsiMtfH1Up and not (tfIsH1 and rsiLocalAlertOn), rsiMtfH1Tc, syminfo.ticker + " RSI↑ H1")
     f_smtFireOnce(rsiMtfLast, 9, allowMtfH1 and notifyTfH1 and rsiMtfH1Dn and not (tfIsH1 and rsiLocalAlertOn), rsiMtfH1Tc, syminfo.ticker + " RSI↓ H1")
+    f_smtFireOnce(rsiMtfLast, 10, allowMtfH4 and notifyTfH4 and rsiMtfH4Up and not (tfIsH4 and rsiLocalAlertOn), rsiMtfH4Tc, syminfo.ticker + " RSI↑ H4")
+    f_smtFireOnce(rsiMtfLast, 11, allowMtfH4 and notifyTfH4 and rsiMtfH4Dn and not (tfIsH4 and rsiLocalAlertOn), rsiMtfH4Tc, syminfo.ticker + " RSI↓ H4")
 
 emaTfLabel = emaCrossTf == "1" ? "M1" : emaCrossTf == "5" ? "M5" : emaCrossTf == "15" ? "M15" : "H1"
 emaTfNotifyOn = emaCrossTf == "1" ? notifyTfM1 : emaCrossTf == "5" ? notifyTfM5 : emaCrossTf == "15" ? notifyTfM15 : notifyTfH1

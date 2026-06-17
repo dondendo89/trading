@@ -1,0 +1,718 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=6
+strategy("Multi-Asset SMT Divergence", shorttitle="SMT Divergence Alert", overlay=true, pyramiding=0, default_qty_type=strategy.percent_of_equity, default_qty_value=100, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
+
+// ══════════════════════════════════════════════════════
+// Groups
+// ══════════════════════════════════════════════════════
+string G_CORE = "Core Settings"
+string G_VIS  = "Visual Settings"
+string G_STR  = "Strategy"
+
+// ══════════════════════════════════════════════════════
+// Inputs
+// ══════════════════════════════════════════════════════
+modeInput      = input.string("Auto", "Mode", options=["Auto","Manual"], group=G_CORE,
+     tooltip="Auto: detects correlated triad for chart symbol. Manual: use symbol slots below.")
+manualSym1     = input.symbol("", "Symbol 1", group=G_CORE, tooltip="Manual mode only. Leave blank to skip.")
+manualInv1     = input.bool(false, "Invert 1", group=G_CORE, tooltip="Flip divergence logic for inverse-correlated assets (e.g. DXY vs Gold).")
+manualSym2     = input.symbol("", "Symbol 2", group=G_CORE)
+manualInv2     = input.bool(false, "Invert 2", group=G_CORE)
+manualSym3     = input.symbol("", "Symbol 3", group=G_CORE)
+manualInv3     = input.bool(false, "Invert 3", group=G_CORE)
+
+pivotLen       = input.int(5, "Pivot Lookback", minval=1, group=G_CORE,
+     tooltip="Bars on each side to confirm a swing for the main detection tier. Suggested: 1m=2-3, 5m=3-4, 15m=4-5, 1H+=5.")
+sweepModeInput = input.bool(true, "Sweep Mode", group=G_CORE,
+     tooltip="ON: Fires only when the primary asset raids a liquidity level that the comparison asset fails to take. More accurate, ICT-aligned.\nOFF: Legacy — compares last two confirmed pivots directly.")
+realTimeInput  = input.bool(false, "Real-time Detection", group=G_CORE,
+     tooltip="Fires detection on pivot formation without waiting for right-side confirmation. Compares against confirmed swing history in both modes, so large-swing SMTs are still detected. May repaint on the active bar.")
+candleValInput = input.bool(true, "Candle Validation", group=G_CORE,
+     tooltip="Bearish SMT requires a bearish candle at the pivot bar. Bullish requires a bullish candle. Applies to both detection tiers.")
+delBrokenInput = input.bool(true, "Remove Broken SMTs", group=G_CORE,
+     tooltip="Deletes lines and labels when price closes through the SMT level. Applies to both detection tiers.")
+
+// ── Micro Tier ───────────────────────────────────────
+showMicro      = input.bool(true, "Show Micro SMTs", group=G_CORE,
+     tooltip="Runs a second detection pass with a smaller pivot lookback to catch shorter-duration SMT deviations. Shares all visual settings with the main tier.")
+microPivotLen  = input.int(2, "Micro Lookback", minval=1, group=G_CORE,
+     tooltip="Pivot lookback for the micro detection tier. Default 2 catches 1-in-5-bar swings on lower timeframes without losing the larger swing context from the main lookback.")
+
+strategyEnabled    = input.bool(true, "Enable Strategy", group=G_STR)
+strategyTradeMacro = input.bool(true, "Trade Macro SMT", group=G_STR)
+strategyTradeMicro = input.bool(true, "Trade Micro SMT", group=G_STR)
+
+showLines      = input.bool(true,         "Show SMT Lines",    group=G_VIS)
+bullColor      = input.color(#089981,     "Bullish Color",     group=G_VIS)
+bearColor      = input.color(#f23645,     "Bearish Color",     group=G_VIS)
+showLabels     = input.bool(true,         "Show Labels",       group=G_VIS)
+onlyDoubleSMT  = input.bool(false,        "Only Double SMT",   group=G_VIS)
+txtSizeInput   = input.string("Small",    "Label Size",        options=["Tiny","Small","Normal","Large","Huge"], group=G_VIS)
+lineWidthInput = input.int(2,             "Line Width",        minval=1, maxval=4, group=G_VIS)
+lsIn1          = input.string("Solid",  "Line Style - Sym 1", options=["Solid","Dashed","Dotted"], group=G_VIS)
+lsIn2          = input.string("Dashed", "Line Style - Sym 2", options=["Solid","Dashed","Dotted"], group=G_VIS)
+lsIn3          = input.string("Dotted", "Line Style - Sym 3", options=["Solid","Dashed","Dotted"], group=G_VIS)
+
+// ══════════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════════
+toLS(s) =>
+    s == "Dashed" ? line.style_dashed : s == "Dotted" ? line.style_dotted : line.style_solid
+
+shortName(sym) =>
+    str.contains(sym, ":") ? str.split(sym, ":").get(1) : sym
+
+toSize(s) =>
+    s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : s == "Large" ? size.large : s == "Huge" ? size.huge : size.small
+
+// ══════════════════════════════════════════════════════
+// Auto-Detection
+// ══════════════════════════════════════════════════════
+get_auto() =>
+    string t   = syminfo.ticker
+    bool isFut = syminfo.type == "futures"
+    string s1  = ""
+    string s2  = ""
+    string s3  = ""
+    bool   i1  = false
+    bool   i2  = false
+    bool   i3  = false
+
+    if str.contains(t, "NQ") or str.contains(t, "NAS100") or str.contains(t, "USTEC")
+        s1 := "CME_MINI:ES1!"
+        s2 := "CBOT:YM1!"
+        s3 := "CME_MINI:RTY1!"
+    else if str.contains(t, "SPX") or str.contains(t, "SPY") or str.contains(t, "ES1") or (str.contains(t, "ES") and str.contains(t, "1!"))
+        s1 := "CME_MINI:NQ1!"
+        s2 := "CBOT:YM1!"
+        s3 := "CME_MINI:RTY1!"
+    else if str.contains(t, "YM") or str.contains(t, "DJI") or str.contains(t, "DIA")
+        s1 := "CME_MINI:NQ1!"
+        s2 := "CME_MINI:ES1!"
+        s3 := "CME_MINI:RTY1!"
+    else if str.contains(t, "RTY") or str.contains(t, "RUT") or str.contains(t, "IWM")
+        s1 := "CME_MINI:NQ1!"
+        s2 := "CME_MINI:ES1!"
+        s3 := "CBOT:YM1!"
+    else if str.contains(t, "XAUUSD") or str.contains(t, "GOLD") or str.contains(t, "GC1")
+        s1 := isFut ? "COMEX:SI1!" : "TVC:SILVER"
+        s2 := "TVC:DXY"
+        i2 := true
+    else if str.contains(t, "XAGUSD") or str.contains(t, "SILVER") or str.contains(t, "SI1")
+        s1 := isFut ? "COMEX:GC1!" : "TVC:GOLD"
+        s2 := "TVC:DXY"
+        i2 := true
+    else if str.contains(t, "DXY") or str.contains(t, "USDX") or str.contains(t, "DX1")
+        s1 := isFut ? "COMEX:GC1!" : "TVC:GOLD"
+        s2 := isFut ? "CME:6E1!"   : "FX:EURUSD"
+        i1 := true
+        i2 := true
+    else if str.contains(t, "EURUSD") or str.contains(t, "6E")
+        s1 := isFut ? "CME:6B1!"  : "FX:GBPUSD"
+        s2 := "TVC:DXY"
+        i2 := true
+    else if str.contains(t, "GBPUSD") or str.contains(t, "6B")
+        s1 := isFut ? "CME:6E1!"  : "FX:EURUSD"
+        s2 := "TVC:DXY"
+        i2 := true
+    else if str.contains(t, "AUDUSD") or str.contains(t, "6A")
+        s1 := isFut ? "CME:6N1!"  : "FX:NZDUSD"
+        s2 := "TVC:DXY"
+        i2 := true
+    else if str.contains(t, "NZDUSD") or str.contains(t, "6N")
+        s1 := isFut ? "CME:6A1!"  : "FX:AUDUSD"
+        s2 := "TVC:DXY"
+        i2 := true
+    else if str.contains(t, "USDJPY") or str.contains(t, "6J")
+        s1 := isFut ? "CME:6E1!"  : "FX:EURUSD"
+        s2 := isFut ? "CME:6B1!"  : "FX:GBPUSD"
+        i1 := true
+        i2 := true
+    else if str.contains(t, "USDCHF") or str.contains(t, "6S")
+        s1 := isFut ? "CME:6E1!"  : "FX:EURUSD"
+        s2 := "TVC:DXY"
+        i1 := true
+    else if str.contains(t, "USDCAD") or str.contains(t, "6C")
+        s1 := "NYMEX:CL1!"
+        s2 := "TVC:DXY"
+        i1 := true
+    else if str.contains(t, "BTC")
+        s1 := "PYTH:ETHUSD"
+        s2 := "PYTH:SOLUSD"
+    else if str.contains(t, "ETH")
+        s1 := "PYTH:BTCUSD"
+        s2 := "PYTH:SOLUSD"
+    else if str.contains(t, "SOL")
+        s1 := "PYTH:BTCUSD"
+        s2 := "PYTH:ETHUSD"
+    else if str.contains(t, "USOIL") or str.contains(t, "WTIUSD") or str.contains(t, "CL1")
+        s1 := "NYMEX:BZ1!"
+        s2 := "NYMEX:NG1!"
+    else if str.contains(t, "UKOIL") or str.contains(t, "XBRUSD") or str.contains(t, "BZ1")
+        s1 := "NYMEX:CL1!"
+        s2 := "NYMEX:NG1!"
+    else if str.contains(t, "ZN1") or str.contains(t, "TNX") or str.contains(t, "US10Y")
+        s1 := "CBOT:ZB1!"
+        s2 := "CBOT:ZF1!"
+    else if str.contains(t, "ZB1") or str.contains(t, "TYX") or str.contains(t, "US30Y")
+        s1 := "CBOT:ZN1!"
+        s2 := "CBOT:ZF1!"
+    else if str.contains(t, "ZF1") or str.contains(t, "FVX") or str.contains(t, "US05Y")
+        s1 := "CBOT:ZN1!"
+        s2 := "CBOT:ZB1!"
+
+    [s1, s2, s3, i1, i2, i3]
+
+// ══════════════════════════════════════════════════════
+// Symbol & Invert Resolution
+// ══════════════════════════════════════════════════════
+[autoS1, autoS2, autoS3, autoI1, autoI2, autoI3] = get_auto()
+
+isAuto = modeInput == "Auto"
+sym1   = isAuto ? autoS1 : manualSym1
+sym2   = isAuto ? autoS2 : manualSym2
+sym3   = isAuto ? autoS3 : manualSym3
+inv1   = isAuto ? autoI1 : manualInv1
+inv2   = isAuto ? autoI2 : manualInv2
+inv3   = isAuto ? autoI3 : manualInv3
+
+ls1 = toLS(lsIn1)
+ls2 = toLS(lsIn2)
+ls3 = toLS(lsIn3)
+
+// ══════════════════════════════════════════════════════
+// Data Fetching
+// ══════════════════════════════════════════════════════
+[sHigh1, sLow1] = request.security(sym1 != "" ? sym1 : syminfo.tickerid, timeframe.period, [high, low])
+[sHigh2, sLow2] = request.security(sym2 != "" ? sym2 : syminfo.tickerid, timeframe.period, [high, low])
+[sHigh3, sLow3] = request.security(sym3 != "" ? sym3 : syminfo.tickerid, timeframe.period, [high, low])
+
+// ══════════════════════════════════════════════════════
+// Pivot Series
+//
+// Two tiers, same pattern:
+//   ph/pl        Detection trigger (rLen=0 in real-time mode)
+//   phConf/plConf  History reference, always fully confirmed
+//
+// Macro tier uses pivotLen.
+// Micro tier uses microPivotLen.
+// Both tiers share the same real-time toggle.
+// Both compare against their own confirmed history so
+// each tier independently catches swings at its own scale.
+// ══════════════════════════════════════════════════════
+
+// ── Macro tier ───────────────────────────────────────
+int rLen   = realTimeInput ? 0 : pivotLen
+ph         = ta.pivothigh(high, pivotLen, rLen)
+pl         = ta.pivotlow(low,  pivotLen, rLen)
+phConf     = ta.pivothigh(high, pivotLen, pivotLen)
+plConf     = ta.pivotlow(low,  pivotLen, pivotLen)
+
+sH1  = sHigh1[rLen],   sL1  = sLow1[rLen]
+sH2  = sHigh2[rLen],   sL2  = sLow2[rLen]
+sH3  = sHigh3[rLen],   sL3  = sLow3[rLen]
+sH1C = sHigh1[pivotLen], sL1C = sLow1[pivotLen]
+sH2C = sHigh2[pivotLen], sL2C = sLow2[pivotLen]
+sH3C = sHigh3[pivotLen], sL3C = sLow3[pivotLen]
+
+// ── Micro tier ───────────────────────────────────────
+int rLenS  = realTimeInput ? 0 : microPivotLen
+phS        = ta.pivothigh(high, microPivotLen, rLenS)
+plS        = ta.pivotlow(low,  microPivotLen, rLenS)
+phSConf    = ta.pivothigh(high, microPivotLen, microPivotLen)
+plSConf    = ta.pivotlow(low,  microPivotLen, microPivotLen)
+
+sH1S  = sHigh1[rLenS],    sL1S  = sLow1[rLenS]
+sH2S  = sHigh2[rLenS],    sL2S  = sLow2[rLenS]
+sH3S  = sHigh3[rLenS],    sL3S  = sLow3[rLenS]
+sH1SC = sHigh1[microPivotLen], sL1SC = sLow1[microPivotLen]
+sH2SC = sHigh2[microPivotLen], sL2SC = sLow2[microPivotLen]
+sH3SC = sHigh3[microPivotLen], sL3SC = sLow3[microPivotLen]
+
+// ══════════════════════════════════════════════════════
+// SMT Mark Tracking (for Remove Broken SMTs)
+// Separate arrays per tier so they clean up independently.
+// ══════════════════════════════════════════════════════
+type SMTMark
+    float level
+    label lbl
+    line  ln1
+    line  ln2
+    line  ln3
+
+var SMTMark[] beMarks  = array.new<SMTMark>()  // macro bearish
+var SMTMark[] buMarks  = array.new<SMTMark>()  // macro bullish
+var SMTMark[] beMSMarks = array.new<SMTMark>() // micro bearish
+var SMTMark[] buMSMarks = array.new<SMTMark>() // micro bullish
+
+// ══════════════════════════════════════════════════════
+// Broken SMT Removal — shared helper logic per array
+// ══════════════════════════════════════════════════════
+deleteMark(SMTMark m) =>
+    if not na(m.lbl)
+        label.delete(m.lbl)
+    if not na(m.ln1)
+        line.delete(m.ln1)
+    if not na(m.ln2)
+        line.delete(m.ln2)
+    if not na(m.ln3)
+        line.delete(m.ln3)
+
+if delBrokenInput
+    if beMarks.size() > 0
+        for i = beMarks.size() - 1 to 0
+            SMTMark m = beMarks.get(i)
+            if high > m.level
+                deleteMark(m)
+                beMarks.remove(i)
+    if buMarks.size() > 0
+        for i = buMarks.size() - 1 to 0
+            SMTMark m = buMarks.get(i)
+            if low < m.level
+                deleteMark(m)
+                buMarks.remove(i)
+    if beMSMarks.size() > 0
+        for i = beMSMarks.size() - 1 to 0
+            SMTMark m = beMSMarks.get(i)
+            if high > m.level
+                deleteMark(m)
+                beMSMarks.remove(i)
+    if buMSMarks.size() > 0
+        for i = buMSMarks.size() - 1 to 0
+            SMTMark m = buMSMarks.get(i)
+            if low < m.level
+                deleteMark(m)
+                buMSMarks.remove(i)
+
+// ══════════════════════════════════════════════════════
+// Sweep Mode — LQ Arrays
+// Six arrays per tier (high+low × 3 slots).
+// ══════════════════════════════════════════════════════
+type LQEntry
+    float price
+    int   idx
+    float refPrice
+
+sweepLQ(LQEntry[] src, float price, bool up) =>
+    LQEntry swept = na
+    while src.size() > 0
+        if up ? price > src.last().price : price < src.last().price
+            swept := src.pop()
+        else
+            break
+    swept
+
+// Macro LQ arrays
+var LQEntry[] pH1 = array.new<LQEntry>()
+var LQEntry[] pL1 = array.new<LQEntry>()
+var LQEntry[] pH2 = array.new<LQEntry>()
+var LQEntry[] pL2 = array.new<LQEntry>()
+var LQEntry[] pH3 = array.new<LQEntry>()
+var LQEntry[] pL3 = array.new<LQEntry>()
+
+// Micro LQ arrays
+var LQEntry[] pH1S = array.new<LQEntry>()
+var LQEntry[] pL1S = array.new<LQEntry>()
+var LQEntry[] pH2S = array.new<LQEntry>()
+var LQEntry[] pL2S = array.new<LQEntry>()
+var LQEntry[] pH3S = array.new<LQEntry>()
+var LQEntry[] pL3S = array.new<LQEntry>()
+
+// ══════════════════════════════════════════════════════
+// Legacy Mode — State Variables
+// ══════════════════════════════════════════════════════
+
+// Macro state
+var float lastPH1     = na
+var int   lastPH_idx1 = na
+var float slastPH1    = na
+var float lastPH2     = na
+var int   lastPH_idx2 = na
+var float slastPH2    = na
+var float lastPH3     = na
+var int   lastPH_idx3 = na
+var float slastPH3    = na
+var float lastPL1     = na
+var int   lastPL_idx1 = na
+var float slastPL1    = na
+var float lastPL2     = na
+var int   lastPL_idx2 = na
+var float slastPL2    = na
+var float lastPL3     = na
+var int   lastPL_idx3 = na
+var float slastPL3    = na
+
+// Micro state
+var float lastPH1S     = na
+var int   lastPH_idx1S = na
+var float slastPH1S    = na
+var float lastPH2S     = na
+var int   lastPH_idx2S = na
+var float slastPH2S    = na
+var float lastPH3S     = na
+var int   lastPH_idx3S = na
+var float slastPH3S    = na
+var float lastPL1S     = na
+var int   lastPL_idx1S = na
+var float slastPL1S    = na
+var float lastPL2S     = na
+var int   lastPL_idx2S = na
+var float slastPL2S    = na
+var float lastPL3S     = na
+var int   lastPL_idx3S = na
+var float slastPL3S    = na
+
+// ══════════════════════════════════════════════════════
+// Signal Drawing Helper
+// Builds label+lines for one detected SMT event.
+// Used by both tiers to avoid duplicating draw logic.
+// ══════════════════════════════════════════════════════
+drawSMT(bool bull, float pivotPrice, int pivotIdx,
+        bool d1, int idx1, float p1,
+        bool d2, int idx2, float p2,
+        bool d3, int idx3, float p3,
+        string txt, SMTMark[] marks) =>
+    SMTMark m = SMTMark.new(pivotPrice, na, na, na, na)
+    if showLabels
+        m.lbl := label.new(pivotIdx, na, "SMT\n" + txt,
+             yloc = bull ? yloc.belowbar : yloc.abovebar,
+             textcolor = bull ? bullColor : bearColor,
+             style = label.style_none,
+             size = toSize(txtSizeInput),
+             xloc = xloc.bar_time)
+    if d1 and showLines
+        m.ln1 := line.new(idx1, p1, pivotIdx, pivotPrice,
+             color = bull ? bullColor : bearColor, style = ls1, width = lineWidthInput, xloc = xloc.bar_time)
+    if d2 and showLines
+        m.ln2 := line.new(idx2, p2, pivotIdx, pivotPrice,
+             color = bull ? bullColor : bearColor, style = ls2, width = lineWidthInput, xloc = xloc.bar_time)
+    if d3 and showLines
+        m.ln3 := line.new(idx3, p3, pivotIdx, pivotPrice,
+             color = bull ? bullColor : bearColor, style = ls3, width = lineWidthInput, xloc = xloc.bar_time)
+    if delBrokenInput
+        marks.push(m)
+
+bool strategyBullSignal = false
+bool strategyBearSignal = false
+
+// ══════════════════════════════════════════════════════
+// SWEEP MODE DETECTION
+// ══════════════════════════════════════════════════════
+if sweepModeInput and barstate.isconfirmed
+
+    // ── Macro bearish ────────────────────────────────
+    if not na(ph)
+        bool bearOk = candleValInput ? close[rLen] < open[rLen] : true
+        LQEntry sp1 = sym1 != "" and pH1.size() > 0 ? sweepLQ(pH1, ph, true) : na
+        LQEntry sp2 = sym2 != "" and pH2.size() > 0 ? sweepLQ(pH2, ph, true) : na
+        LQEntry sp3 = sym3 != "" and pH3.size() > 0 ? sweepLQ(pH3, ph, true) : na
+        bool div1 = bearOk and not na(sp1) and (inv1 ? sH1 > sp1.refPrice : sH1 < sp1.refPrice)
+        bool div2 = bearOk and not na(sp2) and (inv2 ? sH2 > sp2.refPrice : sH2 < sp2.refPrice)
+        bool div3 = bearOk and not na(sp3) and (inv3 ? sH3 > sp3.refPrice : sH3 < sp3.refPrice)
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(false, ph, time[rLen],
+                 div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
+                 div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
+                 div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
+                 txt, beMarks)
+            strategyBearSignal := strategyTradeMacro
+            alert((isDouble ? "Bearish DOUBLE SMT (" : "Bearish SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
+
+    // ── Macro bullish ────────────────────────────────
+    if not na(pl)
+        bool bullOk = candleValInput ? close[rLen] > open[rLen] : true
+        LQEntry sp1 = sym1 != "" and pL1.size() > 0 ? sweepLQ(pL1, pl, false) : na
+        LQEntry sp2 = sym2 != "" and pL2.size() > 0 ? sweepLQ(pL2, pl, false) : na
+        LQEntry sp3 = sym3 != "" and pL3.size() > 0 ? sweepLQ(pL3, pl, false) : na
+        bool div1 = bullOk and not na(sp1) and (inv1 ? sL1 < sp1.refPrice : sL1 > sp1.refPrice)
+        bool div2 = bullOk and not na(sp2) and (inv2 ? sL2 < sp2.refPrice : sL2 > sp2.refPrice)
+        bool div3 = bullOk and not na(sp3) and (inv3 ? sL3 < sp3.refPrice : sL3 > sp3.refPrice)
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(true, pl, time[rLen],
+                 div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
+                 div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
+                 div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
+                 txt, buMarks)
+            strategyBullSignal := strategyTradeMacro
+            alert((isDouble ? "Bullish DOUBLE SMT (" : "Bullish SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
+
+    // ── Macro history update ─────────────────────────
+    if not na(phConf)
+        if sym1 != ""
+            pH1.push(LQEntry.new(phConf, time[pivotLen], sH1C))
+        if sym2 != ""
+            pH2.push(LQEntry.new(phConf, time[pivotLen], sH2C))
+        if sym3 != ""
+            pH3.push(LQEntry.new(phConf, time[pivotLen], sH3C))
+    if not na(plConf)
+        if sym1 != ""
+            pL1.push(LQEntry.new(plConf, time[pivotLen], sL1C))
+        if sym2 != ""
+            pL2.push(LQEntry.new(plConf, time[pivotLen], sL2C))
+        if sym3 != ""
+            pL3.push(LQEntry.new(plConf, time[pivotLen], sL3C))
+
+    // ── Micro bearish ────────────────────────────────
+    if showMicro and not na(phS)
+        bool bearOk = candleValInput ? close[rLenS] < open[rLenS] : true
+        LQEntry sp1 = sym1 != "" and pH1S.size() > 0 ? sweepLQ(pH1S, phS, true) : na
+        LQEntry sp2 = sym2 != "" and pH2S.size() > 0 ? sweepLQ(pH2S, phS, true) : na
+        LQEntry sp3 = sym3 != "" and pH3S.size() > 0 ? sweepLQ(pH3S, phS, true) : na
+        bool div1 = bearOk and not na(sp1) and (inv1 ? sH1S > sp1.refPrice : sH1S < sp1.refPrice)
+        bool div2 = bearOk and not na(sp2) and (inv2 ? sH2S > sp2.refPrice : sH2S < sp2.refPrice)
+        bool div3 = bearOk and not na(sp3) and (inv3 ? sH3S > sp3.refPrice : sH3S < sp3.refPrice)
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(false, phS, time[rLenS],
+                 div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
+                 div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
+                 div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
+                 txt, beMSMarks)
+            strategyBearSignal := strategyTradeMicro
+            alert((isDouble ? "Bearish DOUBLE Micro SMT (" : "Bearish Micro SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
+
+    // ── Micro bullish ────────────────────────────────
+    if showMicro and not na(plS)
+        bool bullOk = candleValInput ? close[rLenS] > open[rLenS] : true
+        LQEntry sp1 = sym1 != "" and pL1S.size() > 0 ? sweepLQ(pL1S, plS, false) : na
+        LQEntry sp2 = sym2 != "" and pL2S.size() > 0 ? sweepLQ(pL2S, plS, false) : na
+        LQEntry sp3 = sym3 != "" and pL3S.size() > 0 ? sweepLQ(pL3S, plS, false) : na
+        bool div1 = bullOk and not na(sp1) and (inv1 ? sL1S < sp1.refPrice : sL1S > sp1.refPrice)
+        bool div2 = bullOk and not na(sp2) and (inv2 ? sL2S < sp2.refPrice : sL2S > sp2.refPrice)
+        bool div3 = bullOk and not na(sp3) and (inv3 ? sL3S < sp3.refPrice : sL3S > sp3.refPrice)
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(true, plS, time[rLenS],
+                 div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
+                 div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
+                 div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
+                 txt, buMSMarks)
+            strategyBullSignal := strategyTradeMicro
+            alert((isDouble ? "Bullish DOUBLE Micro SMT (" : "Bullish Micro SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
+
+    // ── Micro history update ─────────────────────────
+    if showMicro
+        if not na(phSConf)
+            if sym1 != ""
+                pH1S.push(LQEntry.new(phSConf, time[microPivotLen], sH1SC))
+            if sym2 != ""
+                pH2S.push(LQEntry.new(phSConf, time[microPivotLen], sH2SC))
+            if sym3 != ""
+                pH3S.push(LQEntry.new(phSConf, time[microPivotLen], sH3SC))
+        if not na(plSConf)
+            if sym1 != ""
+                pL1S.push(LQEntry.new(plSConf, time[microPivotLen], sL1SC))
+            if sym2 != ""
+                pL2S.push(LQEntry.new(plSConf, time[microPivotLen], sL2SC))
+            if sym3 != ""
+                pL3S.push(LQEntry.new(plSConf, time[microPivotLen], sL3SC))
+
+// ══════════════════════════════════════════════════════
+// LEGACY MODE DETECTION
+// ══════════════════════════════════════════════════════
+if not sweepModeInput
+
+    // ── Macro bearish ────────────────────────────────
+    if not na(ph)
+        bool bearOk = candleValInput ? close[rLen] < open[rLen] : true
+        bool div1 = bearOk and not na(lastPH1) and sym1 != "" and (inv1 ? (ph > lastPH1) == (sH1 > slastPH1) : (ph > lastPH1) != (sH1 > slastPH1))
+        bool div2 = bearOk and not na(lastPH2) and sym2 != "" and (inv2 ? (ph > lastPH2) == (sH2 > slastPH2) : (ph > lastPH2) != (sH2 > slastPH2))
+        bool div3 = bearOk and not na(lastPH3) and sym3 != "" and (inv3 ? (ph > lastPH3) == (sH3 > slastPH3) : (ph > lastPH3) != (sH3 > slastPH3))
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(false, ph, time[rLen],
+                 div1, lastPH_idx1, lastPH1,
+                 div2, lastPH_idx2, lastPH2,
+                 div3, lastPH_idx3, lastPH3,
+                 txt, beMarks)
+            strategyBearSignal := strategyTradeMacro
+
+    // ── Macro bullish ────────────────────────────────
+    if not na(pl)
+        bool bullOk = candleValInput ? close[rLen] > open[rLen] : true
+        bool div1 = bullOk and not na(lastPL1) and sym1 != "" and (inv1 ? (pl < lastPL1) == (sL1 < slastPL1) : (pl < lastPL1) != (sL1 < slastPL1))
+        bool div2 = bullOk and not na(lastPL2) and sym2 != "" and (inv2 ? (pl < lastPL2) == (sL2 < slastPL2) : (pl < lastPL2) != (sL2 < slastPL2))
+        bool div3 = bullOk and not na(lastPL3) and sym3 != "" and (inv3 ? (pl < lastPL3) == (sL3 < slastPL3) : (pl < lastPL3) != (sL3 < slastPL3))
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(true, pl, time[rLen],
+                 div1, lastPL_idx1, lastPL1,
+                 div2, lastPL_idx2, lastPL2,
+                 div3, lastPL_idx3, lastPL3,
+                 txt, buMarks)
+            strategyBullSignal := strategyTradeMacro
+
+    // ── Macro history update ─────────────────────────
+    if not na(phConf)
+        lastPH1 := phConf,  lastPH_idx1 := time[pivotLen],  slastPH1 := sH1C
+        lastPH2 := phConf,  lastPH_idx2 := time[pivotLen],  slastPH2 := sH2C
+        lastPH3 := phConf,  lastPH_idx3 := time[pivotLen],  slastPH3 := sH3C
+    if not na(plConf)
+        lastPL1 := plConf,  lastPL_idx1 := time[pivotLen],  slastPL1 := sL1C
+        lastPL2 := plConf,  lastPL_idx2 := time[pivotLen],  slastPL2 := sL2C
+        lastPL3 := plConf,  lastPL_idx3 := time[pivotLen],  slastPL3 := sL3C
+
+    // ── Micro bearish ────────────────────────────────
+    if showMicro and not na(phS)
+        bool bearOk = candleValInput ? close[rLenS] < open[rLenS] : true
+        bool div1 = bearOk and not na(lastPH1S) and sym1 != "" and (inv1 ? (phS > lastPH1S) == (sH1S > slastPH1S) : (phS > lastPH1S) != (sH1S > slastPH1S))
+        bool div2 = bearOk and not na(lastPH2S) and sym2 != "" and (inv2 ? (phS > lastPH2S) == (sH2S > slastPH2S) : (phS > lastPH2S) != (sH2S > slastPH2S))
+        bool div3 = bearOk and not na(lastPH3S) and sym3 != "" and (inv3 ? (phS > lastPH3S) == (sH3S > slastPH3S) : (phS > lastPH3S) != (sH3S > slastPH3S))
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(false, phS, time[rLenS],
+                 div1, lastPH_idx1S, lastPH1S,
+                 div2, lastPH_idx2S, lastPH2S,
+                 div3, lastPH_idx3S, lastPH3S,
+                 txt, beMSMarks)
+            strategyBearSignal := strategyTradeMicro
+
+    // ── Micro bullish ────────────────────────────────
+    if showMicro and not na(plS)
+        bool bullOk = candleValInput ? close[rLenS] > open[rLenS] : true
+        bool div1 = bullOk and not na(lastPL1S) and sym1 != "" and (inv1 ? (plS < lastPL1S) == (sL1S < slastPL1S) : (plS < lastPL1S) != (sL1S < slastPL1S))
+        bool div2 = bullOk and not na(lastPL2S) and sym2 != "" and (inv2 ? (plS < lastPL2S) == (sL2S < slastPL2S) : (plS < lastPL2S) != (sL2S < slastPL2S))
+        bool div3 = bullOk and not na(lastPL3S) and sym3 != "" and (inv3 ? (plS < lastPL3S) == (sL3S < slastPL3S) : (plS < lastPL3S) != (sL3S < slastPL3S))
+        string txt = ""
+        txt := div1 ? shortName(sym1) : txt
+        txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
+        txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
+        int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
+        bool isDouble = cnt >= 2
+        if txt != "" and (not onlyDoubleSMT or isDouble)
+            drawSMT(true, plS, time[rLenS],
+                 div1, lastPL_idx1S, lastPL1S,
+                 div2, lastPL_idx2S, lastPL2S,
+                 div3, lastPL_idx3S, lastPL3S,
+                 txt, buMSMarks)
+            strategyBullSignal := strategyTradeMicro
+
+    // ── Micro history update ─────────────────────────
+    if showMicro
+        if not na(phSConf)
+            lastPH1S := phSConf,  lastPH_idx1S := time[microPivotLen],  slastPH1S := sH1SC
+            lastPH2S := phSConf,  lastPH_idx2S := time[microPivotLen],  slastPH2S := sH2SC
+            lastPH3S := phSConf,  lastPH_idx3S := time[microPivotLen],  slastPH3S := sH3SC
+        if not na(plSConf)
+            lastPL1S := plSConf,  lastPL_idx1S := time[microPivotLen],  slastPL1S := sL1SC
+            lastPL2S := plSConf,  lastPL_idx2S := time[microPivotLen],  slastPL2S := sL2SC
+            lastPL3S := plSConf,  lastPL_idx3S := time[microPivotLen],  slastPL3S := sL3SC
+
+if strategyEnabled
+    if strategyBullSignal and not strategyBearSignal and strategy.position_size <= 0
+        strategy.close("SMT Short")
+        strategy.entry("SMT Long", strategy.long)
+    else if strategyBearSignal and not strategyBullSignal and strategy.position_size >= 0
+        strategy.close("SMT Long")
+        strategy.entry("SMT Short", strategy.short)
+
+// ══════════════════════════════════════════════════════
+// Information Table
+// ══════════════════════════════════════════════════════
+fmtSlot(sym, inv) =>
+    sym == "" ? "-" : shortName(sym) + (inv ? " (inv)" : "")
+
+var table info = table.new(position.top_right, 2, 4,
+     bgcolor=color.new(chart.bg_color, 10), border_width=1, border_color=chart.fg_color)
+
+if barstate.islast
+    string modeStr = modeInput + " | " + (sweepModeInput ? "Sweep" : "Legacy") + (showMicro ? " | Micro On" : "")
+    table.cell(info, 0, 0, "SMT Pairs", text_color=chart.fg_color, text_size=size.small, bgcolor=color.new(chart.bg_color, 0))
+    table.cell(info, 1, 0, modeStr,     text_color=chart.fg_color, text_size=size.small, bgcolor=color.new(chart.bg_color, 0))
+    table.cell(info, 0, 1, "Sym 1:",    text_color=chart.fg_color, text_size=size.small)
+    table.cell(info, 1, 1, fmtSlot(sym1, inv1), text_color=sym1 != "" ? bullColor : color.gray, text_size=size.small)
+    table.cell(info, 0, 2, "Sym 2:",    text_color=chart.fg_color, text_size=size.small)
+    table.cell(info, 1, 2, fmtSlot(sym2, inv2), text_color=sym2 != "" ? bullColor : color.gray, text_size=size.small)
+    table.cell(info, 0, 3, "Sym 3:",    text_color=chart.fg_color, text_size=size.small)
+    table.cell(info, 1, 3, fmtSlot(sym3, inv3), text_color=sym3 != "" ? bullColor : color.gray, text_size=size.small)
+
+// ══════════════════════════════════════════════════════
+// Alerts
+// Sweep mode: uses alert() calls above.
+//   Set condition to "Any alert() function call".
+//   Macro alerts: "Bearish/Bullish SMT (...)"
+//   Micro alerts: "Bearish/Bullish Micro SMT (...)"
+// Legacy mode: use named alertconditions below.
+// ══════════════════════════════════════════════════════
+
+bool macroBearOkA = candleValInput ? close[rLen] < open[rLen] : true
+bool macroBullOkA = candleValInput ? close[rLen] > open[rLen] : true
+bool microBearOkA = candleValInput ? close[rLenS] < open[rLenS] : true
+bool microBullOkA = candleValInput ? close[rLenS] > open[rLenS] : true
+
+bool macroBearD1 = macroBearOkA and not na(ph) and sym1 != "" and (inv1 ? (ph > lastPH1) == (sH1 > slastPH1) : (ph > lastPH1) != (sH1 > slastPH1))
+bool macroBearD2 = macroBearOkA and not na(ph) and sym2 != "" and (inv2 ? (ph > lastPH2) == (sH2 > slastPH2) : (ph > lastPH2) != (sH2 > slastPH2))
+bool macroBearD3 = macroBearOkA and not na(ph) and sym3 != "" and (inv3 ? (ph > lastPH3) == (sH3 > slastPH3) : (ph > lastPH3) != (sH3 > slastPH3))
+bool macroBullD1 = macroBullOkA and not na(pl) and sym1 != "" and (inv1 ? (pl < lastPL1) == (sL1 < slastPL1) : (pl < lastPL1) != (sL1 < slastPL1))
+bool macroBullD2 = macroBullOkA and not na(pl) and sym2 != "" and (inv2 ? (pl < lastPL2) == (sL2 < slastPL2) : (pl < lastPL2) != (sL2 < slastPL2))
+bool macroBullD3 = macroBullOkA and not na(pl) and sym3 != "" and (inv3 ? (pl < lastPL3) == (sL3 < slastPL3) : (pl < lastPL3) != (sL3 < slastPL3))
+bool microBearD1 = microBearOkA and not na(phS) and sym1 != "" and (inv1 ? (phS > lastPH1S) == (sH1S > slastPH1S) : (phS > lastPH1S) != (sH1S > slastPH1S))
+bool microBearD2 = microBearOkA and not na(phS) and sym2 != "" and (inv2 ? (phS > lastPH2S) == (sH2S > slastPH2S) : (phS > lastPH2S) != (sH2S > slastPH2S))
+bool microBearD3 = microBearOkA and not na(phS) and sym3 != "" and (inv3 ? (phS > lastPH3S) == (sH3S > slastPH3S) : (phS > lastPH3S) != (sH3S > slastPH3S))
+bool microBullD1 = microBullOkA and not na(plS) and sym1 != "" and (inv1 ? (plS < lastPL1S) == (sL1S < slastPL1S) : (plS < lastPL1S) != (sL1S < slastPL1S))
+bool microBullD2 = microBullOkA and not na(plS) and sym2 != "" and (inv2 ? (plS < lastPL2S) == (sL2S < slastPL2S) : (plS < lastPL2S) != (sL2S < slastPL2S))
+bool microBullD3 = microBullOkA and not na(plS) and sym3 != "" and (inv3 ? (plS < lastPL3S) == (sL3S < slastPL3S) : (plS < lastPL3S) != (sL3S < slastPL3S))
+
+bool macroBearDouble = (macroBearD1 ? 1 : 0) + (macroBearD2 ? 1 : 0) + (macroBearD3 ? 1 : 0) >= 2
+bool macroBullDouble = (macroBullD1 ? 1 : 0) + (macroBullD2 ? 1 : 0) + (macroBullD3 ? 1 : 0) >= 2
+bool microBearDouble = (microBearD1 ? 1 : 0) + (microBearD2 ? 1 : 0) + (microBearD3 ? 1 : 0) >= 2
+bool microBullDouble = (microBullD1 ? 1 : 0) + (microBullD2 ? 1 : 0) + (microBullD3 ? 1 : 0) >= 2
+
+alertcondition(macroBearDouble, "Bearish DOUBLE SMT", "Bearish DOUBLE SMT Divergence detected!")
+alertcondition(macroBullDouble, "Bullish DOUBLE SMT", "Bullish DOUBLE SMT Divergence detected!")
+alertcondition(microBearDouble, "Bearish DOUBLE Micro SMT", "Bearish DOUBLE Micro SMT Divergence detected!")
+alertcondition(microBullDouble, "Bullish DOUBLE Micro SMT", "Bullish DOUBLE Micro SMT Divergence detected!")
+
+// Macro legacy alerts
+alertcondition((not onlyDoubleSMT) and not na(ph) and sym1 != "" and (inv1 ? (ph>lastPH1)==(sH1>slastPH1) : (ph>lastPH1)!=(sH1>slastPH1)), "Bearish SMT - Sym 1", "Bearish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(pl) and sym1 != "" and (inv1 ? (pl<lastPL1)==(sL1<slastPL1) : (pl<lastPL1)!=(sL1<slastPL1)), "Bullish SMT - Sym 1", "Bullish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(ph) and sym2 != "" and (inv2 ? (ph>lastPH2)==(sH2>slastPH2) : (ph>lastPH2)!=(sH2>slastPH2)), "Bearish SMT - Sym 2", "Bearish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(pl) and sym2 != "" and (inv2 ? (pl<lastPL2)==(sL2<slastPL2) : (pl<lastPL2)!=(sL2<slastPL2)), "Bullish SMT - Sym 2", "Bullish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(ph) and sym3 != "" and (inv3 ? (ph>lastPH3)==(sH3>slastPH3) : (ph>lastPH3)!=(sH3>slastPH3)), "Bearish SMT - Sym 3", "Bearish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(pl) and sym3 != "" and (inv3 ? (pl<lastPL3)==(sL3<slastPL3) : (pl<lastPL3)!=(sL3<slastPL3)), "Bullish SMT - Sym 3", "Bullish SMT Divergence detected!")
+
+// Micro legacy alerts
+alertcondition((not onlyDoubleSMT) and not na(phS) and sym1 != "" and (inv1 ? (phS>lastPH1S)==(sH1S>slastPH1S) : (phS>lastPH1S)!=(sH1S>slastPH1S)), "Bearish Micro SMT - Sym 1", "Bearish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(plS) and sym1 != "" and (inv1 ? (plS<lastPL1S)==(sL1S<slastPL1S) : (plS<lastPL1S)!=(sL1S<slastPL1S)), "Bullish Micro SMT - Sym 1", "Bullish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(phS) and sym2 != "" and (inv2 ? (phS>lastPH2S)==(sH2S>slastPH2S) : (phS>lastPH2S)!=(sH2S>slastPH2S)), "Bearish Micro SMT - Sym 2", "Bearish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(plS) and sym2 != "" and (inv2 ? (plS<lastPL2S)==(sL2S<slastPL2S) : (plS<lastPL2S)!=(sL2S<slastPL2S)), "Bullish Micro SMT - Sym 2", "Bullish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(phS) and sym3 != "" and (inv3 ? (phS>lastPH3S)==(sH3S>slastPH3S) : (phS>lastPH3S)!=(sH3S>slastPH3S)), "Bearish Micro SMT - Sym 3", "Bearish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and not na(plS) and sym3 != "" and (inv3 ? (plS<lastPL3S)==(sL3S<slastPL3S) : (plS<lastPL3S)!=(sL3S<slastPL3S)), "Bullish Micro SMT - Sym 3", "Bullish Micro SMT Divergence detected!")

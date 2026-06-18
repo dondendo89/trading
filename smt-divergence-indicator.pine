@@ -1,14 +1,13 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 
 //@version=6
-strategy("Multi-Asset SMT Divergence", shorttitle="SMT Divergence Alert", overlay=true, pyramiding=0, default_qty_type=strategy.percent_of_equity, default_qty_value=100, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
+indicator("Multi-Asset SMT Divergence", shorttitle="SMT Divergence Alert", overlay=true, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
 
 // ══════════════════════════════════════════════════════
 // Groups
 // ══════════════════════════════════════════════════════
 string G_CORE = "Core Settings"
 string G_VIS  = "Visual Settings"
-string G_STR  = "Strategy"
 
 // ══════════════════════════════════════════════════════
 // Inputs
@@ -49,9 +48,6 @@ showMicro      = input.bool(true, "Show Micro SMTs", group=G_CORE,
 microPivotLen  = input.int(2, "Micro Lookback", minval=1, group=G_CORE,
      tooltip="Pivot lookback for the micro detection tier. Default 2 catches 1-in-5-bar swings on lower timeframes without losing the larger swing context from the main lookback.")
 
-strategyEnabled    = input.bool(true, "Enable Strategy", group=G_STR)
-strategyTradeMacro = input.bool(true, "Trade Macro SMT", group=G_STR)
-strategyTradeMicro = input.bool(true, "Trade Micro SMT", group=G_STR)
 
 showLines      = input.bool(true,         "Show SMT Lines",    group=G_VIS)
 bullColor      = input.color(#089981,     "Bullish Color",     group=G_VIS)
@@ -421,10 +417,6 @@ drawSMT(bool bull, float pivotPrice, int pivotIdx,
     if delBrokenInput
         marks.push(m)
 
-bool strategyBullSignal = false
-bool strategyBearSignal = false
-bool strategyBullIsDouble = false
-bool strategyBearIsDouble = false
 bool macroBullFire = false
 bool macroBearFire = false
 bool macroBullDoubleFire = false
@@ -456,8 +448,6 @@ if sweepModeInput and barstate.isconfirmed
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
                  div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
                  txt, beMarks)
-            strategyBearSignal := strategyBearSignal or strategyTradeMacro
-            strategyBearIsDouble := strategyBearIsDouble or isDouble
             macroBearFire := true
             macroBearDoubleFire := isDouble
             alert("[" + tfLabel(timeframe.period) + "] " + (isDouble ? "Bearish DOUBLE SMT (" : "Bearish SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
@@ -483,8 +473,6 @@ if sweepModeInput and barstate.isconfirmed
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
                  div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
                  txt, buMarks)
-            strategyBullSignal := strategyBullSignal or strategyTradeMacro
-            strategyBullIsDouble := strategyBullIsDouble or isDouble
             macroBullFire := true
             macroBullDoubleFire := isDouble
             alert("[" + tfLabel(timeframe.period) + "] " + (isDouble ? "Bullish DOUBLE SMT (" : "Bullish SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
@@ -526,8 +514,6 @@ if sweepModeInput and barstate.isconfirmed
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
                  div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
                  txt, beMSMarks)
-            strategyBearSignal := strategyBearSignal or strategyTradeMicro
-            strategyBearIsDouble := strategyBearIsDouble or isDouble
             alert("[" + tfLabel(timeframe.period) + "] " + (isDouble ? "Bearish DOUBLE Micro SMT (" : "Bearish Micro SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
 
     // ── Micro bullish ────────────────────────────────
@@ -551,8 +537,6 @@ if sweepModeInput and barstate.isconfirmed
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
                  div3, na(sp3) ? time : sp3.idx, na(sp3) ? 0.0 : sp3.price,
                  txt, buMSMarks)
-            strategyBullSignal := strategyBullSignal or strategyTradeMicro
-            strategyBullIsDouble := strategyBullIsDouble or isDouble
             alert("[" + tfLabel(timeframe.period) + "] " + (isDouble ? "Bullish DOUBLE Micro SMT (" : "Bullish Micro SMT (") + txt + ") on " + syminfo.ticker, alert.freq_once_per_bar)
 
     // ── Micro history update ─────────────────────────
@@ -595,8 +579,6 @@ if not sweepModeInput
                  div2, lastPH_idx2, lastPH2,
                  div3, lastPH_idx3, lastPH3,
                  txt, beMarks)
-            strategyBearSignal := strategyBearSignal or strategyTradeMacro
-            strategyBearIsDouble := strategyBearIsDouble or isDouble
             macroBearFire := true
             macroBearDoubleFire := isDouble
 
@@ -618,8 +600,6 @@ if not sweepModeInput
                  div2, lastPL_idx2, lastPL2,
                  div3, lastPL_idx3, lastPL3,
                  txt, buMarks)
-            strategyBullSignal := strategyBullSignal or strategyTradeMacro
-            strategyBullIsDouble := strategyBullIsDouble or isDouble
             macroBullFire := true
             macroBullDoubleFire := isDouble
 
@@ -651,8 +631,6 @@ if not sweepModeInput
                  div2, lastPH_idx2S, lastPH2S,
                  div3, lastPH_idx3S, lastPH3S,
                  txt, beMSMarks)
-            strategyBearSignal := strategyBearSignal or strategyTradeMicro
-            strategyBearIsDouble := strategyBearIsDouble or isDouble
 
     // ── Micro bullish ────────────────────────────────
     if showMicro and not na(plS)
@@ -672,8 +650,6 @@ if not sweepModeInput
                  div2, lastPL_idx2S, lastPL2S,
                  div3, lastPL_idx3S, lastPL3S,
                  txt, buMSMarks)
-            strategyBullSignal := strategyBullSignal or strategyTradeMicro
-            strategyBullIsDouble := strategyBullIsDouble or isDouble
 
     // ── Micro history update ─────────────────────────
     if showMicro
@@ -685,16 +661,6 @@ if not sweepModeInput
             lastPL1S := plSConf,  lastPL_idx1S := time[microPivotLen],  slastPL1S := sL1SC
             lastPL2S := plSConf,  lastPL_idx2S := time[microPivotLen],  slastPL2S := sL2SC
             lastPL3S := plSConf,  lastPL_idx3S := time[microPivotLen],  slastPL3S := sL3SC
-
-if strategyEnabled
-    bool canLong = strategyBullSignal and not strategyBearSignal and (not onlyDoubleSMT or strategyBullIsDouble)
-    bool canShort = strategyBearSignal and not strategyBullSignal and (not onlyDoubleSMT or strategyBearIsDouble)
-    if canLong and strategy.position_size <= 0
-        strategy.close("SMT Short")
-        strategy.entry("SMT Long", strategy.long)
-    else if canShort and strategy.position_size >= 0
-        strategy.close("SMT Long")
-        strategy.entry("SMT Short", strategy.short)
 
 var int lastMtfBull1 = na
 var int lastMtfBear1 = na

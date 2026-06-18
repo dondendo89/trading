@@ -1,7 +1,7 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 
 //@version=6
-indicator("Multi-Asset SMT Divergence", shorttitle="SMT Divergence Alert", overlay=true, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
+indicator("Multi-Asset SMT Divergence", shorttitle="SMT Divergence Alert", overlay=true, max_labels_count=500, max_lines_count=500, max_bars_back=4000)
 
 // ══════════════════════════════════════════════════════
 // Groups
@@ -41,6 +41,9 @@ mtfNotify15    = input.bool(true, "MTF Notify 15m", group=G_CORE)
 mtfNotify45    = input.bool(true, "MTF Notify 45m", group=G_CORE)
 mtfNotify1h    = input.bool(true, "MTF Notify 1h", group=G_CORE)
 mtfNotify4h    = input.bool(true, "MTF Notify 4h", group=G_CORE)
+filterMinDevAtrInput = input.float(0.0, "Filter: Min Deviation (ATR)", minval=0.0, step=0.1, group=G_CORE)
+filterMoveAwayAtrInput = input.float(0.0, "Filter: Move Away From Pivot (ATR)", minval=0.0, step=0.1, group=G_CORE)
+filterTrendInput = input.string("Off", "Filter: Trend", options=["Off", "EMA200", "EMA50/200"], group=G_CORE)
 
 // ── Micro Tier ───────────────────────────────────────
 showMicro      = input.bool(true, "Show Micro SMTs", group=G_CORE,
@@ -84,6 +87,9 @@ tfLabel(tf) =>
     else if tf == "240"
         label := "4h"
     label
+
+minDevOk(float curr, float ref, float atrVal) =>
+    filterMinDevAtrInput <= 0.0 ? true : math.abs(curr - ref) >= atrVal * filterMinDevAtrInput
 
 toSize(s) =>
     s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : s == "Large" ? size.large : s == "Huge" ? size.huge : size.small
@@ -206,9 +212,9 @@ ls3 = toLS(lsIn3)
 // ══════════════════════════════════════════════════════
 // Data Fetching
 // ══════════════════════════════════════════════════════
-[sHigh1, sLow1] = request.security(sym1 != "" ? sym1 : syminfo.tickerid, timeframe.period, [high, low])
-[sHigh2, sLow2] = request.security(sym2 != "" ? sym2 : syminfo.tickerid, timeframe.period, [high, low])
-[sHigh3, sLow3] = request.security(sym3 != "" ? sym3 : syminfo.tickerid, timeframe.period, [high, low])
+[sHigh1, sLow1, sClose1] = request.security(sym1 != "" ? sym1 : syminfo.tickerid, timeframe.period, [high, low, close])
+[sHigh2, sLow2, sClose2] = request.security(sym2 != "" ? sym2 : syminfo.tickerid, timeframe.period, [high, low, close])
+[sHigh3, sLow3, sClose3] = request.security(sym3 != "" ? sym3 : syminfo.tickerid, timeframe.period, [high, low, close])
 
 // ══════════════════════════════════════════════════════
 // Pivot Series
@@ -253,6 +259,19 @@ sH3S  = sHigh3[rLenS],    sL3S  = sLow3[rLenS]
 sH1SC = sHigh1[microPivotLen], sL1SC = sLow1[microPivotLen]
 sH2SC = sHigh2[microPivotLen], sL2SC = sLow2[microPivotLen]
 sH3SC = sHigh3[microPivotLen], sL3SC = sLow3[microPivotLen]
+
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+trendOkBull = filterTrendInput == "Off" ? true : filterTrendInput == "EMA200" ? close > ema200 : ema50 > ema200
+trendOkBear = filterTrendInput == "Off" ? true : filterTrendInput == "EMA200" ? close < ema200 : ema50 < ema200
+atrChart = ta.atr(14)
+atrFromHLC(float h, float l, float c, int len) =>
+    float pc = nz(c[1], c)
+    float tr = math.max(h - l, math.max(math.abs(h - pc), math.abs(l - pc)))
+    ta.rma(tr, len)
+atrSym1 = atrFromHLC(sHigh1, sLow1, sClose1, 14)
+atrSym2 = atrFromHLC(sHigh2, sLow2, sClose2, 14)
+atrSym3 = atrFromHLC(sHigh3, sLow3, sClose3, 14)
 
 // ══════════════════════════════════════════════════════
 // SMT Mark Tracking (for Remove Broken SMTs)
@@ -433,16 +452,17 @@ if sweepModeInput and barstate.isconfirmed
         LQEntry sp1 = sym1 != "" and pH1.size() > 0 ? sweepLQ(pH1, ph, true) : na
         LQEntry sp2 = sym2 != "" and pH2.size() > 0 ? sweepLQ(pH2, ph, true) : na
         LQEntry sp3 = sym3 != "" and pH3.size() > 0 ? sweepLQ(pH3, ph, true) : na
-        bool div1 = bearOk and not na(sp1) and (inv1 ? sH1 > sp1.refPrice : sH1 < sp1.refPrice)
-        bool div2 = bearOk and not na(sp2) and (inv2 ? sH2 > sp2.refPrice : sH2 < sp2.refPrice)
-        bool div3 = bearOk and not na(sp3) and (inv3 ? sH3 > sp3.refPrice : sH3 < sp3.refPrice)
+        bool div1 = bearOk and not na(sp1) and (inv1 ? sH1 > sp1.refPrice : sH1 < sp1.refPrice) and minDevOk(sH1, sp1.refPrice, atrSym1[rLen])
+        bool div2 = bearOk and not na(sp2) and (inv2 ? sH2 > sp2.refPrice : sH2 < sp2.refPrice) and minDevOk(sH2, sp2.refPrice, atrSym2[rLen])
+        bool div3 = bearOk and not na(sp3) and (inv3 ? sH3 > sp3.refPrice : sH3 < sp3.refPrice) and minDevOk(sH3, sp3.refPrice, atrSym3[rLen])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close < ph - atrChart[rLen] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBear and moveAwayOk
             drawSMT(false, ph, time[rLen],
                  div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
@@ -458,16 +478,17 @@ if sweepModeInput and barstate.isconfirmed
         LQEntry sp1 = sym1 != "" and pL1.size() > 0 ? sweepLQ(pL1, pl, false) : na
         LQEntry sp2 = sym2 != "" and pL2.size() > 0 ? sweepLQ(pL2, pl, false) : na
         LQEntry sp3 = sym3 != "" and pL3.size() > 0 ? sweepLQ(pL3, pl, false) : na
-        bool div1 = bullOk and not na(sp1) and (inv1 ? sL1 < sp1.refPrice : sL1 > sp1.refPrice)
-        bool div2 = bullOk and not na(sp2) and (inv2 ? sL2 < sp2.refPrice : sL2 > sp2.refPrice)
-        bool div3 = bullOk and not na(sp3) and (inv3 ? sL3 < sp3.refPrice : sL3 > sp3.refPrice)
+        bool div1 = bullOk and not na(sp1) and (inv1 ? sL1 < sp1.refPrice : sL1 > sp1.refPrice) and minDevOk(sL1, sp1.refPrice, atrSym1[rLen])
+        bool div2 = bullOk and not na(sp2) and (inv2 ? sL2 < sp2.refPrice : sL2 > sp2.refPrice) and minDevOk(sL2, sp2.refPrice, atrSym2[rLen])
+        bool div3 = bullOk and not na(sp3) and (inv3 ? sL3 < sp3.refPrice : sL3 > sp3.refPrice) and minDevOk(sL3, sp3.refPrice, atrSym3[rLen])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close > pl + atrChart[rLen] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBull and moveAwayOk
             drawSMT(true, pl, time[rLen],
                  div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
@@ -499,16 +520,17 @@ if sweepModeInput and barstate.isconfirmed
         LQEntry sp1 = sym1 != "" and pH1S.size() > 0 ? sweepLQ(pH1S, phS, true) : na
         LQEntry sp2 = sym2 != "" and pH2S.size() > 0 ? sweepLQ(pH2S, phS, true) : na
         LQEntry sp3 = sym3 != "" and pH3S.size() > 0 ? sweepLQ(pH3S, phS, true) : na
-        bool div1 = bearOk and not na(sp1) and (inv1 ? sH1S > sp1.refPrice : sH1S < sp1.refPrice)
-        bool div2 = bearOk and not na(sp2) and (inv2 ? sH2S > sp2.refPrice : sH2S < sp2.refPrice)
-        bool div3 = bearOk and not na(sp3) and (inv3 ? sH3S > sp3.refPrice : sH3S < sp3.refPrice)
+        bool div1 = bearOk and not na(sp1) and (inv1 ? sH1S > sp1.refPrice : sH1S < sp1.refPrice) and minDevOk(sH1S, sp1.refPrice, atrSym1[rLenS])
+        bool div2 = bearOk and not na(sp2) and (inv2 ? sH2S > sp2.refPrice : sH2S < sp2.refPrice) and minDevOk(sH2S, sp2.refPrice, atrSym2[rLenS])
+        bool div3 = bearOk and not na(sp3) and (inv3 ? sH3S > sp3.refPrice : sH3S < sp3.refPrice) and minDevOk(sH3S, sp3.refPrice, atrSym3[rLenS])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close < phS - atrChart[rLenS] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBear and moveAwayOk
             drawSMT(false, phS, time[rLenS],
                  div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
@@ -522,16 +544,17 @@ if sweepModeInput and barstate.isconfirmed
         LQEntry sp1 = sym1 != "" and pL1S.size() > 0 ? sweepLQ(pL1S, plS, false) : na
         LQEntry sp2 = sym2 != "" and pL2S.size() > 0 ? sweepLQ(pL2S, plS, false) : na
         LQEntry sp3 = sym3 != "" and pL3S.size() > 0 ? sweepLQ(pL3S, plS, false) : na
-        bool div1 = bullOk and not na(sp1) and (inv1 ? sL1S < sp1.refPrice : sL1S > sp1.refPrice)
-        bool div2 = bullOk and not na(sp2) and (inv2 ? sL2S < sp2.refPrice : sL2S > sp2.refPrice)
-        bool div3 = bullOk and not na(sp3) and (inv3 ? sL3S < sp3.refPrice : sL3S > sp3.refPrice)
+        bool div1 = bullOk and not na(sp1) and (inv1 ? sL1S < sp1.refPrice : sL1S > sp1.refPrice) and minDevOk(sL1S, sp1.refPrice, atrSym1[rLenS])
+        bool div2 = bullOk and not na(sp2) and (inv2 ? sL2S < sp2.refPrice : sL2S > sp2.refPrice) and minDevOk(sL2S, sp2.refPrice, atrSym2[rLenS])
+        bool div3 = bullOk and not na(sp3) and (inv3 ? sL3S < sp3.refPrice : sL3S > sp3.refPrice) and minDevOk(sL3S, sp3.refPrice, atrSym3[rLenS])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close > plS + atrChart[rLenS] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBull and moveAwayOk
             drawSMT(true, plS, time[rLenS],
                  div1, na(sp1) ? time : sp1.idx, na(sp1) ? 0.0 : sp1.price,
                  div2, na(sp2) ? time : sp2.idx, na(sp2) ? 0.0 : sp2.price,
@@ -564,16 +587,17 @@ if not sweepModeInput
     // ── Macro bearish ────────────────────────────────
     if not na(ph)
         bool bearOk = candleValInput ? close[rLen] < open[rLen] : true
-        bool div1 = bearOk and not na(lastPH1) and sym1 != "" and (inv1 ? (ph > lastPH1) == (sH1 > slastPH1) : (ph > lastPH1) != (sH1 > slastPH1))
-        bool div2 = bearOk and not na(lastPH2) and sym2 != "" and (inv2 ? (ph > lastPH2) == (sH2 > slastPH2) : (ph > lastPH2) != (sH2 > slastPH2))
-        bool div3 = bearOk and not na(lastPH3) and sym3 != "" and (inv3 ? (ph > lastPH3) == (sH3 > slastPH3) : (ph > lastPH3) != (sH3 > slastPH3))
+        bool div1 = bearOk and not na(lastPH1) and sym1 != "" and (inv1 ? (ph > lastPH1) == (sH1 > slastPH1) : (ph > lastPH1) != (sH1 > slastPH1)) and minDevOk(sH1, slastPH1, atrSym1[rLen])
+        bool div2 = bearOk and not na(lastPH2) and sym2 != "" and (inv2 ? (ph > lastPH2) == (sH2 > slastPH2) : (ph > lastPH2) != (sH2 > slastPH2)) and minDevOk(sH2, slastPH2, atrSym2[rLen])
+        bool div3 = bearOk and not na(lastPH3) and sym3 != "" and (inv3 ? (ph > lastPH3) == (sH3 > slastPH3) : (ph > lastPH3) != (sH3 > slastPH3)) and minDevOk(sH3, slastPH3, atrSym3[rLen])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close < ph - atrChart[rLen] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBear and moveAwayOk
             drawSMT(false, ph, time[rLen],
                  div1, lastPH_idx1, lastPH1,
                  div2, lastPH_idx2, lastPH2,
@@ -585,16 +609,17 @@ if not sweepModeInput
     // ── Macro bullish ────────────────────────────────
     if not na(pl)
         bool bullOk = candleValInput ? close[rLen] > open[rLen] : true
-        bool div1 = bullOk and not na(lastPL1) and sym1 != "" and (inv1 ? (pl < lastPL1) == (sL1 < slastPL1) : (pl < lastPL1) != (sL1 < slastPL1))
-        bool div2 = bullOk and not na(lastPL2) and sym2 != "" and (inv2 ? (pl < lastPL2) == (sL2 < slastPL2) : (pl < lastPL2) != (sL2 < slastPL2))
-        bool div3 = bullOk and not na(lastPL3) and sym3 != "" and (inv3 ? (pl < lastPL3) == (sL3 < slastPL3) : (pl < lastPL3) != (sL3 < slastPL3))
+        bool div1 = bullOk and not na(lastPL1) and sym1 != "" and (inv1 ? (pl < lastPL1) == (sL1 < slastPL1) : (pl < lastPL1) != (sL1 < slastPL1)) and minDevOk(sL1, slastPL1, atrSym1[rLen])
+        bool div2 = bullOk and not na(lastPL2) and sym2 != "" and (inv2 ? (pl < lastPL2) == (sL2 < slastPL2) : (pl < lastPL2) != (sL2 < slastPL2)) and minDevOk(sL2, slastPL2, atrSym2[rLen])
+        bool div3 = bullOk and not na(lastPL3) and sym3 != "" and (inv3 ? (pl < lastPL3) == (sL3 < slastPL3) : (pl < lastPL3) != (sL3 < slastPL3)) and minDevOk(sL3, slastPL3, atrSym3[rLen])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close > pl + atrChart[rLen] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBull and moveAwayOk
             drawSMT(true, pl, time[rLen],
                  div1, lastPL_idx1, lastPL1,
                  div2, lastPL_idx2, lastPL2,
@@ -616,16 +641,17 @@ if not sweepModeInput
     // ── Micro bearish ────────────────────────────────
     if showMicro and not na(phS)
         bool bearOk = candleValInput ? close[rLenS] < open[rLenS] : true
-        bool div1 = bearOk and not na(lastPH1S) and sym1 != "" and (inv1 ? (phS > lastPH1S) == (sH1S > slastPH1S) : (phS > lastPH1S) != (sH1S > slastPH1S))
-        bool div2 = bearOk and not na(lastPH2S) and sym2 != "" and (inv2 ? (phS > lastPH2S) == (sH2S > slastPH2S) : (phS > lastPH2S) != (sH2S > slastPH2S))
-        bool div3 = bearOk and not na(lastPH3S) and sym3 != "" and (inv3 ? (phS > lastPH3S) == (sH3S > slastPH3S) : (phS > lastPH3S) != (sH3S > slastPH3S))
+        bool div1 = bearOk and not na(lastPH1S) and sym1 != "" and (inv1 ? (phS > lastPH1S) == (sH1S > slastPH1S) : (phS > lastPH1S) != (sH1S > slastPH1S)) and minDevOk(sH1S, slastPH1S, atrSym1[rLenS])
+        bool div2 = bearOk and not na(lastPH2S) and sym2 != "" and (inv2 ? (phS > lastPH2S) == (sH2S > slastPH2S) : (phS > lastPH2S) != (sH2S > slastPH2S)) and minDevOk(sH2S, slastPH2S, atrSym2[rLenS])
+        bool div3 = bearOk and not na(lastPH3S) and sym3 != "" and (inv3 ? (phS > lastPH3S) == (sH3S > slastPH3S) : (phS > lastPH3S) != (sH3S > slastPH3S)) and minDevOk(sH3S, slastPH3S, atrSym3[rLenS])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close < phS - atrChart[rLenS] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBear and moveAwayOk
             drawSMT(false, phS, time[rLenS],
                  div1, lastPH_idx1S, lastPH1S,
                  div2, lastPH_idx2S, lastPH2S,
@@ -635,16 +661,17 @@ if not sweepModeInput
     // ── Micro bullish ────────────────────────────────
     if showMicro and not na(plS)
         bool bullOk = candleValInput ? close[rLenS] > open[rLenS] : true
-        bool div1 = bullOk and not na(lastPL1S) and sym1 != "" and (inv1 ? (plS < lastPL1S) == (sL1S < slastPL1S) : (plS < lastPL1S) != (sL1S < slastPL1S))
-        bool div2 = bullOk and not na(lastPL2S) and sym2 != "" and (inv2 ? (plS < lastPL2S) == (sL2S < slastPL2S) : (plS < lastPL2S) != (sL2S < slastPL2S))
-        bool div3 = bullOk and not na(lastPL3S) and sym3 != "" and (inv3 ? (plS < lastPL3S) == (sL3S < slastPL3S) : (plS < lastPL3S) != (sL3S < slastPL3S))
+        bool div1 = bullOk and not na(lastPL1S) and sym1 != "" and (inv1 ? (plS < lastPL1S) == (sL1S < slastPL1S) : (plS < lastPL1S) != (sL1S < slastPL1S)) and minDevOk(sL1S, slastPL1S, atrSym1[rLenS])
+        bool div2 = bullOk and not na(lastPL2S) and sym2 != "" and (inv2 ? (plS < lastPL2S) == (sL2S < slastPL2S) : (plS < lastPL2S) != (sL2S < slastPL2S)) and minDevOk(sL2S, slastPL2S, atrSym2[rLenS])
+        bool div3 = bullOk and not na(lastPL3S) and sym3 != "" and (inv3 ? (plS < lastPL3S) == (sL3S < slastPL3S) : (plS < lastPL3S) != (sL3S < slastPL3S)) and minDevOk(sL3S, slastPL3S, atrSym3[rLenS])
         string txt = ""
         txt := div1 ? shortName(sym1) : txt
         txt := div2 ? txt + (txt != "" ? "\n" : "") + shortName(sym2) : txt
         txt := div3 ? txt + (txt != "" ? "\n" : "") + shortName(sym3) : txt
         int cnt = (div1 ? 1 : 0) + (div2 ? 1 : 0) + (div3 ? 1 : 0)
         bool isDouble = cnt >= 2
-        if txt != "" and (not onlyDoubleSMT or isDouble)
+        bool moveAwayOk = filterMoveAwayAtrInput <= 0.0 ? true : close > plS + atrChart[rLenS] * filterMoveAwayAtrInput
+        if txt != "" and (not onlyDoubleSMT or isDouble) and trendOkBull and moveAwayOk
             drawSMT(true, plS, time[rLenS],
                  div1, lastPL_idx1S, lastPL1S,
                  div2, lastPL_idx2S, lastPL2S,
@@ -766,18 +793,18 @@ bool macroBullOkA = candleValInput ? close[rLen] > open[rLen] : true
 bool microBearOkA = candleValInput ? close[rLenS] < open[rLenS] : true
 bool microBullOkA = candleValInput ? close[rLenS] > open[rLenS] : true
 
-bool macroBearD1 = macroBearOkA and not na(ph) and sym1 != "" and (inv1 ? (ph > lastPH1) == (sH1 > slastPH1) : (ph > lastPH1) != (sH1 > slastPH1))
-bool macroBearD2 = macroBearOkA and not na(ph) and sym2 != "" and (inv2 ? (ph > lastPH2) == (sH2 > slastPH2) : (ph > lastPH2) != (sH2 > slastPH2))
-bool macroBearD3 = macroBearOkA and not na(ph) and sym3 != "" and (inv3 ? (ph > lastPH3) == (sH3 > slastPH3) : (ph > lastPH3) != (sH3 > slastPH3))
-bool macroBullD1 = macroBullOkA and not na(pl) and sym1 != "" and (inv1 ? (pl < lastPL1) == (sL1 < slastPL1) : (pl < lastPL1) != (sL1 < slastPL1))
-bool macroBullD2 = macroBullOkA and not na(pl) and sym2 != "" and (inv2 ? (pl < lastPL2) == (sL2 < slastPL2) : (pl < lastPL2) != (sL2 < slastPL2))
-bool macroBullD3 = macroBullOkA and not na(pl) and sym3 != "" and (inv3 ? (pl < lastPL3) == (sL3 < slastPL3) : (pl < lastPL3) != (sL3 < slastPL3))
-bool microBearD1 = microBearOkA and not na(phS) and sym1 != "" and (inv1 ? (phS > lastPH1S) == (sH1S > slastPH1S) : (phS > lastPH1S) != (sH1S > slastPH1S))
-bool microBearD2 = microBearOkA and not na(phS) and sym2 != "" and (inv2 ? (phS > lastPH2S) == (sH2S > slastPH2S) : (phS > lastPH2S) != (sH2S > slastPH2S))
-bool microBearD3 = microBearOkA and not na(phS) and sym3 != "" and (inv3 ? (phS > lastPH3S) == (sH3S > slastPH3S) : (phS > lastPH3S) != (sH3S > slastPH3S))
-bool microBullD1 = microBullOkA and not na(plS) and sym1 != "" and (inv1 ? (plS < lastPL1S) == (sL1S < slastPL1S) : (plS < lastPL1S) != (sL1S < slastPL1S))
-bool microBullD2 = microBullOkA and not na(plS) and sym2 != "" and (inv2 ? (plS < lastPL2S) == (sL2S < slastPL2S) : (plS < lastPL2S) != (sL2S < slastPL2S))
-bool microBullD3 = microBullOkA and not na(plS) and sym3 != "" and (inv3 ? (plS < lastPL3S) == (sL3S < slastPL3S) : (plS < lastPL3S) != (sL3S < slastPL3S))
+bool macroBearD1 = macroBearOkA and not na(ph) and not na(lastPH1) and sym1 != "" and (inv1 ? (ph > lastPH1) == (sH1 > slastPH1) : (ph > lastPH1) != (sH1 > slastPH1)) and trendOkBear and (filterMoveAwayAtrInput <= 0.0 ? true : close < ph - atrChart[rLen] * filterMoveAwayAtrInput) and minDevOk(sH1, slastPH1, atrSym1[rLen])
+bool macroBearD2 = macroBearOkA and not na(ph) and not na(lastPH2) and sym2 != "" and (inv2 ? (ph > lastPH2) == (sH2 > slastPH2) : (ph > lastPH2) != (sH2 > slastPH2)) and trendOkBear and (filterMoveAwayAtrInput <= 0.0 ? true : close < ph - atrChart[rLen] * filterMoveAwayAtrInput) and minDevOk(sH2, slastPH2, atrSym2[rLen])
+bool macroBearD3 = macroBearOkA and not na(ph) and not na(lastPH3) and sym3 != "" and (inv3 ? (ph > lastPH3) == (sH3 > slastPH3) : (ph > lastPH3) != (sH3 > slastPH3)) and trendOkBear and (filterMoveAwayAtrInput <= 0.0 ? true : close < ph - atrChart[rLen] * filterMoveAwayAtrInput) and minDevOk(sH3, slastPH3, atrSym3[rLen])
+bool macroBullD1 = macroBullOkA and not na(pl) and not na(lastPL1) and sym1 != "" and (inv1 ? (pl < lastPL1) == (sL1 < slastPL1) : (pl < lastPL1) != (sL1 < slastPL1)) and trendOkBull and (filterMoveAwayAtrInput <= 0.0 ? true : close > pl + atrChart[rLen] * filterMoveAwayAtrInput) and minDevOk(sL1, slastPL1, atrSym1[rLen])
+bool macroBullD2 = macroBullOkA and not na(pl) and not na(lastPL2) and sym2 != "" and (inv2 ? (pl < lastPL2) == (sL2 < slastPL2) : (pl < lastPL2) != (sL2 < slastPL2)) and trendOkBull and (filterMoveAwayAtrInput <= 0.0 ? true : close > pl + atrChart[rLen] * filterMoveAwayAtrInput) and minDevOk(sL2, slastPL2, atrSym2[rLen])
+bool macroBullD3 = macroBullOkA and not na(pl) and not na(lastPL3) and sym3 != "" and (inv3 ? (pl < lastPL3) == (sL3 < slastPL3) : (pl < lastPL3) != (sL3 < slastPL3)) and trendOkBull and (filterMoveAwayAtrInput <= 0.0 ? true : close > pl + atrChart[rLen] * filterMoveAwayAtrInput) and minDevOk(sL3, slastPL3, atrSym3[rLen])
+bool microBearD1 = microBearOkA and not na(phS) and not na(lastPH1S) and sym1 != "" and (inv1 ? (phS > lastPH1S) == (sH1S > slastPH1S) : (phS > lastPH1S) != (sH1S > slastPH1S)) and trendOkBear and (filterMoveAwayAtrInput <= 0.0 ? true : close < phS - atrChart[rLenS] * filterMoveAwayAtrInput) and minDevOk(sH1S, slastPH1S, atrSym1[rLenS])
+bool microBearD2 = microBearOkA and not na(phS) and not na(lastPH2S) and sym2 != "" and (inv2 ? (phS > lastPH2S) == (sH2S > slastPH2S) : (phS > lastPH2S) != (sH2S > slastPH2S)) and trendOkBear and (filterMoveAwayAtrInput <= 0.0 ? true : close < phS - atrChart[rLenS] * filterMoveAwayAtrInput) and minDevOk(sH2S, slastPH2S, atrSym2[rLenS])
+bool microBearD3 = microBearOkA and not na(phS) and not na(lastPH3S) and sym3 != "" and (inv3 ? (phS > lastPH3S) == (sH3S > slastPH3S) : (phS > lastPH3S) != (sH3S > slastPH3S)) and trendOkBear and (filterMoveAwayAtrInput <= 0.0 ? true : close < phS - atrChart[rLenS] * filterMoveAwayAtrInput) and minDevOk(sH3S, slastPH3S, atrSym3[rLenS])
+bool microBullD1 = microBullOkA and not na(plS) and not na(lastPL1S) and sym1 != "" and (inv1 ? (plS < lastPL1S) == (sL1S < slastPL1S) : (plS < lastPL1S) != (sL1S < slastPL1S)) and trendOkBull and (filterMoveAwayAtrInput <= 0.0 ? true : close > plS + atrChart[rLenS] * filterMoveAwayAtrInput) and minDevOk(sL1S, slastPL1S, atrSym1[rLenS])
+bool microBullD2 = microBullOkA and not na(plS) and not na(lastPL2S) and sym2 != "" and (inv2 ? (plS < lastPL2S) == (sL2S < slastPL2S) : (plS < lastPL2S) != (sL2S < slastPL2S)) and trendOkBull and (filterMoveAwayAtrInput <= 0.0 ? true : close > plS + atrChart[rLenS] * filterMoveAwayAtrInput) and minDevOk(sL2S, slastPL2S, atrSym2[rLenS])
+bool microBullD3 = microBullOkA and not na(plS) and not na(lastPL3S) and sym3 != "" and (inv3 ? (plS < lastPL3S) == (sL3S < slastPL3S) : (plS < lastPL3S) != (sL3S < slastPL3S)) and trendOkBull and (filterMoveAwayAtrInput <= 0.0 ? true : close > plS + atrChart[rLenS] * filterMoveAwayAtrInput) and minDevOk(sL3S, slastPL3S, atrSym3[rLenS])
 
 bool macroBearDouble = (macroBearD1 ? 1 : 0) + (macroBearD2 ? 1 : 0) + (macroBearD3 ? 1 : 0) >= 2
 bool macroBullDouble = (macroBullD1 ? 1 : 0) + (macroBullD2 ? 1 : 0) + (macroBullD3 ? 1 : 0) >= 2
@@ -790,17 +817,17 @@ alertcondition(microBearDouble, "Bearish DOUBLE Micro SMT", "Bearish DOUBLE Micr
 alertcondition(microBullDouble, "Bullish DOUBLE Micro SMT", "Bullish DOUBLE Micro SMT Divergence detected!")
 
 // Macro legacy alerts
-alertcondition((not onlyDoubleSMT) and not na(ph) and sym1 != "" and (inv1 ? (ph>lastPH1)==(sH1>slastPH1) : (ph>lastPH1)!=(sH1>slastPH1)), "Bearish SMT - Sym 1", "Bearish SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(pl) and sym1 != "" and (inv1 ? (pl<lastPL1)==(sL1<slastPL1) : (pl<lastPL1)!=(sL1<slastPL1)), "Bullish SMT - Sym 1", "Bullish SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(ph) and sym2 != "" and (inv2 ? (ph>lastPH2)==(sH2>slastPH2) : (ph>lastPH2)!=(sH2>slastPH2)), "Bearish SMT - Sym 2", "Bearish SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(pl) and sym2 != "" and (inv2 ? (pl<lastPL2)==(sL2<slastPL2) : (pl<lastPL2)!=(sL2<slastPL2)), "Bullish SMT - Sym 2", "Bullish SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(ph) and sym3 != "" and (inv3 ? (ph>lastPH3)==(sH3>slastPH3) : (ph>lastPH3)!=(sH3>slastPH3)), "Bearish SMT - Sym 3", "Bearish SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(pl) and sym3 != "" and (inv3 ? (pl<lastPL3)==(sL3<slastPL3) : (pl<lastPL3)!=(sL3<slastPL3)), "Bullish SMT - Sym 3", "Bullish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and macroBearD1, "Bearish SMT - Sym 1", "Bearish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and macroBullD1, "Bullish SMT - Sym 1", "Bullish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and macroBearD2, "Bearish SMT - Sym 2", "Bearish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and macroBullD2, "Bullish SMT - Sym 2", "Bullish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and macroBearD3, "Bearish SMT - Sym 3", "Bearish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and macroBullD3, "Bullish SMT - Sym 3", "Bullish SMT Divergence detected!")
 
 // Micro legacy alerts
-alertcondition((not onlyDoubleSMT) and not na(phS) and sym1 != "" and (inv1 ? (phS>lastPH1S)==(sH1S>slastPH1S) : (phS>lastPH1S)!=(sH1S>slastPH1S)), "Bearish Micro SMT - Sym 1", "Bearish Micro SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(plS) and sym1 != "" and (inv1 ? (plS<lastPL1S)==(sL1S<slastPL1S) : (plS<lastPL1S)!=(sL1S<slastPL1S)), "Bullish Micro SMT - Sym 1", "Bullish Micro SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(phS) and sym2 != "" and (inv2 ? (phS>lastPH2S)==(sH2S>slastPH2S) : (phS>lastPH2S)!=(sH2S>slastPH2S)), "Bearish Micro SMT - Sym 2", "Bearish Micro SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(plS) and sym2 != "" and (inv2 ? (plS<lastPL2S)==(sL2S<slastPL2S) : (plS<lastPL2S)!=(sL2S<slastPL2S)), "Bullish Micro SMT - Sym 2", "Bullish Micro SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(phS) and sym3 != "" and (inv3 ? (phS>lastPH3S)==(sH3S>slastPH3S) : (phS>lastPH3S)!=(sH3S>slastPH3S)), "Bearish Micro SMT - Sym 3", "Bearish Micro SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and not na(plS) and sym3 != "" and (inv3 ? (plS<lastPL3S)==(sL3S<slastPL3S) : (plS<lastPL3S)!=(sL3S<slastPL3S)), "Bullish Micro SMT - Sym 3", "Bullish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and microBearD1, "Bearish Micro SMT - Sym 1", "Bearish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and microBullD1, "Bullish Micro SMT - Sym 1", "Bullish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and microBearD2, "Bearish Micro SMT - Sym 2", "Bearish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and microBullD2, "Bullish Micro SMT - Sym 2", "Bullish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and microBearD3, "Bearish Micro SMT - Sym 3", "Bearish Micro SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and microBullD3, "Bullish Micro SMT - Sym 3", "Bullish Micro SMT Divergence detected!")

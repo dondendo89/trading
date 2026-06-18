@@ -1,0 +1,193 @@
+//@version=5
+indicator("Matteo Capital - Esclusivo RIS (SMT) + DOL Target", overlay=true, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
+
+// ══════════════════════════════════════════════════════
+// INPUT DIRETTI ORIGINALI DI CAPITAL + CONFIGURAZIONE RIS
+// ══════════════════════════════════════════════════════
+smtEnabled                 = input.bool(true, "Abilita RIS (SMT)")
+smtAsset1                  = input.symbol("FX:EURUSD", "RIS Asset 1")
+smtAsset2                  = input.symbol("TVC:DXY", "RIS Asset 2")
+smtInverseOn               = input.bool(true, "Inverti Correlazione RIS (es. per DXY)")
+smtPivotLen                = input.int(4, "Lookback Pivot RIS")
+smtUseTfPivots             = input.bool(false, "Usa Timeframe Superiore per Pivot RIS?")
+smtTfPivot                 = input.timeframe("15", "Timeframe Pivot RIS")
+smtShowDailyExtreme        = input.bool(false, "Filtra RIS solo su Estremi Giornalieri?")
+smtDailyExtremeBufferTicks = input.int(10, "Buffer Ticks Estremi Giornalieri")
+
+// Input Visivi
+showSmtLines               = input.bool(false, "Mostra Linee SMT (Collegamento Pivot)")
+showSmtLabels              = input.bool(true, "Mostra Frecce RIS Up/Down")
+
+// ── Nuovi Input dedicati al DOL ───────────────────────
+showDOL                    = input.bool(true, "Mostra Linee DOL (Draw on Liquidity)")
+dolTargetMode              = input.string("Estremo Giornaliero", "Tipo di Target DOL", options=["Estremo Giornaliero", "Pivot Opposto"])
+dolColorUp                 = input.color(color.green, "Colore DOL dopo RIS Up")
+dolColorDown               = input.color(color.red, "Colore DOL dopo RIS Down")
+
+// ══════════════════════════════════════════════════════
+// LOGICA COMMUTAZIONE TIMEFRAME E SICUREZZA
+// ══════════════════════════════════════════════════════
+string pivotTf = smtUseTfPivots ? smtTfPivot : timeframe.period
+
+string a1 = smtAsset1 != "" ? smtAsset1 : syminfo.tickerid
+string a2 = smtAsset2 != "" ? smtAsset2 : syminfo.tickerid
+
+[a1High, a1Low] = request.security(a1, timeframe.period, [high, low])
+[a2High, a2Low] = request.security(a2, timeframe.period, [high, low])
+
+// ══════════════════════════════════════════════════════
+// FUNZIONE INTERNA NATIVA DI CAPITAL PER I PIVOT
+// ══════════════════════════════════════════════════════
+f_smtPivot2Hilo(string tf, int len) =>
+    float pHigh = ta.pivothigh(high, len, len)
+    float pLow  = ta.pivotlow(low, len, len)
+    [pHigh, pLow]
+
+[pHighRaw, pLowRaw] = request.security(syminfo.tickerid, pivotTf, f_smtPivot2Hilo(pivotTf, smtPivotLen), barmerge.gaps_off, barmerge.lookahead_on)
+
+// ══════════════════════════════════════════════════════
+// LOGICA ESTREMI GIORNALIERI (NATIVA DI CAPITAL)
+// ══════════════════════════════════════════════════════
+var float dHigh = na
+var float dLow = na
+if ta.change(time("D")) != 0
+    dHigh := high
+    dLow := low
+else
+    if high > dHigh
+        dHigh := high
+    if low < dLow
+        dLow := low
+
+// ══════════════════════════════════════════════════════
+// VARIABILI DI STATO STORICHE ORIGINALI DI CAPITAL
+// ══════════════════════════════════════════════════════
+var float lastPH = na, var int lastPHIdx = na, var float lastPH_a1 = na, var float lastPH_a2 = na
+var float lastPL = na, var int lastPLIdx = na, var float lastPL_a1 = na, var float lastPL_a2 = na
+
+// Oggetti per la gestione dinamica dei DOL attivi
+var line activeDolLine = na
+var label activeDolLabel = na
+var float activeDolPrice = na
+var bool activeDolIsUp = na
+
+// Controllo in tempo reale per verificare se il prezzo ha raggiunto il DOL (Target Hit)
+if not na(activeDolPrice)
+    if activeDolIsUp and high >= activeDolPrice
+        line.set_x2(activeDolLine, bar_index)
+        label.new(bar_index, activeDolPrice, "DOL Hit!", color=color.new(color.green, 20), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        activeDolPrice := na // Resetta il DOL attivo
+    else if not activeDolIsUp and low <= activeDolPrice
+        line.set_x2(activeDolLine, bar_index)
+        label.new(bar_index, activeDolPrice, "DOL Hit!", color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        activeDolPrice := na // Resetta il DOL attivo
+    else
+        // Aggiorna la linea estendendola fino alla barra corrente
+        line.set_x2(activeDolLine, bar_index)
+        label.set_x(activeDolLabel, bar_index)
+
+// ══════════════════════════════════════════════════════
+// CALCOLO SEGNALI RIS DOWN (MASSIMI) -> GENERA DOL AL RIBASSO
+// ══════════════════════════════════════════════════════
+if smtEnabled and not na(pHighRaw)
+    float curH = high[smtPivotLen]
+    float curH_a1 = a1High[smtPivotLen]
+    float curH_a2 = a2High[smtPivotLen]
+    
+    if not na(lastPH)
+        bool divA1 = false, bool divA2 = false
+        if smtAsset1 != "" and not na(lastPH_a1)
+            if smtInverseOn
+                if (curH > lastPH and curH_a1 > lastPH_a1) or (curH < lastPH and curH_a1 < lastPH_a1)
+                    divA1 := true
+            else
+                if (curH > lastPH and curH_a1 < lastPH_a1) or (curH < lastPH and curH_a1 > lastPH_a1)
+                    divA1 := true
+        if smtAsset2 != "" and not na(lastPH_a2)
+            if smtInverseOn
+                if (curH > lastPH and curH_a2 > lastPH_a2) or (curH < lastPH and curH_a2 < lastPH_a2)
+                    divA2 := true
+            else
+                if (curH > lastPH and curH_a2 < lastPH_a2) or (curH < lastPH and curH_a2 > lastPH_a2)
+                    divA2 := true
+                    
+        if divA1 or divA2
+            bool extremeOk = true
+            if smtShowDailyExtreme and not na(dHigh)
+                extremeOk := (dHigh - curH) <= (smtDailyExtremeBufferTicks * syminfo.mintick)
+                
+            if extremeOk
+                int targetIdx = bar_index - smtPivotLen
+                if showSmtLines
+                    line.new(lastPHIdx, lastPH, targetIdx, curH, color=color.orange, width=1, style=line.style_dashed)
+                if showSmtLabels
+                    label.new(targetIdx, curH, "▼ RIS Down", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_down, size=size.small)
+                
+                // Generazione Logica DOL Down (Target verso il basso)
+                if showDOL
+                    float targetPrice = dolTargetMode == "Estremo Giornaliero" ? dLow : lastPL
+                    if not na(targetPrice)
+                        activeDolPrice := targetPrice
+                        activeDolIsUp := false
+                        activeDolLine := line.new(targetIdx, targetPrice, bar_index, targetPrice, color=dolColorDown, width=2, style=line.style_dotted)
+                        activeDolLabel := label.new(bar_index, targetPrice, "DOL target 🎯", color=color.new(dolColorDown, 100), textcolor=dolColorDown, style=label.style_label_left, size=size.small)
+                
+                alert("Rilevato RIS Down + Nuovo Target DOL su " + syminfo.ticker, alert.freq_once_per_bar)
+                
+    lastPH := curH
+    lastPHIdx := bar_index - smtPivotLen
+    lastPH_a1 := curH_a1
+    lastPH_a2 := curH_a2
+
+// ══════════════════════════════════════════════════════
+// CALCOLO SEGNALI RIS UP (MINIMI) -> GENERA DOL AL RIALZO
+// ══════════════════════════════════════════════════════
+if smtEnabled and not na(pLowRaw)
+    float curL = low[smtPivotLen]
+    float curL_a1 = a1Low[smtPivotLen]
+    float curL_a2 = a2Low[smtPivotLen]
+    
+    if not na(lastPL)
+        bool divA1 = false, bool divA2 = false
+        if smtAsset1 != "" and not na(lastPL_a1)
+            if smtInverseOn
+                if (curL < lastPL and curL_a1 < lastPL_a1) or (curL > lastPL and curL_a1 > lastPL_a1)
+                    divA1 := true
+            else
+                if (curL < lastPL and curL_a1 > lastPL_a1) or (curL > lastPL and curL_a1 < lastPL_a1)
+                    divA1 := true
+        if smtAsset2 != "" and not na(lastPL_a2)
+            if smtInverseOn
+                if (curL < lastPL and curL_a2 < lastPL_a2) or (curL > lastPL and curL_a2 > lastPL_a2)
+                    divA2 := true
+            else
+                if (curL < lastPL and curL_a2 > lastPL_a2) or (curL > lastPL and curL_a2 < lastPL_a2)
+                    divA2 := true
+                    
+        if divA1 or divA2
+            bool extremeOk = true
+            if smtShowDailyExtreme and not na(dLow)
+                extremeOk := (curL - dLow) <= (smtDailyExtremeBufferTicks * syminfo.mintick)
+                
+            if extremeOk
+                int targetIdx = bar_index - smtPivotLen
+                if showSmtLines
+                    line.new(lastPLIdx, lastPL, targetIdx, curL, color=color.orange, width=1, style=line.style_dashed)
+                if showSmtLabels
+                    label.new(targetIdx, curL, "▲ RIS Up", color=color.new(color.green, 100), textcolor=color.green, style=label.style_label_up, size=size.small)
+                
+                // Generazione Logica DOL Up (Target verso l'alto)
+                if showDOL
+                    float targetPrice = dolTargetMode == "Estremo Giornaliero" ? dHigh : lastPH
+                    if not na(targetPrice)
+                        activeDolPrice := targetPrice
+                        activeDolIsUp := true
+                        activeDolLine := line.new(targetIdx, targetPrice, bar_index, targetPrice, color=dolColorUp, width=2, style=line.style_dotted)
+                        activeDolLabel := label.new(bar_index, targetPrice, "DOL target 🎯", color=color.new(dolColorUp, 100), textcolor=dolColorUp, style=label.style_label_left, size=size.small)
+                
+                alert("Rilevato RIS Up + Nuovo Target DOL su " + syminfo.ticker, alert.freq_once_per_bar)
+                
+    lastPL := curL
+    lastPLIdx := bar_index - smtPivotLen
+    lastPL_a1 := curL_a1
+    lastPL_a2 := curL_a2

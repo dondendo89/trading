@@ -1,8 +1,8 @@
 // This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
-// © LuxAlgo (Modificato per Segnali Immediati su Breakout)
+// © LuxAlgo (Modificato per Segnali Immediati su Breakout + Filtro CMF Opzionabile)
  
 //@version=5
-indicator("Buyside & Sellside Liquidity [LuxAlgo] + SEGNALI DIRETTI", "LuxAlgo - Liquidity + Direct Signals", overlay = true,  max_lines_count = 500, max_boxes_count = 500, max_bars_back = 3000)
+indicator("Buyside & Sellside Liquidity [LuxAlgo] + SEGNALI DIRETTI & CMF", "LuxAlgo - Liquidity + Direct Signals + CMF", overlay = true,  max_lines_count = 500, max_boxes_count = 500, max_bars_back = 1000)
 //------------------------------------------------------------------------------
 //Settings
 //-----------------------------------------------------------------------------{
@@ -28,6 +28,10 @@ visLiq = input.int   (3, '    # Visible Levels', minval = 1, maxval = 50, inline
 
 sigGrp = 'Configurazione Segnali Diretti'
 showSignals    = input.bool(true, "Mostra Frecce di Segnale (Buy/Short)", group=sigGrp)
+
+cmfGrp = 'Chaikin Money Flow (CMF)'
+cmfLen = input.int(20, minval=1, title="CMF Length", group=cmfGrp)
+filterWithCMF = input.bool(true, "Filtra Segnali con il CMF (Conferma Trend)", group=cmfGrp)
 //-----------------------------------------------------------------------------}
 //General Calculations
 //-----------------------------------------------------------------------------{
@@ -35,6 +39,11 @@ maxSize = 50
 atr     = ta.atr(10)
 atr200  = ta.atr(200)
 per     = mode == 'Present' ? last_bar_index - bar_index <=  500 : true
+
+// ── Calcolo CMF ──
+cmfMultiplier = ((close - low) - (high - close)) / (high - low == 0 ? 0.00001 : (high - low))
+cmfVolume     = cmfMultiplier * volume
+cmf = ta.sma(cmfVolume, cmfLen) / (ta.sma(volume, cmfLen) == 0 ? 0.00001 : ta.sma(volume, cmfLen))
 
 //-----------------------------------------------------------------------------}
 //User Defined Types
@@ -228,7 +237,7 @@ for i = 0 to b_liq_B.size() - 1
         if b.h > x.bx.get_top()
             x.brL := true
             x.brZ := true
-            buysideBreachedThisBar := true // Si attiva esattamente quando si crea il Box Verde
+            buysideBreachedThisBar := true 
             alert('buyside liquidity level breached for ' + syminfo.ticker)
             x.bxz.set_lefttop(b.i - 1, math.min(x.ln.get_y1() + marBuy * (atr), b.h))
             x.bxz.set_rightbottom(b.i + 1, x.ln.get_y1())
@@ -249,7 +258,7 @@ for i = 0 to b_liq_S.size() - 1
         if b.l < x.bx.get_bottom()
             x.brL := true
             x.brZ := true
-            sellsideBreachedThisBar := true // Si attiva esattamente quando si crea il Box Rosso
+            sellsideBreachedThisBar := true 
             alert('sellside liquidity level breached for ' + syminfo.ticker)
             x.bxz.set_lefttop(b.i - 1, x.ln.get_y1())
             x.bxz.set_rightbottom(b.i + 1, math.max(x.ln.get_y1() - marSel * (atr), b.l))
@@ -262,16 +271,20 @@ for i = 0 to b_liq_S.size() - 1
         else
             x.brZ := false
 
-// ── Stampa dei Segnali Diretti e Sincronizzati ──
-if showSignals and sellsideBreachedThisBar
+// ── Stampa dei Segnali Diretti e Sincronizzati (Filtro CMF Opzionabile) ──
+bool cmfBuyCondition  = not filterWithCMF or cmf > 0
+bool cmfShortCondition = not filterWithCMF or cmf < 0
+
+if showSignals and sellsideBreachedThisBar and cmfBuyCondition
     label.new(b.i, b.l, "▲ BUY", color=color.new(color.green, 100), textcolor=color.green, style=label.style_label_up, size=size.small)
     alert("Liquidity Direct BUY (Box Rosso Creato) su " + syminfo.ticker, alert.freq_once_per_bar)
 
-if showSignals and buysideBreachedThisBar
+if showSignals and buysideBreachedThisBar and cmfShortCondition
     label.new(b.i, b.h, "▼ SHORT", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_down, size=size.small)
     alert("Liquidity Direct SHORT (Box Verde Creato) su " + syminfo.ticker, alert.freq_once_per_bar)
 
 // ── Logica Liquidity Voids originale di LuxAlgo ────────────────
+// [Il resto del codice per i Liquidity Voids rimane invariato...]
 if lqVoid and per
     bull = b.l - b.h[2] > atr200 and b.l > b.h[2] and b.c[1] > b.h[2]
     bear = b.l[2] - b.h > atr200 and b.h < b.l[2] and b.c[1] < b.l[2]

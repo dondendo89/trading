@@ -1,0 +1,270 @@
+//@version=5
+indicator("Chaikin Money Flow (CMF) PRO Dashboard [ParadoxAlgo x GPT]", overlay=true, max_bars_back=500, max_labels_count=500)
+
+// ═════════════════════════════════════════════════════════════════════════════════════
+// 📊 CMF PRO DASHBOARD
+// ═════════════════════════════════════════════════════════════════════════════════════
+
+// ┌────────────────────────────────────────────────────────────────────────────────────┐
+// │ CORE SETTINGS                                                                     │
+// └────────────────────────────────────────────────────────────────────────────────────┘
+cmf_length       = input.int(20, "CMF Period", minval=5, maxval=100, group="🔍 Money Flow Detection")
+smoothing_length = input.int(5, "Signal Smoothing", minval=1, maxval=20, group="🔍 Money Flow Detection")
+
+big_money_threshold = input.float(0.15, "Big Money Threshold", minval=0.05, maxval=0.5, step=0.05, group="💰 Big Money Settings")
+volume_multiplier   = input.float(1.5, "Volume Threshold", minval=1.0, maxval=5.0, step=0.1, group="💰 Big Money Settings")
+
+// ┌────────────────────────────────────────────────────────────────────────────────────┐
+// │ DISPLAY                                                                           │
+// └────────────────────────────────────────────────────────────────────────────────────┘
+show_background = input.bool(true, "Show Money Flow Background", group="🎨 Display Options")
+show_signals    = input.bool(true, "Show Big Money Signals", group="🎨 Display Options")
+show_zones      = input.bool(true, "Show Key Levels", group="🎨 Display Options")
+show_dashboard  = input.bool(true, "Show PRO Dashboard", group="🎨 Display Options")
+dashboard_pos   = input.string("Bottom Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="🎨 Display Options")
+show_score_lbl  = input.bool(true, "Show Score Label on Signal Candle", group="🎨 Display Options")
+
+// ┌────────────────────────────────────────────────────────────────────────────────────┐
+// │ ALERTS                                                                            │
+// └────────────────────────────────────────────────────────────────────────────────────┘
+enable_alerts = input.bool(false, "Enable General Alerts", group="🔔 Alerts")
+alert_chart   = input.bool(true, "Alert Chart Timeframe (Current)", group="🔔 Alerts")
+alert_1m      = input.bool(false, "Alert 1 Minute (1m)", group="🔔 Alerts")
+alert_5m      = input.bool(false, "Alert 5 Minutes (5m)", group="🔔 Alerts")
+alert_15m     = input.bool(false, "Alert 15 Minutes (15m)", group="🔔 Alerts")
+alert_1h      = input.bool(false, "Alert 1 Hour (1h)", group="🔔 Alerts")
+alert_4h      = input.bool(false, "Alert 4 Hours (4h)", group="🔔 Alerts")
+
+// ┌────────────────────────────────────────────────────────────────────────────────────┐
+// │ PRO FILTERS                                                                       │
+// └────────────────────────────────────────────────────────────────────────────────────┘
+use_trend_filter      = input.bool(true, "Use EMA Trend Filter", group="🧠 PRO Signal Filters")
+ema_length            = input.int(50, "EMA Trend Length", minval=10, maxval=300, group="🧠 PRO Signal Filters")
+
+use_breakout_confirm  = input.bool(true, "Require Breakout Confirmation", group="🧠 PRO Signal Filters")
+breakout_lookback     = input.int(1, "Breakout Confirmation Bars", minval=1, maxval=5, group="🧠 PRO Signal Filters", tooltip="1 = close above previous signal candle high/low on next candle")
+
+use_cooldown          = input.bool(true, "Use Cooldown Between Signals", group="🧠 PRO Signal Filters")
+cooldown_bars         = input.int(8, "Cooldown Bars", minval=1, maxval=100, group="🧠 PRO Signal Filters")
+
+use_min_signal_score  = input.bool(false, "Filter by Minimum Score", group="🧠 PRO Signal Filters")
+min_signal_score      = input.int(4, "Minimum Score to Show Signal", minval=1, maxval=10, group="🧠 PRO Signal Filters")
+
+// ┌────────────────────────────────────────────────────────────────────────────────────┐
+// │ ENTRY / RISK MODEL                                                                │
+// └────────────────────────────────────────────────────────────────────────────────────┘
+atr_len           = input.int(14, "ATR Length", minval=5, maxval=100, group="🎯 Entry / SL / TP")
+sl_atr_mult       = input.float(1.0, "SL ATR Multiplier", minval=0.2, maxval=10, step=0.1, group="🎯 Entry / SL / TP")
+tp1_rr            = input.float(1.5, "TP1 RR", minval=0.5, maxval=10, step=0.1, group="🎯 Entry / SL / TP")
+tp2_rr            = input.float(2.5, "TP2 RR", minval=0.5, maxval=20, step=0.1, group="🎯 Entry / SL / TP")
+entry_buffer_ticks= input.int(0, "Breakout Entry Buffer (ticks)", minval=0, maxval=100, group="🎯 Entry / SL / TP")
+
+// ┌────────────────────────────────────────────────────────────────────────────────────┐
+// │ COLORS                                                                            │
+// └────────────────────────────────────────────────────────────────────────────────────┘
+color_bullish = #00e2ff
+color_bearish = #003ff5
+color_neutral = #7bfac3
+color_warn    = color.orange
+color_good    = color.lime
+color_bad     = color.red
+
+// ═════════════════════════════════════════════════════════════════════════════════════
+// CORE CALCULATIONS (FUNCTION FOR MULTI-TIMEFRAME)
+// ═════════════════════════════════════════════════════════════════════════════════════
+f_cmf_logic() =>
+    mf_mult = ((close - low) - (high - close)) / (high - low)
+    mf_mult := na(mf_mult) ? 0 : mf_mult
+    mf_vol = mf_mult * volume
+    c_raw = ta.sma(mf_vol, cmf_length) / ta.sma(volume, cmf_length)
+    c_raw := na(c_raw) ? 0 : c_raw
+    c_smoothed = ta.ema(c_raw, smoothing_length)
+    
+    avg_v = ta.sma(volume, 20)
+    v_strength = avg_v > 0 ? volume / avg_v : 0.0
+    
+    b_bull = c_smoothed > big_money_threshold and v_strength > volume_multiplier
+    b_bear = c_smoothed < -big_money_threshold and v_strength > volume_multiplier
+    
+    e_trend = ta.ema(close, ema_length)
+    t_bull = not use_trend_filter or close > e_trend
+    t_bear = not use_trend_filter or close < e_trend
+    
+    int l_score = 0
+    int s_score = 0
+    
+    l_score := l_score + (c_smoothed > big_money_threshold ? 2 : (c_smoothed > big_money_threshold * 0.5 ? 1 : 0))
+    l_score := l_score + (v_strength > volume_multiplier ? 2 : (v_strength > volume_multiplier * 0.8 ? 1 : 0))
+    l_score := l_score + (t_bull ? 1 : 0)
+    l_score := l_score + (c_smoothed > big_money_threshold * 1.5 ? 1 : 0)
+    l_score := l_score + (v_strength > volume_multiplier * 1.35 ? 1 : 0)
+    l_score := l_score + (close > open ? 1 : 0)
+    
+    s_score := s_score + (c_smoothed < -big_money_threshold ? 2 : (c_smoothed < -(big_money_threshold * 0.5) ? 1 : 0))
+    s_score := s_score + (v_strength > volume_multiplier ? 2 : (v_strength > volume_multiplier * 0.8 ? 1 : 0))
+    s_score := s_score + (t_bear ? 1 : 0)
+    s_score := s_score + (c_smoothed < -(big_money_threshold * 1.5) ? 1 : 0)
+    s_score := s_score + (v_strength > volume_multiplier * 1.35 ? 1 : 0)
+    s_score := s_score + (close < open ? 1 : 0)
+    
+    var int l_long_bar = na
+    var int l_short_bar = na
+    
+    if b_bull and t_bull and (not use_min_signal_score or l_score >= min_signal_score)
+        l_long_bar := bar_index
+    if b_bear and t_bear and (not use_min_signal_score or s_score >= min_signal_score)
+        l_short_bar := bar_index
+        
+    c_long_ok = not use_cooldown or na(l_long_bar) or (bar_index - l_long_bar > cooldown_bars)
+    c_short_ok = not use_cooldown or na(l_short_bar) or (bar_index - l_short_bar > cooldown_bars)
+    
+    l_sig = b_bull and t_bull and c_long_ok and (not use_min_signal_score or l_score >= min_signal_score)
+    s_sig = b_bear and t_bear and c_short_ok and (not use_min_signal_score or s_score >= min_signal_score)
+    [l_sig, s_sig, c_smoothed, v_strength, l_score, s_score]
+
+// Main chart calculations
+[long_signal, short_signal, cmf_smoothed, volume_strength, long_score, short_score] = f_cmf_logic()
+
+atr_value = ta.atr(atr_len)
+ema_trend = ta.ema(close, ema_length)
+key_resistance = high + (atr_value * 0.5)
+key_support    = low  - (atr_value * 0.5)
+
+long_quality  = long_score >= 7 ? "🔥 STRONG" : long_score >= 5 ? "✅ GOOD" : long_score >= 3 ? "⚠️ WEAK" : "❌ NO TRADE"
+short_quality = short_score >= 7 ? "🔥 STRONG" : short_score >= 5 ? "✅ GOOD" : short_score >= 3 ? "⚠️ WEAK" : "❌ NO TRADE"
+long_quality_color  = long_score >= 7 ? color_good : long_score >= 5 ? color.new(color_good, 0) : long_score >= 3 ? color_warn : color_bad
+short_quality_color = short_score >= 7 ? color_good : short_score >= 5 ? color.new(color_good, 0) : short_score >= 3 ? color_warn : color_bad
+
+// Breakout engine for main chart
+var float last_long_signal_high = na
+var float last_long_signal_low  = na
+var int   last_long_signal_idx  = na
+
+var float last_short_signal_high = na
+var float last_short_signal_low  = na
+var int   last_short_signal_idx  = na
+
+if long_signal
+    last_long_signal_high := high
+    last_long_signal_low  := low
+    last_long_signal_idx  := bar_index
+if short_signal
+    last_short_signal_high := high
+    last_short_signal_low  := low
+    last_short_signal_idx  := bar_index
+
+tick_buffer = syminfo.mintick * entry_buffer_ticks
+long_breakout_confirmed = not use_breakout_confirm ? long_signal : not na(last_long_signal_idx) and bar_index > last_long_signal_idx and bar_index <= last_long_signal_idx + breakout_lookback and close > last_long_signal_high + tick_buffer
+short_breakout_confirmed = not use_breakout_confirm ? short_signal : not na(last_short_signal_idx) and bar_index > last_short_signal_idx and bar_index <= last_short_signal_idx + breakout_lookback and close < last_short_signal_low - tick_buffer
+
+// Risk suggestions
+long_entry_price = not na(last_long_signal_high) ? last_long_signal_high + tick_buffer : na
+long_stop_price  = not na(last_long_signal_low)  ? last_long_signal_low - atr_value * sl_atr_mult : na
+long_risk        = (not na(long_entry_price) and not na(long_stop_price)) ? (long_entry_price - long_stop_price) : na
+long_tp1         = not na(long_risk) ? long_entry_price + long_risk * tp1_rr : na
+long_tp2         = not na(long_risk) ? long_entry_price + long_risk * tp2_rr : na
+
+short_entry_price = not na(last_short_signal_low) ? last_short_signal_low - tick_buffer : na
+short_stop_price  = not na(last_short_signal_high) ? last_short_signal_high + atr_value * sl_atr_mult : na
+short_risk        = (not na(short_entry_price) and not na(short_stop_price)) ? (short_stop_price - short_entry_price) : na
+short_tp1         = not na(short_risk) ? short_entry_price - short_risk * tp1_rr : na
+short_tp2         = not na(short_risk) ? short_entry_price - short_risk * tp2_rr : na
+
+bias = long_score >= 5 and long_score > short_score ? "LONG BIAS" : short_score >= 5 and short_score > long_score ? "SHORT BIAS" : "NEUTRAL"
+bias_color = bias == "LONG BIAS" ? color_bullish : bias == "SHORT BIAS" ? color_bearish : color.white
+
+// Background & Plots
+get_background_color() => show_background and math.abs(cmf_smoothed) > big_money_threshold * 0.5 ? (cmf_smoothed > 0 ? color.new(color_bullish, 92) : color.new(color_bearish, 92)) : na
+bgcolor(get_background_color(), title="Money Flow Background")
+plot(show_zones ? key_resistance : na, "Key Resistance", color=color.new(color_bearish, 60), linewidth=1, style=plot.style_circles)
+plot(show_zones ? key_support : na, "Key Support", color=color.new(color_bullish, 60), linewidth=1, style=plot.style_circles)
+plot(use_trend_filter ? ema_trend : na, "Trend EMA", color=color.new(color.orange, 0), linewidth=2)
+
+// Labels
+if show_signals and long_signal
+    label.new(bar_index, low - atr_value * 0.5, "🔋", color=color.new(color_bullish, 0), textcolor=color.white, style=label.style_label_up, tooltip="BIG MONEY BUYING\nCMF: " + str.tostring(cmf_smoothed, "#.###") + "\nLong Score: " + str.tostring(long_score))
+if show_signals and short_signal
+    label.new(bar_index, high + atr_value * 0.5, "⚡", color=color.new(color_bearish, 0), textcolor=color.white, style=label.style_label_down, tooltip="BIG MONEY SELLING\nCMF: " + str.tostring(cmf_smoothed, "#.###") + "\nShort Score: " + str.tostring(short_score))
+
+if show_score_lbl and long_signal
+    label.new(bar_index, low - atr_value * 1.0, "L " + str.tostring(long_score) + "/8\n" + long_quality, style=label.style_label_up, color=color.new(long_quality_color, 0), textcolor=color.white, size=size.small)
+if show_score_lbl and short_signal
+    label.new(bar_index, high + atr_value * 1.0, "S " + str.tostring(short_score) + "/8\n" + short_quality, style=label.style_label_down, color=color.new(short_quality_color, 0), textcolor=color.white, size=size.small)
+
+plotshape(use_breakout_confirm and long_breakout_confirmed,  title="Long Breakout Confirmed",  style=shape.triangleup,   location=location.belowbar, color=color.lime, size=size.tiny, text="LONG OK")
+plotshape(use_breakout_confirm and short_breakout_confirmed, title="Short Breakout Confirmed", style=shape.triangledown, location=location.abovebar, color=color.red,  size=size.tiny, text="SHORT OK")
+
+// Dashboard
+if barstate.islast and show_dashboard
+    chosen_position = dashboard_pos == "Top Right" ? position.top_right : dashboard_pos == "Top Left" ? position.top_left : dashboard_pos == "Bottom Left" ? position.bottom_left : position.bottom_right
+    var table dashboard = table.new(chosen_position, 2, 12, bgcolor=color.new(color.black, 84), border_width=1, border_color=color.new(color_neutral, 50))
+    table.cell(dashboard, 0, 0, "💰 CMF PRO", text_color=color.white, text_size=size.small, bgcolor=color.new(color_neutral, 70))
+    table.cell(dashboard, 1, 0, "Dashboard", text_color=color.white, text_size=size.small, bgcolor=color.new(color_neutral, 70))
+    table.cell(dashboard, 0, 1, "CMF Value", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 1, str.tostring(cmf_smoothed, "#.###"), text_color=cmf_smoothed >= 0 ? color_bullish : color_bearish, text_size=size.tiny)
+    table.cell(dashboard, 0, 2, "Volume", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 2, str.tostring(volume_strength, "#.#") + "x", text_color=volume_strength > volume_multiplier ? color_bullish : color.white, text_size=size.tiny)
+    big_money_status = long_signal ? "🔋 BUYING" : short_signal ? "⚡ SELLING" : "😴 QUIET"
+    table.cell(dashboard, 0, 3, "Big Money", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 3, big_money_status, text_color=long_signal ? color_bullish : short_signal ? color_bearish : color.white, text_size=size.tiny)
+    table.cell(dashboard, 0, 4, "LONG Quality", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 4, long_quality + " (" + str.tostring(long_score) + ")", text_color=long_quality_color, text_size=size.tiny)
+    table.cell(dashboard, 0, 5, "SHORT Quality", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 5, short_quality + " (" + str.tostring(short_score) + ")", text_color=short_quality_color, text_size=size.tiny)
+    table.cell(dashboard, 0, 6, "Bias", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 6, bias, text_color=bias_color, text_size=size.tiny)
+    trend_status = close > ema_trend ? "ABOVE EMA" : close < ema_trend ? "BELOW EMA" : "ON EMA"
+    table.cell(dashboard, 0, 7, "Trend", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 7, use_trend_filter ? trend_status : "FILTER OFF", text_color=use_trend_filter ? (close > ema_trend ? color_bullish : color_bearish) : color.white, text_size=size.tiny)
+    entry_text = long_breakout_confirmed ? "🚀 LONG ENTRY" : short_breakout_confirmed ? "💥 SHORT ENTRY" : long_signal ? "⏳ WAIT LONG BO" : short_signal ? "⏳ WAIT SHORT BO" : "NO ENTRY"
+    table.cell(dashboard, 0, 8, "Entry", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 8, entry_text, text_color=long_breakout_confirmed ? color.lime : short_breakout_confirmed ? color.red : (long_signal or short_signal) ? color.orange : color.white, text_size=size.tiny)
+    long_plan = not na(long_entry_price) and not na(long_stop_price) and not na(long_tp1) ? "E:" + str.tostring(long_entry_price, format.mintick) + " SL:" + str.tostring(long_stop_price, format.mintick) + " TP1:" + str.tostring(long_tp1, format.mintick) : "n/a"
+    table.cell(dashboard, 0, 9, "Long Plan", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 9, long_plan, text_color=color_bullish, text_size=size.tiny)
+    short_plan = not na(short_entry_price) and not na(short_stop_price) and not na(short_tp1) ? "E:" + str.tostring(short_entry_price, format.mintick) + " SL:" + str.tostring(short_stop_price, format.mintick) + " TP1:" + str.tostring(short_tp1, format.mintick) : "n/a"
+    table.cell(dashboard, 0, 10, "Short Plan", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 10, short_plan, text_color=color_bearish, text_size=size.tiny)
+    filters_state = (use_trend_filter ? "EMA " : "") + (use_breakout_confirm ? "BO " : "") + (use_cooldown ? "CD " : "") + (use_min_signal_score ? "SCORE" : "")
+    table.cell(dashboard, 0, 11, "Filters", text_color=color.white, text_size=size.tiny)
+    table.cell(dashboard, 1, 11, filters_state == "" ? "NONE" : filters_state, text_color=color.white, text_size=size.tiny)
+
+// ═════════════════════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME ALERTS ENGINE
+// ═════════════════════════════════════════════════════════════════════════════════════
+[sig_l_1m, sig_s_1m, cmf_1m, vol_1m, sc_l_1m, sc_s_1m] = request.security(syminfo.tickerid, "1", f_cmf_logic(), barmerge.gaps_off, barmerge.lookahead_off)
+[sig_l_5m, sig_s_5m, cmf_5m, vol_5m, sc_l_5m, sc_s_5m] = request.security(syminfo.tickerid, "5", f_cmf_logic(), barmerge.gaps_off, barmerge.lookahead_off)
+[sig_l_15m, sig_s_15m, cmf_15m, vol_15m, sc_l_15m, sc_s_15m] = request.security(syminfo.tickerid, "15", f_cmf_logic(), barmerge.gaps_off, barmerge.lookahead_off)
+[sig_l_1h, sig_s_1h, cmf_1h, vol_1h, sc_l_1h, sc_s_1h] = request.security(syminfo.tickerid, "60", f_cmf_logic(), barmerge.gaps_off, barmerge.lookahead_off)
+[sig_l_4h, sig_s_4h, cmf_4h, vol_4h, sc_l_4h, sc_s_4h] = request.security(syminfo.tickerid, "240", f_cmf_logic(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// Verifica attivazioni e trigger per ciascun timeframe alla chiusura della barra
+alert_triggered = false
+alert_msg = ""
+
+if enable_alerts
+    if alert_chart and (long_signal or short_signal) and ta.change(bar_index)
+        alert_triggered := true
+        alert_msg := "CMF PRO [" + timeframe.period + "] " + (long_signal ? "LONG SIGNAL 🔋" : "SHORT SIGNAL ⚡") + " | Score: " + (long_signal ? str.tostring(long_score) : str.tostring(short_score))
+    else if alert_1m and (sig_l_1m or sig_s_1m) and ta.change(time("1"))
+        alert_triggered := true
+        alert_msg := "CMF PRO [1m] " + (sig_l_1m ? "LONG SIGNAL 🔋" : "SHORT SIGNAL ⚡") + " | Score: " + (sig_l_1m ? str.tostring(sc_l_1m) : str.tostring(sc_s_1m))
+    else if alert_5m and (sig_l_5m or sig_s_5m) and ta.change(time("5"))
+        alert_triggered := true
+        alert_msg := "CMF PRO [5m] " + (sig_l_5m ? "LONG SIGNAL 🔋" : "SHORT SIGNAL ⚡") + " | Score: " + (sig_l_5m ? str.tostring(sc_l_5m) : str.tostring(sc_s_5m))
+    else if alert_15m and (sig_l_15m or sig_s_15m) and ta.change(time("15"))
+        alert_triggered := true
+        alert_msg := "CMF PRO [15m] " + (sig_l_15m ? "LONG SIGNAL 🔋" : "SHORT SIGNAL ⚡") + " | Score: " + (sig_l_15m ? str.tostring(sc_l_15m) : str.tostring(sc_s_15m))
+    else if alert_1h and (sig_l_1h or sig_s_1h) and ta.change(time("60"))
+        alert_triggered := true
+        alert_msg := "CMF PRO [1h] " + (sig_l_1h ? "LONG SIGNAL 🔋" : "SHORT SIGNAL ⚡") + " | Score: " + (sig_l_1h ? str.tostring(sc_l_1h) : str.tostring(sc_s_1h))
+    else if alert_4h and (sig_l_4h or sig_s_4h) and ta.change(time("240"))
+        alert_triggered := true
+        alert_msg := "CMF PRO [4h] " + (sig_l_4h ? "LONG SIGNAL 🔋" : "SHORT SIGNAL ⚡") + " | Score: " + (sig_l_4h ? str.tostring(sc_l_4h) : str.tostring(sc_s_4h))
+
+if alert_triggered
+    alert(alert_msg, alert.freq_once_per_bar_close)
+
+// Alertconditions per creazione manuale (Timeframe Corrente)
+alertcondition(long_signal, title="CMF PRO Long Signal (Chart TF)", message="CMF PRO Long Signal on Current TF")
+alertcondition(short_signal, title="CMF PRO Short Signal (Chart TF)", message="CMF PRO Short Signal on Current TF")

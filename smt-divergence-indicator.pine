@@ -218,16 +218,6 @@ ls3 = toLS(lsIn3)
 
 // ══════════════════════════════════════════════════════
 // Pivot Series
-//
-// Two tiers, same pattern:
-//   ph/pl        Detection trigger (rLen=0 in real-time mode)
-//   phConf/plConf  History reference, always fully confirmed
-//
-// Macro tier uses pivotLen.
-// Micro tier uses microPivotLen.
-// Both tiers share the same real-time toggle.
-// Both compare against their own confirmed history so
-// each tier independently catches swings at its own scale.
 // ══════════════════════════════════════════════════════
 
 // ── Macro tier ───────────────────────────────────────
@@ -275,7 +265,6 @@ atrSym3 = atrFromHLC(sHigh3, sLow3, sClose3, 14)
 
 // ══════════════════════════════════════════════════════
 // SMT Mark Tracking (for Remove Broken SMTs)
-// Separate arrays per tier so they clean up independently.
 // ══════════════════════════════════════════════════════
 type SMTMark
     float level
@@ -290,7 +279,7 @@ var SMTMark[] beMSMarks = array.new<SMTMark>() // micro bearish
 var SMTMark[] buMSMarks = array.new<SMTMark>() // micro bullish
 
 // ══════════════════════════════════════════════════════
-// Broken SMT Removal — shared helper logic per array
+// Broken SMT Removal
 // ══════════════════════════════════════════════════════
 deleteMark(SMTMark m) =>
     if not na(m.lbl)
@@ -330,7 +319,6 @@ if delBrokenInput
 
 // ══════════════════════════════════════════════════════
 // Sweep Mode — LQ Arrays
-// Six arrays per tier (high+low × 3 slots).
 // ══════════════════════════════════════════════════════
 type LQEntry
     float price
@@ -408,8 +396,6 @@ var float slastPL3S    = na
 
 // ══════════════════════════════════════════════════════
 // Signal Drawing Helper
-// Builds label+lines for one detected SMT event.
-// Used by both tiers to avoid duplicating draw logic.
 // ══════════════════════════════════════════════════════
 drawSMT(bool bull, float pivotPrice, int pivotIdx,
         bool d1, int idx1, float p1,
@@ -760,32 +746,7 @@ if mtfAlertsInput and barstate.isconfirmed
             alert("[4h] Bearish " + (mtfBearDouble240 ? "DOUBLE " : "") + "SMT on " + syminfo.ticker, alert.freq_once_per_bar)
 
 // ══════════════════════════════════════════════════════
-// Information Table
-// ══════════════════════════════════════════════════════
-fmtSlot(sym, inv) =>
-    sym == "" ? "-" : shortName(sym) + (inv ? " (inv)" : "")
-
-var table info = table.new(position.top_right, 2, 4,
-     bgcolor=color.new(chart.bg_color, 10), border_width=1, border_color=chart.fg_color)
-
-if barstate.islast
-    string modeStr = modeInput + " | " + (sweepModeInput ? "Sweep" : "Legacy") + (showMicro ? " | Micro On" : "")
-    table.cell(info, 0, 0, "SMT Pairs", text_color=chart.fg_color, text_size=size.small, bgcolor=color.new(chart.bg_color, 0))
-    table.cell(info, 1, 0, modeStr,     text_color=chart.fg_color, text_size=size.small, bgcolor=color.new(chart.bg_color, 0))
-    table.cell(info, 0, 1, "Sym 1:",    text_color=chart.fg_color, text_size=size.small)
-    table.cell(info, 1, 1, fmtSlot(sym1, inv1), text_color=sym1 != "" ? bullColor : color.gray, text_size=size.small)
-    table.cell(info, 0, 2, "Sym 2:",    text_color=chart.fg_color, text_size=size.small)
-    table.cell(info, 1, 2, fmtSlot(sym2, inv2), text_color=sym2 != "" ? bullColor : color.gray, text_size=size.small)
-    table.cell(info, 0, 3, "Sym 3:",    text_color=chart.fg_color, text_size=size.small)
-    table.cell(info, 1, 3, fmtSlot(sym3, inv3), text_color=sym3 != "" ? bullColor : color.gray, text_size=size.small)
-
-// ══════════════════════════════════════════════════════
 // Alerts
-// Sweep mode: uses alert() calls above.
-//   Set condition to "Any alert() function call".
-//   Macro alerts: "Bearish/Bullish SMT (...)"
-//   Micro alerts: "Bearish/Bullish Micro SMT (...)"
-// Legacy mode: use named alertconditions below.
 // ══════════════════════════════════════════════════════
 
 bool macroBearOkA = candleValInput ? close[rLen] < open[rLen] : true
@@ -822,7 +783,7 @@ alertcondition((not onlyDoubleSMT) and macroBullD1, "Bullish SMT - Sym 1", "Bull
 alertcondition((not onlyDoubleSMT) and macroBearD2, "Bearish SMT - Sym 2", "Bearish SMT Divergence detected!")
 alertcondition((not onlyDoubleSMT) and macroBullD2, "Bullish SMT - Sym 2", "Bullish SMT Divergence detected!")
 alertcondition((not onlyDoubleSMT) and macroBearD3, "Bearish SMT - Sym 3", "Bearish SMT Divergence detected!")
-alertcondition((not onlyDoubleSMT) and macroBullD3, "Bullish SMT - Sym 3", "Bullish SMT Divergence detected!")
+alertcondition((not onlyDoubleSMT) and macroBullD3, "Bullish SMT - Sym 3", "Bearish SMT Divergence detected!")
 
 // Micro legacy alerts
 alertcondition((not onlyDoubleSMT) and microBearD1, "Bearish Micro SMT - Sym 1", "Bearish Micro SMT Divergence detected!")

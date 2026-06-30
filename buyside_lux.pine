@@ -1,8 +1,8 @@
 // This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
-// © LuxAlgo (Modificato per Segnali Immediati su Breakout + Filtro CMF Opzionabile)
- 
+// © LuxAlgo (Versione Completa con Fix Array Semplificato + Filtri Opzionabili Diretti/Sweep e Fix Alert Condensati)
+
 //@version=5
-indicator("Buyside & Sellside Liquidity [LuxAlgo] + SEGNALI DIRETTI & CMF", "LuxAlgo - Liquidity + Direct Signals + CMF", overlay = true,  max_lines_count = 500, max_boxes_count = 500, max_bars_back = 1000)
+indicator("Buyside & Sellside Liquidity LuxAlgo + Filtri Opzionabili", "LuxAlgo - Liquidity + Toggable Filters", overlay = true,  max_lines_count = 500, max_boxes_count = 500, max_bars_back = 1000)
 //------------------------------------------------------------------------------
 //Settings
 //-----------------------------------------------------------------------------{
@@ -11,7 +11,7 @@ liqLen = input.int   (7, title = 'Detection Length', minval = 3, maxval = 13, in
 liqMar = 10 / input.float (6.9, 'Margin', minval = 4, maxval = 9, step = 0.1, inline = 'LIQ', group = liqGrp)
 
 liqBuy = input.bool (true, 'Buyside Liquidity Zones, Margin', inline = 'Buyside', group = liqGrp)
-marBuy    = input.float(2.3, '', minval = 1.5, maxval = 10, step = .1, inline = 'Buyside', group = liqGrp)
+marBuy = input.float(2.3, '', minval = 1.5, maxval = 10, step = .1, inline = 'Buyside', group = liqGrp)
 cLIQ_B = input.color (color.new(#4caf50,  0), '', inline = 'Buyside', group = liqGrp)
 
 liqSel = input.bool (true, 'Sellside Liquidity Zones, Margin', inline = 'Sellside', group = liqGrp)
@@ -26,19 +26,21 @@ lqText = input.bool (false, 'Label', inline = 'void', group = liqGrp)
 mode   = input.string('Present', title = 'Mode', options =['Present', 'Historical'], inline = 'MOD', group = liqGrp)
 visLiq = input.int   (3, '    # Visible Levels', minval = 1, maxval = 50, inline = 'MOD', group = liqGrp)
 
-sigGrp = 'Configurazione Segnali Diretti'
-showSignals    = input.bool(true, "Mostra Frecce di Segnale (Buy/Short)", group=sigGrp)
+sigGrp = 'Configurazione Segnali (Selettori Filtri)'
+showDirect = input.bool(true, "Mostra Segnali Breakout Diretti (Vecchi)", group=sigGrp, tooltip="Attiva i segnali originali non appena il prezzo tocca/buca il livello di liquidità.")
+showSweep  = input.bool(true, "Mostra Segnali SMC Sweep (Nuovi)", group=sigGrp, tooltip="Attiva i nuovi segnali avanzati che richiedono il rifiuto (ombra della candela) dopo la presa di liquidità.")
 
 cmfGrp = 'Chaikin Money Flow (CMF)'
 cmfLen = input.int(20, minval=1, title="CMF Length", group=cmfGrp)
-filterWithCMF = input.bool(true, "Filtra Segnali con il CMF (Conferma Trend)", group=cmfGrp)
+filterWithCMF = input.bool(true, "Filtra Segnali con il CMF", group=cmfGrp, tooltip="Se disattivato, il filtro CMF viene completamente spento sia per i vecchi che per i nuovi segnali.")
+cmfThreshold  = input.float(0.05, "Soglia Minima CMF (Solo per Sweep)", minval=0.0, step=0.01, group=cmfGrp, tooltip="Imposta a 0 per richiedere solo CMF > 0 o < 0 senza barriere rigide.")
 //-----------------------------------------------------------------------------}
 //General Calculations
 //-----------------------------------------------------------------------------{
 maxSize = 50
 atr     = ta.atr(10)
 atr200  = ta.atr(200)
-per     = mode == 'Present' ? last_bar_index - bar_index <=  500 : true
+per     = mode == 'Present' ? last_bar_index - bar_index <= 500 : true
 
 // ── Calcolo CMF ──
 cmfMultiplier = ((close - low) - (high - close)) / (high - low == 0 ? 0.00001 : (high - low))
@@ -49,9 +51,9 @@ cmf = ta.sma(cmfVolume, cmfLen) / (ta.sma(volume, cmfLen) == 0 ? 0.00001 : ta.sm
 //User Defined Types
 //-----------------------------------------------------------------------------{
 type ZZ 
-    int   [] d
-    int   [] x 
-    float [] y 
+    int[] d
+    int[] x 
+    float[] y
 
 type bar
     float o = open
@@ -72,16 +74,12 @@ type liq
 //-----------------------------------------------------------------------------}
 //Variables
 //-----------------------------------------------------------------------------{
-var ZZ aZZ = ZZ.new(
- array.new <int>  (maxSize,  0), 
- array.new <int>  (maxSize,  0), 
- array.new <float>(maxSize, na)
- )
+var aZZ = ZZ.new(array.new_int(maxSize, 0), array.new_int(maxSize, 0), array.new_float(maxSize, na))
 
 bar b = bar.new()
 
-var liq[] b_liq_B = array.new<liq> (1, liq.new(box(na), box(na), box(na), false, false, line(na), line(na)))
-var liq[] b_liq_S = array.new<liq> (1, liq.new(box(na), box(na), box(na), false, false, line(na), line(na)))
+var b_liq_B = array.new<liq>(1, liq.new(box(na), box(na), box(na), false, false, line(na), line(na)))
+var b_liq_S = array.new<liq>(1, liq.new(box(na), box(na), box(na), false, false, line(na), line(na)))
 
 var b_liq_V = array.new_box()
 
@@ -103,9 +101,9 @@ ph  = ta.pivothigh(liqLen, 1)
 pl  = ta.pivotlow (liqLen, 1)
 
 if ph   
-    dir := aZZ.d.get(0) 
-    x1  := aZZ.x.get(0) 
-    y1  := aZZ.y.get(0) 
+    dir := aZZ.d.get(0)
+    x1  := aZZ.x.get(0)
+    y1  := aZZ.y.get(0)
     y2  := nz(b.h[1])
 
     if dir < 1
@@ -122,7 +120,7 @@ if ph
         maxP  = 10e6
 
         for i = 0 to maxSize - 1
-            if aZZ.d.get(i) ==  1 
+            if aZZ.d.get(i) ==  1
                 if aZZ.y.get(i) > ph + (atr / liqMar)
                     break
                 else
@@ -144,16 +142,14 @@ if ph
             else
                 b_liq_B.unshift(
                  liq.new(
-                   box.new(st_B, math.avg(minP, maxP) + (atr / liqMar), b.i + 10, math.avg(minP, maxP) - (atr / liqMar), bgcolor=color(na), border_color=color(na)), 
+                   box.new(st_B, math.avg(minP, maxP) + (atr / liqMar), b.i + 10, math.avg(minP, maxP) - (atr / liqMar), bgcolor=color(na), border_color=color(na)),
                    box.new(na, na, na, na, bgcolor = color(na), border_color = color(na)),
                    box.new(st_B, st_P, b.i + 10, st_P, text = 'Buyside liquidity', text_size = size.tiny, text_halign = text.align_left, text_valign = text.align_bottom, text_color = color.new(cLIQ_B, 25), bgcolor = color(na), border_color = color(na)),
-                   false, 
+                   false,
                    false,
                    line.new(st_B   , st_P, b.i - 1, st_P, color = color.new(cLIQ_B, 0)),
                    line.new(b.i - 1, st_P, na     , st_P, color = color.new(cLIQ_B, 0), style = line.style_dotted))
                  )
-
-                alert('buyside liquidity level detected/updated for ' + syminfo.ticker)
 
             if b_liq_B.size() > visLiq
                 getLast = b_liq_B.pop()
@@ -164,15 +160,15 @@ if ph
                 getLast.lne.delete()               
 
 if pl
-    dir := aZZ.d.get (0) 
-    x1  := aZZ.x.get (0) 
-    y1  := aZZ.y.get (0) 
+    dir := aZZ.d.get (0)
+    x1  := aZZ.x.get (0)
+    y1  := aZZ.y.get (0)
     y2  := nz(b.l[1])
     
     if dir > -1
         aZZ.in_out(-1, x2, y2)
     else
-        if dir == -1 and pl < y1 
+        if dir == -1 and pl < y1
             aZZ.x.set(0, x2), aZZ.y.set(0, y2)
     
     if per
@@ -183,7 +179,7 @@ if pl
         maxP  = 10e6
 
         for i = 0 to maxSize - 1
-            if aZZ.d.get(i) == -1 
+            if aZZ.d.get(i) == -1
                 if aZZ.y.get(i) < pl - (atr / liqMar)
                     break
                 else
@@ -193,7 +189,7 @@ if pl
                         st_P := aZZ.y.get(i)
                         if aZZ.y.get(i) > minP
                             minP := aZZ.y.get(i)
-                        if aZZ.y.get(i) < maxP 
+                        if aZZ.y.get(i) < maxP
                             maxP := aZZ.y.get(i)
 
         if count > 2
@@ -214,34 +210,38 @@ if pl
                    line.new(b.i - 1, st_P, na     , st_P, color = color.new(cLIQ_S, 0), style = line.style_dotted))
                  )  
 
-                alert('sellside liquidity level detected/updated for ' + syminfo.ticker)
-
             if b_liq_S.size() > visLiq
                 getLast = b_liq_S.pop()
                 getLast.bx.delete()
                 getLast.bxz.delete()
                 getLast.bxt.delete()
-                getLast.ln.delete()            
-                getLast.lne.delete()               
+                getLast.ln.delete()           
+                getLast.lne.delete()              
 
 // ══════════════════════════════════════════════════════
-// CONTROLLO BREACH E SEGNALI DIRETTI SULLA CREAZIONE DEL BOX
+// CONTROLLO BREACH E CONFIGURAZIONE FILTRI
 // ══════════════════════════════════════════════════════
 bool buysideBreachedThisBar  = false
 bool sellsideBreachedThisBar = false
+
+bool buysideSweepConfirmed  = false
+bool sellsideSweepConfirmed = false
 
 for i = 0 to b_liq_B.size() - 1
     x = b_liq_B.get(i)
     if not x.brL
         x.lne.set_x2(b.i)
+        
         if b.h > x.bx.get_top()
             x.brL := true
             x.brZ := true
-            buysideBreachedThisBar := true 
-            alert('buyside liquidity level breached for ' + syminfo.ticker)
+            buysideBreachedThisBar := true
             x.bxz.set_lefttop(b.i - 1, math.min(x.ln.get_y1() + marBuy * (atr), b.h))
             x.bxz.set_rightbottom(b.i + 1, x.ln.get_y1())
             x.bxz.set_bgcolor(color.new(cLIQ_B, liqBuy ? 73 : 100))
+            
+            if b.c < x.bx.get_top()
+                buysideSweepConfirmed := true
     else if x.brZ
         if b.l > x.ln.get_y1() - marBuy * (atr) and b.h < x.ln.get_y1() + marBuy * (atr)
             x.bxz.set_right(b.i + 1)
@@ -258,11 +258,13 @@ for i = 0 to b_liq_S.size() - 1
         if b.l < x.bx.get_bottom()
             x.brL := true
             x.brZ := true
-            sellsideBreachedThisBar := true 
-            alert('sellside liquidity level breached for ' + syminfo.ticker)
+            sellsideBreachedThisBar := true
             x.bxz.set_lefttop(b.i - 1, x.ln.get_y1())
             x.bxz.set_rightbottom(b.i + 1, math.max(x.ln.get_y1() - marSel * (atr), b.l))
             x.bxz.set_bgcolor(color.new(cLIQ_S, liqSel ? 73 : 100))
+            
+            if b.c > x.bx.get_bottom()
+                sellsideSweepConfirmed := true
     else if x.brZ
         if b.l > x.ln.get_y1() - marSel * (atr) and b.h < x.ln.get_y1() + marSel * (atr)
             x.bxz.set_rightbottom(b.i + 1, math.min(b.l, x.bxz.get_bottom()))
@@ -271,27 +273,61 @@ for i = 0 to b_liq_S.size() - 1
         else
             x.brZ := false
 
-// ── Stampa dei Segnali Diretti e Sincronizzati (Filtro CMF Opzionabile) ──
-bool cmfBuyCondition  = not filterWithCMF or cmf > 0
-bool cmfShortCondition = not filterWithCMF or cmf < 0
+// ── Logiche di attivazione/disattivazione Filtro CMF ──
+bool cmfBuyDirect   = not filterWithCMF or cmf > 0
+bool cmfShortDirect = not filterWithCMF or cmf < 0
 
-if showSignals and sellsideBreachedThisBar and cmfBuyCondition
+bool cmfBuySweep   = not filterWithCMF or cmf > cmfThreshold
+bool cmfShortSweep = not filterWithCMF or cmf < -cmfThreshold
+
+// Isolo le condizioni per una gestione stabile dei segnali
+alert_buy_direct   = showDirect and sellsideBreachedThisBar and cmfBuyDirect
+alert_short_direct = showDirect and buysideBreachedThisBar and cmfShortDirect
+
+alert_buy_sweep    = showSweep and sellsideSweepConfirmed and cmfBuySweep
+alert_short_sweep  = showSweep and buysideSweepConfirmed and cmfShortSweep
+
+// ── STAMPA SEGNALI SUL GRAFICO ──
+
+// 1. VECCHI SEGNALI (Breakout Diretto Impulsivo)
+if alert_buy_direct
     label.new(b.i, b.l, "▲ BUY", color=color.new(color.green, 100), textcolor=color.green, style=label.style_label_up, size=size.small)
-    alert("Liquidity Direct BUY (Box Rosso Creato) su " + syminfo.ticker, alert.freq_once_per_bar)
 
-if showSignals and buysideBreachedThisBar and cmfShortCondition
+if alert_short_direct
     label.new(b.i, b.h, "▼ SHORT", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_down, size=size.small)
-    alert("Liquidity Direct SHORT (Box Verde Creato) su " + syminfo.ticker, alert.freq_once_per_bar)
+
+// 2. NUOVI SEGNALI (Filtro SMC Sweep Avanzato)
+if alert_buy_sweep
+    label.new(b.i, b.l, "▲ SMC SWEEP", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_up, size=size.small)
+
+if alert_short_sweep
+    label.new(b.i, b.h, "▼ SMC SWEEP", color=color.new(color.orange, 100), textcolor=color.orange, style=label.style_label_down, size=size.small)
+
+// ── ENGINE NOTIFICHE DINAMICHE (Fermate a chiusura candela) ──
+if barstate.isconfirmed
+    if alert_buy_sweep
+        alert("🚨 SMC SWEEP BUY confermato su " + syminfo.ticker + " (" + timeframe.period + ")", alert.freq_once_per_bar_close)
+    if alert_short_sweep
+        alert("🚨 SMC SWEEP SHORT confermato su " + syminfo.ticker + " (" + timeframe.period + ")", alert.freq_once_per_bar_close)
+    if alert_buy_direct
+        alert("🎯 Direct BUY confermato su " + syminfo.ticker, alert.freq_once_per_bar_close)
+    if alert_short_direct
+        alert("🎯 Direct SHORT confermato su " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+// ── ALERT CONDITION STRUTTURATE (Selezionabili da Menu Tendina TV) ──
+alertcondition(alert_buy_sweep,   title="SMC Sweep BUY (Nuovo)",   message="Generato segnale SMC Sweep BUY su {{ticker}} ({{interval}})")
+alertcondition(alert_short_sweep, title="SMC Sweep SHORT (Nuovo)", message="Generato segnale SMC Sweep SHORT su {{ticker}} ({{interval}})")
+alertcondition(alert_buy_direct,   title="Direct BUY (Vecchio)",    message="Generato segnale Direct BUY su {{ticker}}")
+alertcondition(alert_short_direct, title="Direct SHORT (Vecchio)",  message="Generato segnale Direct SHORT su {{ticker}}")
 
 // ── Logica Liquidity Voids originale di LuxAlgo ────────────────
-// [Il resto del codice per i Liquidity Voids rimane invariato...]
 if lqVoid and per
     bull = b.l - b.h[2] > atr200 and b.l > b.h[2] and b.c[1] > b.h[2]
     bear = b.l[2] - b.h > atr200 and b.h < b.l[2] and b.c[1] < b.l[2]
 
-    if bull 
+    if bull
         l  = 13
-        if bull[1] 
+        if bull[1]
             st = math.abs(b.l - b.l[1]) / l
             for i = 0 to l - 1
                 array.push(b_liq_V, box.new(b.i - 2, b.l[1] + i * st, b.i, b.l[1] + (i + 1) * st, border_color = na, bgcolor = color.new(cLQV_B, 90) ))
